@@ -1,0 +1,223 @@
+@* The profile page: user image and password. Port of apps/legacy/routes/user/userprofile. *@
+@attribute [Route("/userprofile")]
+@attribute [Access(AccessLevel.User)]
+@using System.Net.Http.Headers
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject ShellState Shell
+@inject ISessionInterop Interop
+@inject Globalize Globalize
+
+@if (_user is not null)
+{
+    <Page Id="userProfilePage" Title="@Globalize["Profile"]" Class="mainAnimatedPage libraryPage userPreferencesPage userPasswordPage noSecondaryNavPage">
+        <div class="padded-left padded-right padded-bottom-page">
+            <div class="readOnlyContent" style="margin:0 auto;margin-bottom:1.8em;padding:0 1em;display:flex;flex-direction:row;align-items:center;">
+                <div class="imagePlaceHolder" style="position:relative;display:inline-block;max-width:200px;">
+                    <InputFile @ref="_uploadImage" id="uploadImage" accept="image/*" OnChange="OnFileSelectedAsync"
+                               style="position:absolute;right:0;width:100%;height:100%;opacity:0;cursor:pointer;" />
+                    <div id="image" style="@($"width:200px;height:200px;background-repeat:no-repeat;background-position:center;border-radius:100%;background-size:cover;background-image:url({_imageUrl});")"></div>
+                </div>
+                <div style="vertical-align:top;margin:1em 2em;display:flex;flex-direction:column;align-items:center;">
+                    <h2 class="username" style="margin:0;font-size:xx-large;">@_user.Name</h2>
+                    <br />
+                    <EmbyButton id="btnAddImage" Class="@("raised button-submit" + (_addImageHidden ? " hide" : null))" OnClick="AddImageAsync">
+                        <span>@Globalize["ButtonAddImage"]</span>
+                    </EmbyButton>
+                    <EmbyButton id="btnDeleteImage" Class="@("raised" + (_deleteImageHidden ? " hide" : null))" OnClick="DeleteImageAsync">
+                        <span>@Globalize["DeleteImage"]</span>
+                    </EmbyButton>
+                </div>
+            </div>
+            <UserPasswordForm User="_user" />
+        </div>
+    </Page>
+}
+
+@code {
+    private const string UserImagePlaceholder = "assets/img/avatar.png";
+
+    private Guid? _userId;
+    private UserDto? _user;
+    private string _imageUrl = UserImagePlaceholder;
+    private bool _addImageHidden = true;
+    private bool _deleteImageHidden = true;
+    private bool _titleApplied;
+    private InputFile? _uploadImage;
+
+    /// <summary>The user whose profile is edited (administrators may edit other users).</summary>
+    [Parameter]
+    public string? UserId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId = UserPages.ResolveUserId(Api, UserId);
+        Loading.Show();
+        await ReloadUserAsync();
+        if (_user is not null)
+        {
+            Loading.Hide();
+        }
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        // Like the original, the header shows the user's name instead of the page title.
+        if (_user is not null && !_titleApplied)
+        {
+            _titleApplied = true;
+            Shell.SetTitle(_user.Name);
+        }
+    }
+
+    private async Task ReloadUserAsync(bool refreshSignedInUser = false)
+    {
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        UserDto? user;
+        try
+        {
+            user = await UserPages.GetUserAsync(Api, userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[userprofile] loading the user failed: " + ex.Message);
+            return;
+        }
+
+        if (user is null)
+        {
+            return;
+        }
+
+        _user = user;
+        _imageUrl = string.IsNullOrEmpty(user.PrimaryImageTag)
+            ? UserImagePlaceholder
+            : Api.GetUrl($"Users/{userId:N}/Images/Primary", ("tag", user.PrimaryImageTag));
+
+        if (!string.IsNullOrEmpty(user.PrimaryImageTag))
+        {
+            _addImageHidden = true;
+            _deleteImageHidden = false;
+        }
+        else if (Api.IsAdmin || user.Policy?.EnableUserPreferenceAccess == true)
+        {
+            _deleteImageHidden = true;
+            _addImageHidden = false;
+        }
+
+        if (refreshSignedInUser && userId == Api.UserId)
+        {
+            // Keeps the header's user image in step, as the original's invalidated user query does.
+            try
+            {
+                await Api.RefreshUserAsync();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                AppLog.Warn("[userprofile] refreshing the signed-in user failed: " + ex.Message);
+            }
+        }
+    }
+
+    // The button opens the file picker of the (invisible) file input.
+    private async Task AddImageAsync()
+    {
+        if (_uploadImage?.Element is { } input)
+        {
+            await Interop.ClickAsync(input);
+        }
+    }
+
+    private async Task OnFileSelectedAsync(InputFileChangeEventArgs args)
+    {
+        if (args.FileCount == 0 || _userId is not { } userId)
+        {
+            return;
+        }
+
+        var file = args.File;
+        if (!file.ContentType.StartsWith("image", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        string base64;
+        try
+        {
+            await using var stream = file.OpenReadStream(long.MaxValue);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            base64 = Convert.ToBase64String(buffer.GetBuffer(), 0, (int)buffer.Length);
+        }
+        catch (OperationCanceledException)
+        {
+            Loading.Hide();
+            Toasts.Show(Globalize["FileReadCancelled"]);
+            return;
+        }
+        catch (Exception ex)
+        {
+            Loading.Hide();
+            AppLog.Warn("[userprofile] reading the image failed: " + ex.Message);
+            Toasts.Show(Globalize["FileReadError"]);
+            return;
+        }
+
+        _imageUrl = $"data:{file.ContentType};base64,{base64}";
+        StateHasChanged();
+
+        try
+        {
+            // The server expects the image base64 encoded, with the image's own content type.
+            using var request = new HttpRequestMessage(HttpMethod.Post, Api.GetUrl("UserImage", ("userId", userId)));
+            request.Headers.TryAddWithoutValidation("Authorization", Api.AuthorizationHeader());
+            request.Content = new StringContent(base64);
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue(file.ContentType);
+            using var response = await Api.Http.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            await ReloadUserAsync(refreshSignedInUser: true);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[userprofile] failed to upload image: " + ex.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    private async Task DeleteImageAsync()
+    {
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        if (!await Dialogs.ConfirmAsync(Globalize["DeleteImageConfirmation"], Globalize["DeleteImage"]))
+        {
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            await Api.Client.UserImage.DeleteAsync(request => request.QueryParameters.UserId = userId);
+            await ReloadUserAsync(refreshSignedInUser: true);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[userprofile] failed to delete image: " + ex.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+}

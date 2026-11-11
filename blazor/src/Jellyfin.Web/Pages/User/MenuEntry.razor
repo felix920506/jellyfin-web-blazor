@@ -1,0 +1,26 @@
+@* One row of the settings menu. *@
+<LinkButton Href="@Href" Class="@((Class is null ? null : Class + " ") + "listItem-border")" Style="display:block;margin:0;padding:0;" OnClick="OnClick">
+    <div class="listItem">
+        <span class="material-icons listItemIcon listItemIcon-transparent @Icon" aria-hidden="true"></span>
+        <div class="listItemBody">
+            <div class="listItemBodyText">@Text</div>
+        </div>
+    </div>
+</LinkButton>
+
+@code {
+    [Parameter]
+    public string? Href { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter, EditorRequired]
+    public string Icon { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string Text { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<MouseEventArgs> OnClick { get; set; }
+}

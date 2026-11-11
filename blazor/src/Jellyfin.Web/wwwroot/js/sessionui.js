@@ -35,7 +35,10 @@ export async function renderDisclaimer(markdown) {
     return container.innerHTML;
 }
 
-/** Clicks an element (opens the file picker of a hidden file input). */
+/** Clicks an element; a file input is emptied first so that picking the same file again is noticed. */
 export function click(element) {
+    if (element?.type === 'file') {
+        element.value = '';
+    }
     element?.click();
 }

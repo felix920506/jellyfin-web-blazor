@@ -1,0 +1,64 @@
+@* A settings select: <select is="emby-select"> in its .selectContainer; ChildContent follows the arrow (field descriptions). *@
+<div class="selectContainer @ContainerClass">
+    <label class="selectLabel" for="@_id">@Label</label>
+    <select id="@_id" class="emby-select-withcolor emby-select @Class" value="@Value" @onchange="OnChangeAsync" @attributes="Attributes">
+        @if (Options is not null)
+        {
+            foreach (var option in Options)
+            {
+                <option value="@option.Value">@option.Name</option>
+            }
+        }
+    </select>
+    <div class="selectArrowContainer">
+        <div style="visibility:hidden;display:none;">0</div>
+        <span class="selectArrow material-icons keyboard_arrow_down" aria-hidden="true"></span>
+    </div>
+    @ChildContent
+</div>
+
+@code {
+    private string _id = ElementIds.Next("embyselect");
+
+    [Parameter]
+    public string? Id { get; set; }
+
+    [Parameter]
+    public string? Label { get; set; }
+
+    [Parameter]
+    public string? Value { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    [Parameter]
+    public IEnumerable<SelectOption>? Options { get; set; }
+
+    /// <summary>Classes of the select element.</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? ContainerClass { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrEmpty(Id))
+        {
+            _id = Id;
+        }
+    }
+
+    private Task OnChangeAsync(ChangeEventArgs args)
+    {
+        Value = args.Value?.ToString();
+        return ValueChanged.InvokeAsync(Value);
+    }
+}

@@ -1,0 +1,302 @@
+@* Settings: display. Port of controllers/user/display and components/displaySettings. *@
+@attribute [Route("/mypreferencesdisplay")]
+@attribute [Access(AccessLevel.User)]
+@using System.Globalization
+@inject JellyfinApi Api
+@inject UserSettings CurrentSettings
+@inject AppSettings AppSettings
+@inject AppHost Host
+@inject WebConfig Config
+@inject ThemeManager Theme
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<Page Id="displayPreferencesPage" Class="libraryPage userPreferencesPage noSecondaryNavPage" Title="@Globalize["Display"]">
+    <div class="settingsContainer padded-left padded-right padded-bottom-page">
+        <form style="margin: 0 auto;" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+            <h2 class="sectionTitle">@Globalize["Localization"]</h2>
+
+            <PrefSelect ContainerClass="languageSection" Id="selectLanguage" Label="@Globalize["LabelDisplayLanguage"]"
+                        Options="DisplayOptions.WithAuto(DisplayOptions.Languages, Globalize)" @bind-Value="_language">
+                <div class="fieldDescription">
+                    <div>@Globalize["LabelDisplayLanguageHelp"]</div>
+                    <div class="learnHowToContributeContainer" style="margin-top: .25em;">
+                        <a class="button-link emby-button" rel="noopener noreferrer" href="https://github.com/jellyfin/jellyfin" target="_blank">@Globalize["LearnHowYouCanContribute"]</a>
+                    </div>
+                </div>
+            </PrefSelect>
+
+            <PrefSelect ContainerClass="fldDateTimeLocale" Class="selectDateTimeLocale" Label="@Globalize["LabelDateTimeLocale"]"
+                        Options="DisplayOptions.WithAuto(DisplayOptions.DateTimeLocales, Globalize)" @bind-Value="_dateTimeLocale" />
+
+            <h2 class="sectionTitle">@Globalize["Display"]</h2>
+
+            <PrefSelect ContainerClass="fldDisplayMode" Class="selectLayout" Label="@Globalize["LabelDisplayMode"]"
+                        Options="DisplayOptions.Layouts(Globalize)" @bind-Value="_layout">
+                <div class="fieldDescription">@Globalize["DisplayModeHelp"]</div>
+                <div class="fieldDescription">@Globalize["LabelPleaseRestart"]</div>
+            </PrefSelect>
+
+            <PrefSelect Id="selectTheme" Label="@Globalize["LabelTheme"]" Options="_themes" @bind-Value="_theme" />
+
+            <PrefCheckbox Id="chkDisableCustomCss" Label="@Globalize["DisableCustomCss"]" Description="@Globalize["LabelDisableCustomCss"]" @bind-Value="_disableCustomCss" />
+
+            <EmbyTextarea Id="txtLocalCustomCss" Class="textarea-mono" ContainerClass="customCssContainer" Label="@Globalize["LabelCustomCss"]"
+                          Description="@Globalize["LabelLocalCustomCss"]" @bind-Value="_customCss" />
+
+            <PrefSelect ContainerClass="@("selectDashboardThemeContainer" + (_user?.Policy?.IsAdministrator == true ? null : " hide"))" Id="selectDashboardTheme"
+                        Label="@Globalize["LabelDashboardTheme"]" Options="_themes" @bind-Value="_dashboardTheme" />
+
+            <PrefSelect ContainerClass="selectScreensaverContainer" Class="selectScreensaver" Label="@Globalize["LabelScreensaver"]"
+                        Options="DisplayOptions.ScreensaverOptions(Globalize, Config.Data.Plugins)" @bind-Value="_screensaver" />
+
+            <EmbyInput Id="txtScreensaverTime" Type="number" ContainerClass="txtScreensaverTimeContainer inputContainer-withDescription" Required="true"
+                       pattern="[0-9]*" min="5" max="86400" step="1" Label="@Globalize["LabelScreensaverTime"]"
+                       Description="@Globalize["LabelScreensaverTimeHelp"]" @bind-Value="_screensaverTime" />
+
+            <EmbyInput Id="txtBackdropScreensaverInterval" Type="number" ContainerClass="txtBackdropScreensaverIntervalContainer inputContainer-withDescription" Required="true"
+                       pattern="[0-9]*" min="1" max="3600" step="1" Label="@Globalize["LabelBackdropScreensaverInterval"]"
+                       Description="@Globalize["LabelBackdropScreensaverIntervalHelp"]" @bind-Value="_backdropScreensaverInterval" />
+
+            <EmbyInput Id="txtSlideshowInterval" Type="number" ContainerClass="txtSlideshowIntervalContainer inputContainer-withDescription" Required="true"
+                       pattern="[0-9]*" min="1" max="3600" step="1" Label="@Globalize["LabelSlideshowInterval"]"
+                       Description="@Globalize["LabelSlideshowIntervalHelp"]" @bind-Value="_slideshowInterval" />
+
+            <PrefCheckbox Id="chkFadein" Label="@Globalize["EnableFasterAnimations"]" Description="@Globalize["EnableFasterAnimationsHelp"]" @bind-Value="_fastFadein" />
+            <PrefCheckbox Id="chkBlurhash" Label="@Globalize["EnableBlurHash"]" Description="@Globalize["EnableBlurHashHelp"]" @bind-Value="_blurhash" />
+
+            <h2 class="sectionTitle">@Globalize["HeaderLibraries"]</h2>
+
+            <EmbyInput Id="txtLibraryPageSize" Type="number" ContainerClass="inputContainer-withDescription" Required="true"
+                       pattern="[0-9]*" min="0" max="1000" step="1" Label="@Globalize["LabelLibraryPageSize"]"
+                       Description="@Globalize["LabelLibraryPageSizeHelp"]" @bind-Value="_libraryPageSize" />
+
+            <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription fldBackdrops" Id="chkBackdrops"
+                          Label="@Globalize["Backdrops"]" Description="@Globalize["EnableBackdropsHelp"]" @bind-Value="_backdrops" />
+            <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription fldThemeSong" Id="chkThemeSong"
+                          Label="@Globalize["ThemeSongs"]" Description="@Globalize["EnableThemeSongsHelp"]" @bind-Value="_themeSongs" />
+            <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription fldThemeVideo" Id="chkThemeVideo"
+                          Label="@Globalize["ThemeVideos"]" Description="@Globalize["EnableThemeVideosHelp"]" @bind-Value="_themeVideos" />
+            <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription fldDisplayMissingEpisodes" Class="chkDisplayMissingEpisodes"
+                          Label="@Globalize["DisplayMissingEpisodesWithinSeasons"]" Description="@Globalize["DisplayMissingEpisodesWithinSeasonsHelp"]" @bind-Value="_displayMissingEpisodes" />
+
+            <h2 class="sectionTitle">@Globalize["NextUp"]</h2>
+
+            <EmbyInput Id="txtMaxDaysForNextUp" Type="number" ContainerClass="inputContainer-withDescription" Required="true"
+                       pattern="[0-9]*" min="0" max="1000" step="1" Label="@Globalize["LabelMaxDaysForNextUp"]"
+                       Description="@Globalize["LabelMaxDaysForNextUpHelp"]" @bind-Value="_maxDaysForNextUp" />
+
+            <PrefCheckbox Id="chkRewatchingNextUp" Label="@Globalize["EnableRewatchingNextUp"]" Description="@Globalize["EnableRewatchingNextUpHelp"]" @bind-Value="_rewatchingNextUp" />
+            <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription fldUseEpisodeImagesInNextUp" Id="chkUseEpisodeImagesInNextUp"
+                          Label="@Globalize["UseEpisodeImagesInNextUp"]" Description="@Globalize["UseEpisodeImagesInNextUpHelp"]" @bind-Value="_useEpisodeImagesInNextUp" />
+
+            <h2 class="sectionTitle">@Globalize["ItemDetails"]</h2>
+
+            <PrefCheckbox Id="chkDetailsBanner" Label="@Globalize["EnableDetailsBanner"]" Description="@Globalize["EnableDetailsBannerHelp"]" @bind-Value="_detailsBanner" />
+
+            <EmbyButton Type="submit" Class="raised button-submit block btnSave">
+                <span>@Globalize["Save"]</span>
+            </EmbyButton>
+        </form>
+    </div>
+</Page>
+
+@code {
+    private Guid? _userId;
+    private UserSettings _settings = default!;
+    private UserDto? _user;
+    private List<SelectOption> _themes = [];
+
+    private string? _language = string.Empty;
+    private string? _dateTimeLocale = string.Empty;
+    private string? _layout = string.Empty;
+    private string? _theme;
+    private string? _dashboardTheme;
+    private string? _screensaver = "none";
+    private string? _customCss;
+    private string? _screensaverTime;
+    private string? _backdropScreensaverInterval;
+    private string? _slideshowInterval;
+    private string? _libraryPageSize;
+    private string? _maxDaysForNextUp;
+    private bool _disableCustomCss;
+    private bool _fastFadein;
+    private bool _blurhash;
+    private bool _backdrops;
+    private bool _themeSongs;
+    private bool _themeVideos;
+    private bool _displayMissingEpisodes;
+    private bool _rewatchingNextUp;
+    private bool _useEpisodeImagesInNextUp;
+    private bool _detailsBanner;
+
+    /// <summary>The user whose settings are edited (administrators may edit other users).</summary>
+    [Parameter]
+    public string? UserId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId = UserPages.ResolveUserId(Api, UserId);
+        _themes = Config.Themes.Select(theme => new SelectOption(theme.Id, theme.Name)).ToList();
+        _settings = _userId is { } id ? UserPages.SettingsFor(id, Api, CurrentSettings, AppSettings) : CurrentSettings;
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            _user = await UserPages.GetUserAsync(Api, userId);
+            await _settings.SetUserAsync(userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The original leaves the loading indicator up when the user cannot be loaded.
+            AppLog.Warn("[DisplaySettings] loading the user failed: " + ex.Message);
+            return;
+        }
+
+        if (_user is null)
+        {
+            return;
+        }
+
+        LoadForm(_user);
+        Loading.Hide();
+    }
+
+    private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
+
+    // parseInt(value, 10) || fallback
+    private static int IntOr(string? value, int fallback) =>
+        int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) && number != 0 ? number : fallback;
+
+    private void LoadForm(UserDto user)
+    {
+        var defaultTheme = Config.DefaultTheme.Id;
+        _theme = _settings.Theme is { Length: > 0 } theme ? theme : defaultTheme;
+        _dashboardTheme = _settings.DashboardTheme is { Length: > 0 } dashboardTheme ? dashboardTheme : defaultTheme;
+
+        // An unknown or missing screensaver selects "None".
+        var screensaver = _settings.Screensaver;
+        _screensaver = DisplayOptions.ScreensaverOptions(Globalize, Config.Data.Plugins).Any(option => option.Value == screensaver) ? screensaver : "none";
+
+        _backdropScreensaverInterval = Number(IntOr(_settings.Get("backdropScreensaverInterval", false), 5));
+        _slideshowInterval = Number(IntOr(_settings.Get("slideshowInterval", false), 5));
+        _screensaverTime = Number(IntOr(_settings.Get("screensaverTime", false), 180));
+
+        _displayMissingEpisodes = user.Configuration?.DisplayMissingEpisodes ?? false;
+
+        _themeSongs = _settings.EnableThemeSongs;
+        _themeVideos = _settings.EnableThemeVideos;
+        _fastFadein = _settings.EnableFastFadein;
+        _blurhash = _settings.EnableBlurhash;
+        _backdrops = _settings.EnableBackdrops;
+        _detailsBanner = _settings.DetailsBanner;
+
+        _disableCustomCss = _settings.DisableCustomCss;
+        _customCss = _settings.CustomCss;
+
+        _language = _settings.Language ?? string.Empty;
+        _dateTimeLocale = _settings.DateTimeLocale ?? string.Empty;
+
+        _libraryPageSize = Number(_settings.LibraryPageSize);
+
+        _maxDaysForNextUp = Number(_settings.MaxDaysForNextUp);
+        _rewatchingNextUp = _settings.EnableRewatchingInNextUp;
+        _useEpisodeImagesInNextUp = _settings.UseEpisodeImagesInNextUpAndResume;
+
+        _layout = DisplayOptions.LayoutValue(Host.LayoutSetting);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        await _settings.SetUserAsync(userId);
+        Loading.Show();
+
+        UserDto? user;
+        try
+        {
+            user = await UserPages.GetUserAsync(Api, userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[DisplaySettings] loading the user failed: " + ex.Message);
+            return;
+        }
+
+        if (user is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await SaveUserAsync(user, userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Loading.Hide();
+            return;
+        }
+
+        Loading.Hide();
+        Toasts.Show(Globalize["SettingsSaved"]);
+    }
+
+    private async Task SaveUserAsync(UserDto user, Guid userId)
+    {
+        user.Configuration ??= new UserConfiguration();
+        user.Configuration.DisplayMissingEpisodes = _displayMissingEpisodes;
+
+        _settings.Language = _language ?? string.Empty;
+        _settings.DateTimeLocale = _dateTimeLocale ?? string.Empty;
+
+        _settings.EnableThemeSongs = _themeSongs;
+        _settings.EnableThemeVideos = _themeVideos;
+        _settings.Theme = _theme;
+        _settings.DashboardTheme = _dashboardTheme;
+        _settings.Screensaver = _screensaver;
+        _settings.Set("backdropScreensaverInterval", _backdropScreensaverInterval ?? string.Empty, false);
+        _settings.Set("slideshowInterval", _slideshowInterval ?? string.Empty, false);
+        _settings.Set("screensaverTime", _screensaverTime ?? string.Empty, false);
+
+        if (int.TryParse(_libraryPageSize, NumberStyles.Integer, CultureInfo.InvariantCulture, out var libraryPageSize))
+        {
+            _settings.LibraryPageSize = libraryPageSize;
+        }
+
+        if (int.TryParse(_maxDaysForNextUp, NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxDaysForNextUp))
+        {
+            _settings.MaxDaysForNextUp = maxDaysForNextUp;
+        }
+
+        _settings.EnableRewatchingInNextUp = _rewatchingNextUp;
+        _settings.UseEpisodeImagesInNextUpAndResume = _useEpisodeImagesInNextUp;
+
+        _settings.EnableFastFadein = _fastFadein;
+        _settings.EnableBlurhash = _blurhash;
+        _settings.EnableBackdrops = _backdrops;
+        _settings.DetailsBanner = _detailsBanner;
+
+        _settings.DisableCustomCss = _disableCustomCss;
+        _settings.CustomCss = _customCss ?? string.Empty;
+
+        if (userId == Api.UserId)
+        {
+            // The original's globalize and theme manager follow the settings of the signed-in user.
+            Theme.SetTheme(_settings.Theme);
+            await Globalize.SetUserCultureAsync(_settings.Language, _settings.DateTimeLocale);
+        }
+
+        Host.SetLayout(string.IsNullOrEmpty(_layout) ? "auto" : _layout);
+        await UserPages.UpdateConfigurationAsync(Api, userId, user.Configuration);
+    }
+}

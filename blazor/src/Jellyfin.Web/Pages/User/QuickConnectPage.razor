@@ -1,0 +1,118 @@
+@* Authorizes a Quick Connect code. Port of apps/legacy/routes/quickConnect. *@
+@attribute [Route("/quickconnect")]
+@attribute [Access(AccessLevel.User)]
+@inject JellyfinApi Api
+@inject LoadingService Loading
+@inject Globalize Globalize
+
+@if (_loaded)
+{
+    <Page Id="quickConnectPreferencesPage" Title="@Globalize["QuickConnect"]" Class="mainAnimatedPage libraryPage userPreferencesPage noSecondaryNavPage">
+        <div class="padded-left padded-right padded-bottom-page">
+            <form @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">@Globalize["QuickConnect"]</h2>
+                    <div>@Globalize["QuickConnectDescription"]</div>
+                    <br />
+
+                    @if (_error is not null)
+                    {
+                        <div class="quickConnectError">@Globalize[_error]</div>
+                    }
+
+                    @if (_success)
+                    {
+                        <div style="text-align:center;">
+                            <p>@Globalize["QuickConnectAuthorizeSuccess"]</p>
+                            <a href="#/home" class="button-link emby-button">@Globalize["GoHome"]</a>
+                        </div>
+                    }
+                    else
+                    {
+                        @if (Api.IsAdmin)
+                        {
+                            <PrefSelect Id="userId" Label="@Globalize["LabelUser"]" Options="_users" @bind-Value="_selectedUserId" />
+                        }
+
+                        <EmbyInput Id="txtQuickConnectCode" Label="@Globalize["LabelQuickConnectCode"]" Type="text" Required="true" Autocomplete="off"
+                                   inputmode="numeric" pattern="[0-9\s]*" minlength="6" @bind-Value="_code" />
+                        <EmbyButton Type="submit" Class="raised button-submit block">
+                            <span>@Globalize["Authorize"]</span>
+                        </EmbyButton>
+                    }
+                </div>
+            </form>
+        </div>
+    </Page>
+}
+
+@code {
+    private List<SelectOption> _users = [];
+    private string? _selectedUserId;
+    private string? _code;
+    private string? _error;
+    private bool _success;
+    private bool _loaded;
+
+    /// <summary>The user to authorize the code for (administrators may pick another user).</summary>
+    [Parameter]
+    public string? UserId { get; set; }
+
+    /// <summary>A code to prefill, e.g. from a link shown by the device that wants to sign in.</summary>
+    [Parameter]
+    public string? Code { get; set; }
+
+    /// <summary>The form's constraints: digits and white space only, at least six characters.</summary>
+    public static bool IsValidCode(string? code) =>
+        !string.IsNullOrEmpty(code) && code.Length >= 6 && code.All(c => char.IsAsciiDigit(c) || char.IsWhiteSpace(c));
+
+    protected override async Task OnInitializedAsync()
+    {
+        _code = Code ?? string.Empty;
+        Loading.Show();
+        try
+        {
+            var users = await Api.Client.Users.GetAsync() ?? [];
+            _users = users
+                .Where(user => user.Policy?.IsDisabled != true)
+                .Select(user => new SelectOption(UserPages.IdText(user.Id), user.Name ?? string.Empty))
+                .ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[QuickConnect] loading the users failed: " + ex.Message);
+        }
+
+        var defaultUserId = UserPages.IdText(UserPages.ResolveUserId(Api, UserId));
+        _selectedUserId = _users.Any(user => user.Value == defaultUserId) ? defaultUserId : _users.FirstOrDefault()?.Value;
+        _loaded = true;
+        Loading.Hide();
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (!IsValidCode(_code))
+        {
+            _error = "QuickConnectInvalidCode";
+            return;
+        }
+
+        // Only administrators have the user select; without it the server uses the signed-in user.
+        Guid? userId = Api.IsAdmin && Guid.TryParse(_selectedUserId, out var selected) ? selected : null;
+        var normalizedCode = string.Concat(_code!.Where(c => !char.IsWhiteSpace(c)));
+        try
+        {
+            await Api.Client.QuickConnect.Authorize.PostAsync(request =>
+            {
+                request.QueryParameters.Code = normalizedCode;
+                request.QueryParameters.UserId = userId;
+            });
+            _success = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _error = "QuickConnectAuthorizeFail";
+        }
+    }
+}
