@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <RootNamespace>Jellyfin.Web</RootNamespace>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- The toolchain image has no wasm-tools workload: no AOT, no native relink. -->
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <WasmBuildNative>false</WasmBuildNative>
+    <!-- Dates and numbers are formatted by the browser (Intl) through IBrowser, so the runtime
+         ships without ICU data. That also keeps the published output free of .dat files, which a
+         Jellyfin server would not serve from its /web directory. Local time comes from
+         IBrowser.UtcOffsetMinutes; do not rely on TimeZoneInfo.Local.
+         (InvariantTimezone would need a native relink, i.e. the wasm-tools workload.) -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" PrivateAssets="all" />
+    <PackageReference Include="Jellyfin.Sdk" />
+    <PackageReference Include="MudBlazor" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Jellyfin.Web.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,25 @@
+@* A user's picture, or a person icon without one. Port of components/UserAvatar.tsx. *@
+@inject JellyfinApi Api
+
+<MudAvatar Size="Size" Class="jf-user-avatar">
+    @if (ImageUrl is { } url)
+    {
+        <MudImage Src="@url" Alt="@User?.Name" />
+    }
+    else
+    {
+        <MudIcon Icon="@MdIcon.Of("person")" />
+    }
+</MudAvatar>
+
+@code {
+    [Parameter]
+    public UserDto? User { get; set; }
+
+    [Parameter]
+    public Size Size { get; set; } = Size.Medium;
+
+    private string? ImageUrl => User is { Id: { } id, PrimaryImageTag: { Length: > 0 } tag }
+        ? Api.GetUrl($"Users/{id:N}/Images/Primary", ("tag", tag))
+        : null;
+}

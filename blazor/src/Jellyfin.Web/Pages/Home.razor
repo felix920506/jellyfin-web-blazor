@@ -1,0 +1,10 @@
+@* Placeholder until the home screen (sections and favourites tabs) is ported. *@
+@attribute [Route("/home")]
+@attribute [Access(AccessLevel.User)]
+@inject Globalize Globalize
+
+<Page Id="indexPage" Class="mainAnimatedPage homePage libraryPage" BackButton="false">
+    <div class="padded-left padded-right">
+        <h1>@Globalize["Home"]</h1>
+    </div>
+</Page>

@@ -1,0 +1,141 @@
+@* Favourites, custom menu links and the user's libraries as toolbar buttons; what does not fit
+   goes into a "More" menu. Port of apps/modern/components/AppToolbar/userViews/UserViewNav.tsx. *@
+@implements IDisposable
+@inject UserViews Views
+@inject AppRouter Router
+@inject WebConfig Config
+@inject IBrowser Browser
+@inject Globalize Globalize
+
+<MudButton Variant="Variant.Text" Color="@(IsFavoritesActive ? Color.Primary : Color.Inherit)" StartIcon="@MdIcon.Of("favorite")"
+           Href="#/home?tab=1">@Globalize["Favorites"]</MudButton>
+
+@foreach (var item in Primary)
+{
+    <MudButton @key="item.Key" Variant="Variant.Text" Color="@(item.Key == _currentKey ? Color.Primary : Color.Inherit)"
+               StartIcon="@MdIcon.Of(item.Icon)" Href="@item.Href" Target="@item.Target" Rel="@item.Rel">@item.Name</MudButton>
+}
+
+@if (Overflow.Count > 0)
+{
+    <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" Dense="true">
+        <ActivatorContent Context="menu">
+            <MudButton Variant="Variant.Text" Color="@(Overflow.Any(i => i.Key == _currentKey) ? Color.Primary : Color.Inherit)"
+                       OnClick="@(e => menu.ToggleAsync(e))" EndIcon="@MdIcon.Of("arrow_drop_down")">@Globalize["ButtonMore"]</MudButton>
+        </ActivatorContent>
+        <ChildContent>
+            @foreach (var item in Overflow)
+            {
+                <MudMenuItem @key="item.Key" Href="@item.Href" Target="@item.Target" Icon="@MdIcon.Of(item.Icon)" Label="@item.Name" />
+            }
+        </ChildContent>
+    </MudMenu>
+}
+
+@code {
+    private sealed record NavItem(string Key, string Name, string Icon, string Href, string? Target = null, string? Rel = null);
+
+    private static readonly HashSet<string> UserViewPaths = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/home", "/list", "/details", "/movies", "/tv", "/music", "/livetv", "/homevideos", "/books"
+    };
+
+    private List<NavItem> _items = [];
+    private string? _currentKey;
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    private bool IsFavoritesActive => Location.Path == "/home" && Location.Tab == 1;
+
+    private int MaxItems => Browser.ViewportWidth switch
+    {
+        >= Viewport.Xl => 8,
+        >= Viewport.Lg => 5,
+        _ => 3
+    };
+
+    // One spare slot avoids a "More" menu holding a single entry.
+    private bool Overflows => _items.Count > MaxItems + 1;
+
+    private IReadOnlyList<NavItem> Primary => Overflows ? _items.GetRange(0, MaxItems) : _items;
+
+    private IReadOnlyList<NavItem> Overflow => Overflows ? _items.GetRange(MaxItems, _items.Count - MaxItems) : [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        Views.Changed += OnViewsChanged;
+        Browser.Resized += Refresh;
+        Globalize.LanguageChanged += Refresh;
+        await LoadAsync();
+    }
+
+    protected override void OnParametersSet() => _currentKey = CurrentKey();
+
+    public void Dispose()
+    {
+        Views.Changed -= OnViewsChanged;
+        Browser.Resized -= Refresh;
+        Globalize.LanguageChanged -= Refresh;
+    }
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnViewsChanged() => _ = InvokeAsync(async () =>
+    {
+        await LoadAsync();
+        StateHasChanged();
+    });
+
+    private async Task LoadAsync()
+    {
+        IReadOnlyList<BaseItemDto> views;
+        try
+        {
+            views = await Views.GetAsync();
+        }
+        catch (Exception)
+        {
+            views = [];
+        }
+
+        var items = new List<NavItem>();
+        foreach (var link in Config.MenuLinks)
+        {
+            items.Add(new NavItem("link:" + link.Url, link.Name, link.Icon ?? "link", link.Url, "_blank", "noopener noreferrer"));
+        }
+
+        foreach (var view in views)
+        {
+            items.Add(new NavItem(
+                ViewKey(view.Id),
+                view.Name ?? string.Empty,
+                MdIcon.ForLibrary(view.CollectionType),
+                Router.GetRouteUrl(view, new RouteOptions { Context = view.CollectionType.ToApiString() })));
+        }
+
+        _items = items;
+        _currentKey = CurrentKey();
+    }
+
+    private static string ViewKey(Guid? id) => "view:" + id?.ToString("N");
+
+    /// <summary>The library the current page belongs to, judged from the URL.</summary>
+    private string? CurrentKey()
+    {
+        if (string.Equals(Location["collectionType"], "livetv", StringComparison.OrdinalIgnoreCase)
+            || Location.Path == "/livetv")
+        {
+            var liveTv = Views.Current.FirstOrDefault(v => v.CollectionType == BaseItemDto_CollectionType.Livetv);
+            return liveTv is null ? null : ViewKey(liveTv.Id);
+        }
+
+        if (IsFavoritesActive || !UserViewPaths.Contains(Location.Path))
+        {
+            return null;
+        }
+
+        var libraryId = Location["topParentId"] ?? Location["parentId"];
+        return Guid.TryParse(libraryId, out var id) ? ViewKey(id) : null;
+    }
+}

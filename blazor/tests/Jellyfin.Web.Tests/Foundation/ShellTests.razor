@@ -1,0 +1,49 @@
+@* The router, the guard and the shell working together. *@
+@using Jellyfin.Web
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    [Fact]
+    public async Task Signed_out_visitor_lands_on_the_login_page()
+    {
+        var app = App;
+        app.Browser.Navigate("/home");
+        await Services.GetRequiredService<AppStartup>().InitializeAsync();
+
+        var cut = Render<App>();
+
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("#loginPage")));
+        Assert.StartsWith("/login?serverid=" + TestApp.ServerId, app.Browser.Hash, StringComparison.Ordinal);
+        Assert.Empty(cut.FindAll(".jf-user-menu-button"));
+    }
+
+    [Fact]
+    public async Task Signing_in_opens_the_page_asked_for()
+    {
+        var app = App;
+        app.Server.OnPost("/Users/AuthenticateByName", new
+        {
+            AccessToken = "token",
+            ServerId = TestApp.ServerId,
+            User = new { Id = TestApp.UserId, Name = "tester", ServerId = TestApp.ServerId, Policy = new { IsAdministrator = false } }
+        });
+        app.Server.OnGet("/UserViews", new { Items = Array.Empty<object>(), TotalRecordCount = 0 });
+        app.Browser.Navigate("/home");
+        await Services.GetRequiredService<AppStartup>().InitializeAsync();
+        var cut = Render<App>();
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("#loginPage")));
+
+        cut.Find("#txtManualName").Input("tester");
+        cut.Find("#txtManualPassword").Input("secret");
+        await cut.Find("form.manualLoginForm").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("#indexPage")), TimeSpan.FromSeconds(5));
+        Assert.Equal("/home", app.Browser.Hash);
+        var request = Assert.Single(app.Server.RequestsTo("/Users/AuthenticateByName"));
+        Assert.Contains("\"Username\":\"tester\"", request.Body, StringComparison.Ordinal);
+        Assert.NotEmpty(cut.FindAll(".jf-user-menu-button"));
+    }
+}

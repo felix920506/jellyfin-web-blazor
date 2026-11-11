@@ -1,0 +1,38 @@
+@* <button is="emby-button">. Variants via Class: raised, button-flat, button-submit, button-cancel, button-delete, block, fab… *@
+<button type="@Type" class="emby-button @Class" disabled="@Disabled" title="@Title" @onclick="OnClick" @attributes="Attributes">
+    @if (Icon is not null)
+    {
+        <Icon Name="@Icon" Class="@IconClass" />
+    }
+    @ChildContent
+</button>
+
+@code {
+    [Parameter]
+    public string Type { get; set; } = "button";
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? Title { get; set; }
+
+    /// <summary>Optional leading Material icon name.</summary>
+    [Parameter]
+    public string? Icon { get; set; }
+
+    [Parameter]
+    public string? IconClass { get; set; } = "button-icon button-icon-left";
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    [Parameter]
+    public EventCallback<MouseEventArgs> OnClick { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+}

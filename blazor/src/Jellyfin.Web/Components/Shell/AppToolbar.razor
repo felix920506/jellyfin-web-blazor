@@ -1,0 +1,59 @@
+@* The contents of the app bar. Port of components/toolbar/AppToolbar.tsx and
+   apps/modern/components/AppToolbar/index.tsx. *@
+@implements IDisposable
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject Globalize Globalize
+
+@if (Api.IsLoggedIn && DrawerAvailable)
+{
+    <MudTooltip Text="@Globalize[DrawerOpen ? "MenuClose" : "MenuOpen"]">
+        <MudIconButton Icon="@MdIcon.Of("menu")" Color="Color.Inherit" Size="Size.Large" Edge="Edge.Start" Class="jf-drawer-button"
+                       aria-label="@Globalize[DrawerOpen ? "MenuClose" : "MenuOpen"]" OnClick="OnDrawerButtonClick" />
+    </MudTooltip>
+}
+
+@if (!DrawerAvailable)
+{
+    <div class="jf-toolbar-nav">
+        <ServerButton />
+        @if (!IsPublicPath)
+        {
+            <UserViewNav />
+        }
+    </div>
+}
+
+<div class="jf-toolbar-end">
+    @if (!IsPublicPath)
+    {
+        <ToolbarButtons />
+        @if (Api.IsLoggedIn)
+        {
+            <UserMenuButton />
+        }
+    }
+</div>
+
+@code {
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    [Parameter]
+    public bool DrawerAvailable { get; set; }
+
+    [Parameter]
+    public bool DrawerOpen { get; set; }
+
+    [Parameter]
+    public EventCallback OnDrawerButtonClick { get; set; }
+
+    // Public pages (login, server selection, ...) show no user content.
+    private bool IsPublicPath => AppRouter.PublicPaths.Contains(Location.Path);
+
+    protected override void OnInitialized() => Globalize.LanguageChanged += Refresh;
+
+    public void Dispose() => Globalize.LanguageChanged -= Refresh;
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+}

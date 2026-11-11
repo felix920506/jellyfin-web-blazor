@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Runs a Playwright (Python) script in Docker against the dev server and the test server.
+#
+#   e2e/run smoke.py            run e2e/smoke.py; screenshots land in blazor/artifacts/e2e
+#   e2e/run path/to/script.py   any script under blazor/ (path relative to blazor/e2e or blazor/)
+#
+# Needs: `./dev serve` running (APP_URL, default http://localhost:5080) and
+# `scripts/test-server.sh up` (JELLYFIN_URL, default http://localhost:18096).
+# Scripts get OUT_DIR=/out (blazor/artifacts/e2e), APP_URL, JELLYFIN_URL, TEST_USER, TEST_PASSWORD.
+set -euo pipefail
+
+BLAZOR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE="mcr.microsoft.com/playwright/python:v1.64.1-noble"
+CACHE="${JFWEB_CACHE:-$HOME/.cache/jellyfin-web-blazor}/e2e"
+script="${1:-smoke.py}"; [ "$#" -gt 0 ] && shift
+[ -f "$BLAZOR_DIR/e2e/$script" ] && script="e2e/$script"
+
+mkdir -p "$CACHE/pylib" "$CACHE/home" "$BLAZOR_DIR/artifacts/e2e"
+run() {
+    docker run --rm --network host --user "$(id -u):$(id -g)" --memory 1500m \
+        -e HOME=/cache/home -e PYTHONPATH=/cache/pylib -e PYTHONDONTWRITEBYTECODE=1 -e OUT_DIR=/out \
+        -e APP_URL="${APP_URL:-http://localhost:5080}" -e JELLYFIN_URL="${JELLYFIN_URL:-http://localhost:18096}" \
+        -e TEST_USER="${TEST_USER:-admin}" -e TEST_PASSWORD="${TEST_PASSWORD:-jellyfin}" \
+        -v "$CACHE:/cache" -v "$BLAZOR_DIR:/work:ro" -v "$BLAZOR_DIR/artifacts/e2e:/out" -w /work \
+        "$IMAGE" "$@"
+}
+
+# The image ships the browsers but not the Python package.
+if [ ! -d "$CACHE/pylib/playwright" ]; then
+    run pip install -q --disable-pip-version-check --no-cache-dir --target /cache/pylib playwright==1.64.1
+fi
+run python3 "$script" "$@"

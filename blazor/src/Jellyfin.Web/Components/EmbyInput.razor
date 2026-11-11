@@ -1,0 +1,81 @@
+@* <input is="emby-input"> with its label, inside .inputContainer. Bind with @bind-Value. *@
+<div class="inputContainer @ContainerClass">
+    <label class="inputLabel @(_focused ? "inputLabelFocused" : "inputLabelUnfocused")" for="@_id">@Label</label>
+    <input @ref="Element" id="@_id" class="emby-input @Class" type="@Type" value="@Value" required="@Required" disabled="@Disabled"
+           autocomplete="@Autocomplete" @oninput="OnInputAsync" @onchange="OnChangeAsync"
+           @onfocus="() => _focused = true" @onblur="() => _focused = false" @attributes="Attributes" />
+    @if (Description is not null)
+    {
+        <div class="fieldDescription">@Description</div>
+    }
+    @ChildContent
+</div>
+
+@code {
+    private string _id = ElementIds.Next("embyinput");
+    private bool _focused;
+
+    [Parameter]
+    public string? Id { get; set; }
+
+    [Parameter]
+    public string? Label { get; set; }
+
+    [Parameter]
+    public string Type { get; set; } = "text";
+
+    [Parameter]
+    public string? Value { get; set; }
+
+    /// <summary>Raised on every keystroke.</summary>
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    /// <summary>Raised when the value is committed (blur or Enter).</summary>
+    [Parameter]
+    public EventCallback<string?> OnCommit { get; set; }
+
+    [Parameter]
+    public string? Description { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? ContainerClass { get; set; }
+
+    [Parameter]
+    public bool Required { get; set; }
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    [Parameter]
+    public string? Autocomplete { get; set; } = "off";
+
+    /// <summary>Extra content inside the container, after the description.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    /// <summary>The input element, e.g. for <c>FocusAsync()</c>.</summary>
+    public ElementReference Element { get; private set; }
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrEmpty(Id))
+        {
+            _id = Id;
+        }
+    }
+
+    private Task OnInputAsync(ChangeEventArgs args)
+    {
+        Value = args.Value?.ToString();
+        return ValueChanged.InvokeAsync(Value);
+    }
+
+    private Task OnChangeAsync(ChangeEventArgs args) => OnCommit.InvokeAsync(args.Value?.ToString());
+}

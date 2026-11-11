@@ -1,0 +1,10 @@
+@* The action buttons at the end of the app bar, before the user menu. Features add a header
+   button (SyncPlay, remote play target) by marking a component [ShellSlot(ShellSlot.Toolbar)]. *@
+@inject Globalize Globalize
+
+<ShellSlotHost Slot="ShellSlot.Toolbar" />
+
+<MudTooltip Text="@Globalize["Search"]">
+    <MudIconButton Icon="@MdIcon.Of("search")" Color="Color.Inherit" Size="Size.Large" Href="#/search"
+                   aria-label="@Globalize["Search"]" />
+</MudTooltip>

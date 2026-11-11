@@ -1,0 +1,11 @@
+@* Port of components/router/FallbackRoute.tsx (the "not found" part). *@
+@namespace Jellyfin.Web.Routing
+@inject Globalize Globalize
+
+<Page Id="fallbackPage" Title="@Globalize["HeaderPageNotFound"]" Class="mainAnimatedPage libraryPage">
+    <div class="padded-left padded-right">
+        <h1>@Globalize["HeaderPageNotFound"]</h1>
+        <p>@Globalize["PageNotFound"]</p>
+        <LinkButton Class="button-link" Href="#/home">@Globalize["GoHome"]</LinkButton>
+    </div>
+</Page>

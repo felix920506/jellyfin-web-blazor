@@ -1,0 +1,78 @@
+@* The app shell for user-facing pages. Port of apps/modern/AppLayout.tsx: a fixed app bar that is
+   transparent until the page scrolls, a drawer on small screens, and the page body. *@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject JellyfinApi Api
+@inject IBrowser Browser
+@inject RouteTable Routes
+
+<div class="jf-layout">
+    @if (ShowToolbar)
+    {
+        <MudAppBar Dense="true" Elevation="0" Fixed="true" Gutters="false" Class="jf-appbar" ToolBarClass="jf-toolbar padded-left padded-right">
+            <AppToolbar DrawerAvailable="DrawerAvailable" DrawerOpen="DrawerOpen" OnDrawerButtonClick="ToggleDrawer" />
+        </MudAppBar>
+        <div class="jf-appbar-offset"></div>
+    }
+
+    @if (DrawerAvailable)
+    {
+        <MudDrawer Open="DrawerOpen" OpenChanged="OnDrawerOpenChanged" Variant="DrawerVariant.Temporary" Anchor="Anchor.Left"
+                   Elevation="1" Class="jf-drawer">
+            <MainDrawerContent />
+        </MudDrawer>
+    }
+
+    <main class="jf-main">
+        <div class="mainAnimatedPages skinBody"></div>
+        <div class="skinBody">@Body</div>
+    </main>
+    <ShellSlotHost Slot="ShellSlot.Footer" />
+</div>
+
+@code {
+    private bool _drawerActive;
+    private string? _lastUrl;
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    // The video player draws its own controls.
+    private bool ShowToolbar => Location.Path != "/video";
+
+    private bool IsMediumScreen => Browser.ViewportWidth >= Viewport.Md;
+
+    /// <summary>The drawer replaces the toolbar navigation on small screens, on user pages only.</summary>
+    private bool DrawerAvailable => ShowToolbar && Api.IsLoggedIn && !IsMediumScreen
+        && Routes.Match(Location.Path)?.Access == AccessLevel.User;
+
+    private bool DrawerOpen => _drawerActive && DrawerAvailable;
+
+    protected override void OnInitialized()
+    {
+        Api.Changed += Refresh;
+        Browser.Resized += Refresh;
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Following a drawer link closes the drawer.
+        if (_lastUrl != Location.Url)
+        {
+            _lastUrl = Location.Url;
+            _drawerActive = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        Api.Changed -= Refresh;
+        Browser.Resized -= Refresh;
+    }
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    private void ToggleDrawer() => _drawerActive = !_drawerActive;
+
+    private void OnDrawerOpenChanged(bool open) => _drawerActive = open;
+}

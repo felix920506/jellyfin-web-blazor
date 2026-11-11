@@ -1,0 +1,81 @@
+@* The avatar button and its menu. Port of components/toolbar/UserMenuButton.tsx and AppUserMenu.tsx. *@
+@implements IDisposable
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject ServerConnections Connections
+@inject WebConfig Config
+@inject Globalize Globalize
+
+<MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" Class="jf-user-menu">
+    <ActivatorContent Context="menu">
+        <MudTooltip Text="@Globalize["UserMenu"]">
+            <MudIconButton Color="Color.Inherit" Size="Size.Large" OnClick="@(e => menu.ToggleAsync(e))" Class="jf-user-menu-button" aria-label="@Globalize["UserMenu"]">
+                <UserAvatar User="Api.User" Size="Size.Small" />
+            </MudIconButton>
+        </MudTooltip>
+    </ActivatorContent>
+    <ChildContent>
+        <MudMenuItem Href="@($"#/userprofile?userId={Api.UserIdText}")" Icon="@MdIcon.Of("account_circle")" Label="@Globalize["Profile"]" />
+        <MudMenuItem Href="#/mypreferencesmenu" Icon="@MdIcon.Of("settings")" Label="@Globalize["Settings"]" />
+        @if (Api.IsAdmin)
+        {
+            <MudDivider />
+            <MudMenuItem Href="#/dashboard" Icon="@MdIcon.Of("dashboard")" Label="@Globalize["ManageServer"]" />
+            <MudMenuItem Href="#/metadata" Icon="@MdIcon.Of("edit")" Label="@Globalize["ManageMetadata"]" />
+        }
+        <MudDivider />
+        @if (_quickConnectEnabled)
+        {
+            <MudMenuItem Href="#/quickconnect" Icon="@MdIcon.Of("phonelink_lock")" Label="@Globalize["QuickConnect"]" />
+        }
+        @if (Config.Multiserver)
+        {
+            <MudMenuItem Icon="@MdIcon.Of("storage")" Label="@Globalize["SelectServer"]" OnClick="Router.ShowSelectServer" />
+        }
+        <MudMenuItem Icon="@MdIcon.Of("logout")" Label="@Globalize["ButtonSignOut"]" OnClick="SignOutAsync" />
+    </ChildContent>
+</MudMenu>
+
+@code {
+    private bool _quickConnectEnabled;
+    private Guid? _loadedFor;
+
+    protected override void OnInitialized() => Api.Changed += Refresh;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedFor == Api.UserId)
+        {
+            return;
+        }
+
+        _loadedFor = Api.UserId;
+        try
+        {
+            _quickConnectEnabled = await Api.Client.QuickConnect.Enabled.GetAsync() == true;
+        }
+        catch (Exception)
+        {
+            // Without an answer the entry stays hidden, as in the original client.
+            _quickConnectEnabled = false;
+        }
+    }
+
+    public void Dispose() => Api.Changed -= Refresh;
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    private async Task SignOutAsync()
+    {
+        var serverId = Api.ServerId;
+        await Connections.LogoutAsync();
+        if (Config.Multiserver)
+        {
+            Router.ShowSelectServer();
+        }
+        else
+        {
+            Router.ShowLogin(serverId);
+        }
+    }
+}

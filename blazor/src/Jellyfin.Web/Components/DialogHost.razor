@@ -1,0 +1,78 @@
+@* Renders the open dialogs of AppDialogs with the original dialogHelper markup. *@
+@implements IDisposable
+@inject AppDialogs Dialogs
+@inject IBrowser Browser
+
+@foreach (var dialog in Dialogs.Dialogs)
+{
+    <div class="dialogContainer" @key="dialog" @onclick="() => Dismiss(dialog)" @onkeydown="args => OnKeyDown(args, dialog)">
+        <div class="dialogBackdrop dialogBackdropOpened"></div>
+        <div class="@DialogClass(dialog)" tabindex="-1" @ref="_last" @onclick:stopPropagation="true" @onclick="NoOp">
+            <CascadingValue Value="dialog" IsFixed="true">
+                @dialog.Content
+            </CascadingValue>
+        </div>
+    </div>
+}
+
+@code {
+    private ElementReference _last;
+    private int _focusedCount;
+
+    protected override void OnInitialized() => Dialogs.Changed += OnChanged;
+
+    public void Dispose() => Dialogs.Changed -= OnChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var count = Dialogs.Dialogs.Count;
+        if (count > _focusedCount)
+        {
+            // Move focus into the new dialog so Escape and Tab act on it.
+            try
+            {
+                await _last.FocusAsync(preventScroll: true);
+            }
+            catch (Exception)
+            {
+                // The dialog closed before it rendered.
+            }
+        }
+
+        _focusedCount = count;
+    }
+
+    private void OnChanged()
+    {
+        Browser.ToggleClass(DocumentTarget.Body, "noScroll", Dialogs.Dialogs.Count > 0);
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static string DialogClass(DialogInstance dialog)
+    {
+        var size = dialog.Options.Size;
+        return "dialog focuscontainer centeredDialog opened"
+            + (string.IsNullOrEmpty(size) ? string.Empty : $" dialog-fixedSize dialog-{size}")
+            + (string.IsNullOrEmpty(dialog.Options.Class) ? string.Empty : " " + dialog.Options.Class);
+    }
+
+    private static void Dismiss(DialogInstance dialog)
+    {
+        if (dialog.Options.Dismissable)
+        {
+            dialog.Cancel();
+        }
+    }
+
+    private static void OnKeyDown(KeyboardEventArgs args, DialogInstance dialog)
+    {
+        if (args.Key == "Escape")
+        {
+            Dismiss(dialog);
+        }
+    }
+
+    private static void NoOp()
+    {
+    }
+}

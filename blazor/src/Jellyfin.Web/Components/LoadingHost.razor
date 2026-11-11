@@ -1,0 +1,21 @@
+@* The global spinner of LoadingService, in the original markup. *@
+@implements IDisposable
+@inject LoadingService Loading
+
+<div class="docspinner mdl-spinner @(Loading.IsVisible ? "mdlSpinnerActive" : null)" dir="ltr">
+    @for (var layer = 1; layer <= 4; layer++)
+    {
+        <div class="mdl-spinner__layer mdl-spinner__layer-@layer">
+            <div class="mdl-spinner__circle-clipper mdl-spinner__left"><div class="mdl-spinner__circle mdl-spinner__circleLeft"></div></div>
+            <div class="mdl-spinner__circle-clipper mdl-spinner__right"><div class="mdl-spinner__circle mdl-spinner__circleRight"></div></div>
+        </div>
+    }
+</div>
+
+@code {
+    protected override void OnInitialized() => Loading.Changed += OnChanged;
+
+    public void Dispose() => Loading.Changed -= OnChanged;
+
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+}

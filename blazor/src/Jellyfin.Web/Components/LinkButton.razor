@@ -1,0 +1,49 @@
+@* <a is="emby-linkbutton">. Href is an app link ("#/home") or an external URL (opened in a new tab). *@
+<a class="emby-button @Class" href="@(Href ?? "#")" target="@Target" rel="@Rel" style="@Style" title="@Title"
+   @onclick="HandleClickAsync" @onclick:preventDefault="@PreventDefault" @attributes="Attributes">
+    @if (Icon is not null)
+    {
+        <Icon Name="@Icon" Class="@IconClass" />
+    }
+    @ChildContent
+</a>
+
+@code {
+    [Parameter]
+    public string? Href { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? Style { get; set; }
+
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public string? Icon { get; set; }
+
+    [Parameter]
+    public string? IconClass { get; set; } = "button-icon button-icon-left";
+
+    [Parameter]
+    public EventCallback<MouseEventArgs> OnClick { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private bool IsExternal => Href is not null && !Href.StartsWith('#') && Href.Contains("://", StringComparison.Ordinal);
+
+    private string? Target => IsExternal ? "_blank" : null;
+
+    private string? Rel => IsExternal ? "noopener noreferrer" : null;
+
+    // Without an href the link is a button: do not let "#" change the location.
+    private bool PreventDefault => Href is null || Href == "#";
+
+    private Task HandleClickAsync(MouseEventArgs args) => OnClick.InvokeAsync(args);
+}

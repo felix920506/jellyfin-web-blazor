@@ -1,0 +1,45 @@
+@* Text with buttons: the dialog behind alert and confirm. Port of components/dialog/dialog.js. *@
+<div class="formDialogHeader formDialogHeader-clear justify-content-center">
+    <h1 class="formDialogHeaderTitle @(string.IsNullOrEmpty(Title) ? "hide" : null)" style="margin-top: .5em;padding: 0 1em;">@Title</h1>
+</div>
+<div class="formDialogContent smoothScrollY no-grow" style="max-width: @(Buttons.Count * 150 + 200)px">
+    <div class="dialogContentInner dialog-content-centered @(HasText ? null : "hide")" style="padding-top:1em;padding-bottom: 1em; text-align: center;">
+        <div class="text">
+            @if (Html is not null)
+            {
+                @((MarkupString)Html)
+            }
+            else
+            {
+                @Text
+            }
+        </div>
+    </div>
+</div>
+<div class="formDialogFooter formDialogFooter-clear formDialogFooter-flex" style="margin:1em">
+    @foreach (var button in Buttons)
+    {
+        <button type="button" class="emby-button btnOption raised formDialogFooterItem formDialogFooterItem-autosize button-@button.Type"
+                data-id="@button.Id" @onclick="() => Dialog.Close(button.Id)">@button.Name</button>
+    }
+</div>
+
+@code {
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public string? Text { get; set; }
+
+    /// <summary>Trusted markup shown instead of <see cref="Text"/>.</summary>
+    [Parameter]
+    public string? Html { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<DialogButton> Buttons { get; set; } = [];
+
+    private bool HasText => !string.IsNullOrEmpty(Html) || !string.IsNullOrEmpty(Text);
+}

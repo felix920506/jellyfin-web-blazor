@@ -1,0 +1,12 @@
+@* Renders the components that features registered for a shell slot with [ShellSlot]. *@
+@inject ShellSlots Slots
+
+@foreach (var type in Slots.For(Slot))
+{
+    <DynamicComponent @key="type" Type="type" />
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public ShellSlot Slot { get; set; }
+}

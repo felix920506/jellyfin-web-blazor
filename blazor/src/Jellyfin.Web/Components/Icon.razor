@@ -1,0 +1,14 @@
+@* A Material icon in the original client's markup: an empty span with the icon name as a class. *@
+<span class="material-icons @Class @Name" aria-hidden="true" @attributes="Attributes"></span>
+
+@code {
+    /// <summary>Icon name as in material-design-icons-iconfont, e.g. "play_arrow".</summary>
+    [Parameter, EditorRequired]
+    public string Name { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+}

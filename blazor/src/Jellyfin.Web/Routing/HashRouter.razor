@@ -1,0 +1,166 @@
+@* The app's router: follows the URL fragment, guards access and renders the matched page in its layout. *@
+@namespace Jellyfin.Web.Routing
+@using System.Reflection
+@implements IDisposable
+@inject AppRouter Router
+@inject RouteTable Routes
+@inject RouteGuard Guard
+@inject Globalize Globalize
+@inject AppDialogs Dialogs
+@inject IBrowser Browser
+
+@if (_view is null)
+{
+    <div class="splashLogo"></div>
+}
+else
+{
+    <CascadingValue Value="_view.Location">
+        <LayoutView @key="_generation" Layout="_view.Layout">
+            @_view.Content
+        </LayoutView>
+    </CascadingValue>
+}
+
+@code {
+    private View? _view;
+    private int _version;
+    private int _generation;
+    private string? _lastPath;
+
+    /// <summary>Layout for pages without a <c>@layout</c> directive.</summary>
+    [Parameter, EditorRequired]
+    public Type DefaultLayout { get; set; } = default!;
+
+    protected override void OnInitialized()
+    {
+        Router.LocationChanged += OnLocationChanged;
+        Globalize.LanguageChanged += OnLanguageChanged;
+    }
+
+    protected override Task OnInitializedAsync() => ResolveAsync(Router.Location);
+
+    public void Dispose()
+    {
+        Router.LocationChanged -= OnLocationChanged;
+        Globalize.LanguageChanged -= OnLanguageChanged;
+    }
+
+    private void OnLocationChanged(AppLocation location) => _ = InvokeAsync(() => ResolveAsync(location));
+
+    // Translated text is rendered by every component, so start over with a fresh tree.
+    private void OnLanguageChanged() => _ = InvokeAsync(() =>
+    {
+        _generation++;
+        StateHasChanged();
+    });
+
+    private async Task ResolveAsync(AppLocation location)
+    {
+        var version = ++_version;
+        Dialogs.CloseAll();
+
+        if (location.Path == "/")
+        {
+            Router.Navigate("/home", replace: true);
+            return;
+        }
+
+        var match = Routes.Match(location.Path);
+        if (match is null && NormalizeLegacyPath(location) is { } normalized)
+        {
+            Router.Navigate(normalized, replace: true);
+            return;
+        }
+
+        GuardResult result;
+        try
+        {
+            result = await Guard.CheckAsync(match?.Access ?? AccessLevel.Public, location);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"[HashRouter] guard failed: {ex}");
+            result = new GuardResult.ConnectionError(new ConnectResult(ConnectionState.Unavailable));
+        }
+
+        if (version != _version)
+        {
+            // A newer navigation started while this one was connecting.
+            return;
+        }
+
+        switch (result)
+        {
+            case GuardResult.Redirect redirect:
+                Router.Navigate(redirect.Url, replace: true);
+                return;
+            case GuardResult.ConnectionError error:
+                Show(location, typeof(ConnectionErrorPage), new Dictionary<string, object?> { ["Result"] = error.Result }, "error");
+                break;
+            default:
+                if (match is null)
+                {
+                    Show(location, typeof(NotFoundPage), [], "notfound");
+                }
+                else
+                {
+                    Show(location, match.PageType, PageParameters.Bind(match.PageType, match.RouteValues, location.Query), PageKey(match.PageType, location));
+                }
+
+                break;
+        }
+
+        if (!string.Equals(_lastPath, location.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            _lastPath = location.Path;
+            Browser.ScrollTo(0, 0);
+        }
+
+        StateHasChanged();
+    }
+
+    private void Show(AppLocation location, Type pageType, Dictionary<string, object?> parameters, string key)
+    {
+        var layout = pageType.GetCustomAttribute<LayoutAttribute>()?.LayoutType ?? DefaultLayout;
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent(0, pageType);
+            builder.AddMultipleAttributes(1, parameters!);
+            builder.SetKey(key);
+            builder.CloseComponent();
+        };
+        _view = new View(location, layout, content);
+    }
+
+    // A page instance lives as long as its path and its query (minus "tab" and the keys named by
+    // [KeepOnQueryChange]) stay the same.
+    private static string PageKey(Type pageType, AppLocation location)
+    {
+        var keep = pageType.GetCustomAttribute<KeepOnQueryChangeAttribute>()?.Keys ?? [];
+        var query = location.Query
+            .Where(q => !q.Key.Equals("tab", StringComparison.OrdinalIgnoreCase) && !keep.Contains(q.Key, StringComparer.OrdinalIgnoreCase))
+            .OrderBy(q => q.Key, StringComparer.OrdinalIgnoreCase);
+        return AppLocation.BuildUrl(location.Path.ToLowerInvariant(), query);
+    }
+
+    // Port of components/router/FallbackRoute.tsx: old ".html" URLs.
+    private static string? NormalizeLegacyPath(AppLocation location)
+    {
+        var path = location.Path;
+        if (!path.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        path = path[..^5];
+        if (path.StartsWith("/wizard", StringComparison.OrdinalIgnoreCase) && path.Length > 7 && path[7] != '/')
+        {
+            path = "/wizard/" + path[7..];
+        }
+
+        return AppLocation.BuildUrl(path, location.Query);
+    }
+
+    private sealed record View(AppLocation Location, Type Layout, RenderFragment Content);
+}

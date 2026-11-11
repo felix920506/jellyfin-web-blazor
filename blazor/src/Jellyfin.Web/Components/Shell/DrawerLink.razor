@@ -1,0 +1,28 @@
+@* One row of a navigation drawer. Selection is decided by the caller because the app routes on
+   the URL fragment, which NavLink does not track. *@
+<div class="mud-nav-item">
+    <a class="mud-nav-link mud-ripple @(Selected ? "active" : null)" href="@Href" target="@(External ? "_blank" : null)"
+       rel="@(External ? "noopener noreferrer" : null)" aria-current="@(Selected ? "page" : null)">
+        <span class="mud-icon-root mud-nav-link-icon mud-nav-link-icon-default material-icons @Icon" aria-hidden="true"></span>
+        <div class="mud-nav-link-text">@Text</div>
+    </a>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Href { get; set; } = string.Empty;
+
+    /// <summary>Material icon name, e.g. "home".</summary>
+    [Parameter, EditorRequired]
+    public string Icon { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Text { get; set; }
+
+    [Parameter]
+    public bool Selected { get; set; }
+
+    /// <summary>Opens in a new tab.</summary>
+    [Parameter]
+    public bool External { get; set; }
+}

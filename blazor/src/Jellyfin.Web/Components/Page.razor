@@ -1,0 +1,40 @@
+@* A page root with the original client's attributes. Port of components/Page.tsx. *@
+@inject ShellState Shell
+
+<div id="@Id" data-role="page" class="page @Class" data-title="@Title" data-backbutton="@(BackButton ? "true" : "false")" @attributes="Attributes">
+    @ChildContent
+</div>
+
+@code {
+    /// <summary>Element id; the original stylesheets target pages by id.</summary>
+    [Parameter, EditorRequired]
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>Extra classes, e.g. "mainAnimatedPage libraryPage".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>Page title for the header and the browser tab; null shows the server name.</summary>
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public bool BackButton { get; set; } = true;
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private string? _appliedTitle = "\0";
+
+    protected override void OnParametersSet()
+    {
+        if (_appliedTitle != Title)
+        {
+            _appliedTitle = Title;
+            Shell.SetTitle(Title);
+        }
+    }
+}

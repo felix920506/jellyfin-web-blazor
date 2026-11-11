@@ -1,0 +1,25 @@
+# Development toolchain image for the Blazor WebAssembly port.
+# Everything (restore, build, test, sass, publish) runs inside this image via ../dev.
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+
+ARG TARGETARCH
+ARG DART_SASS_VERSION=1.107.0
+
+RUN set -eux; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+        arm64) sass_arch=arm64 ;; \
+        amd64) sass_arch=x64 ;; \
+        *) echo "unsupported architecture" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/sass/dart-sass/releases/download/${DART_SASS_VERSION}/dart-sass-${DART_SASS_VERSION}-linux-${sass_arch}.tar.gz" \
+        | tar -xz -C /opt; \
+    ln -s /opt/dart-sass/sass /usr/local/bin/sass; \
+    sass --version
+
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+    MSBUILDDISABLENODEREUSE=1 \
+    DOTNET_gcServer=0
+
+WORKDIR /work/blazor

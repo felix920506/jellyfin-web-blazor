@@ -1,0 +1,79 @@
+@* The navigation drawer of the user-facing pages. Port of apps/modern/components/drawers/MainDrawerContent.tsx. *@
+@implements IDisposable
+@inject UserViews Views
+@inject AppRouter Router
+@inject WebConfig Config
+@inject Globalize Globalize
+
+<nav class="mud-navmenu mud-navmenu-default jf-drawer-nav">
+    <DrawerLink Href="#/home" Icon="home" Text="@Globalize["Home"]" Selected="IsHomeSelected" />
+    <DrawerLink Href="#/home?tab=1" Icon="favorite" Text="@Globalize["Favorites"]" Selected="@(Location.Path == "/home" && Location.Tab == 1)" />
+
+    @if (Config.MenuLinks.Count > 0)
+    {
+        <MudDivider />
+        @foreach (var link in Config.MenuLinks)
+        {
+            <DrawerLink Href="@link.Url" Icon="@(link.Icon ?? "link")" Text="@link.Name" External="true" />
+        }
+    }
+
+    @if (_views.Count > 0)
+    {
+        <MudDivider />
+        <div class="jf-drawer-subheader">@Globalize["HeaderLibraries"]</div>
+        @foreach (var view in _views)
+        {
+            <DrawerLink @key="view.Id" Href="@Router.GetRouteUrl(view, new RouteOptions { Context = view.CollectionType.ToApiString() })"
+                        Icon="@MdIcon.ForLibrary(view.CollectionType)" Text="@view.Name" Selected="@IsViewSelected(view)" />
+        }
+    }
+</nav>
+
+@code {
+    private IReadOnlyList<BaseItemDto> _views = [];
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    private bool IsHomeSelected => Location.Path == "/home" && (Location.Query.Count == 0 || Location["tab"] == "0");
+
+    protected override async Task OnInitializedAsync()
+    {
+        Views.Changed += OnViewsChanged;
+        Globalize.LanguageChanged += Refresh;
+        await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        Views.Changed -= OnViewsChanged;
+        Globalize.LanguageChanged -= Refresh;
+    }
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnViewsChanged() => _ = InvokeAsync(async () =>
+    {
+        await LoadAsync();
+        StateHasChanged();
+    });
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _views = await Views.GetAsync();
+        }
+        catch (Exception)
+        {
+            _views = [];
+        }
+    }
+
+    private bool IsViewSelected(BaseItemDto view)
+    {
+        var libraryId = Location["topParentId"] ?? Location["parentId"];
+        return Guid.TryParse(libraryId, out var id) && id == view.Id;
+    }
+}

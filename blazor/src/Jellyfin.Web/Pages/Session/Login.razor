@@ -1,0 +1,102 @@
+@* Sign-in. Port of apps/legacy/controllers/session/login. *@
+@attribute [Route("/login")]
+@attribute [Access(AccessLevel.Public)]
+@implements IDisposable
+@inject JellyfinApi Api
+@inject ServerConnections Connections
+@inject AppSettings Settings
+@inject AppRouter Router
+@inject AppDialogs Dialogs
+@inject ToastService Toasts
+@inject LoadingService Loading
+@inject ShellState Shell
+@inject WebConfig Config
+@inject Globalize Globalize
+
+<Page Id="loginPage" Class="mainAnimatedPage standalonePage backdropPage" BackButton="false" data-backdroptype="splashscreen">
+    <div class="padded-left padded-right padded-bottom-page margin-auto-y">
+        <form class="manualLoginForm margin-auto-x" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <div class="padded-left padded-right flex align-items-center justify-content-center">
+                <h1 class="sectionTitle">@Globalize["HeaderPleaseSignIn"]</h1>
+            </div>
+            <EmbyInput Id="txtManualName" Required="true" Label="@Globalize["LabelUser"]" Autocomplete="username" autocapitalize="off"
+                       @bind-Value="_name" />
+            <EmbyInput Id="txtManualPassword" Type="password" Label="@Globalize["LabelPassword"]" Autocomplete="current-password"
+                       @bind-Value="_password" />
+            <EmbyCheckbox Class="chkRememberLogin" Label="@Globalize["RememberMe"]" @bind-Value="_remember" />
+            <EmbyButton Type="submit" Class="raised button-submit block" Disabled="_busy"><span>@Globalize["ButtonSignIn"]</span></EmbyButton>
+        </form>
+
+        <div class="readOnlyContent" style="margin: .5em auto 1em;">
+            @if (Config.Multiserver)
+            {
+                <EmbyButton Class="raised block btnSelectServer" OnClick="Router.ShowSelectServer"><span>@Globalize["ButtonChangeServer"]</span></EmbyButton>
+            }
+        </div>
+    </div>
+</Page>
+
+@code {
+    private string? _name;
+    private string? _password;
+    private bool _remember = true;
+    private bool _busy;
+
+    /// <summary>Where to go after signing in (an app URL such as "/details?id=...").</summary>
+    [Parameter]
+    public string? Url { get; set; }
+
+    [Parameter]
+    public string? ServerId { get; set; }
+
+    protected override void OnInitialized()
+    {
+        _remember = Settings.EnableAutoLogin;
+        Shell.SetTransparentHeader(true);
+    }
+
+    public void Dispose() => Shell.SetTransparentHeader(false);
+
+    private async Task SubmitAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        Loading.Show();
+        Settings.EnableAutoLogin = _remember;
+        try
+        {
+            var result = await Api.Client.Users.AuthenticateByName.PostAsync(new AuthenticateUserByName
+            {
+                Username = _name ?? string.Empty,
+                Pw = _password ?? string.Empty
+            });
+            await Connections.OnAuthenticatedAsync(result!);
+            Router.Navigate(string.IsNullOrEmpty(Url) ? "/home" : Url);
+        }
+        catch (Exception ex)
+        {
+            _password = string.Empty;
+            switch (ApiErrors.StatusOf(ex))
+            {
+                case System.Net.HttpStatusCode.Unauthorized:
+                    Toasts.Show(Globalize["MessageInvalidUser"]);
+                    break;
+                case System.Net.HttpStatusCode.Forbidden:
+                    Toasts.Show(Globalize["MessageUnauthorizedUser"]);
+                    break;
+                default:
+                    await Dialogs.AlertAsync(Globalize["MessageUnableToConnectToServer"], Globalize["HeaderConnectionFailure"]);
+                    break;
+            }
+        }
+        finally
+        {
+            Loading.Hide();
+            _busy = false;
+        }
+    }
+}

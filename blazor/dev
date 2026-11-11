@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Runs the Blazor port's toolchain inside Docker. Nothing but Docker is needed on the host.
+#
+#   ./dev build            prepare assets + dotnet build (warnings are errors)
+#   ./dev test [args]      run unit/component tests
+#   ./dev check            build + test: run this before every commit
+#   ./dev prepare          compile SCSS, copy strings/assets, fetch vendor libs
+#   ./dev serve            dev server on http://localhost:${PORT:-5080} (foreground; `./dev stop` ends it)
+#   ./dev stop             stop the dev server started from this checkout with the same PORT
+#   ./dev e2e <script.py> [args]   serve the app, run a Playwright script from e2e/ against it, stop
+#   ./dev publish          release publish to blazor/artifacts/publish
+#   ./dev api <type-rx> [member-rx]   look up SDK / MudBlazor API signatures
+#   ./dev dotnet <args>    arbitrary dotnet command
+#   ./dev sh [-c cmd]      shell in the toolchain container
+#   ./dev clean            remove bin/obj and generated assets (frees disk)
+#
+# Works from any checkout or git worktree: the repo root is derived from this script's location.
+# Heavy commands take a machine-wide lock so parallel worktrees do not exhaust memory.
+set -euo pipefail
+
+BLAZOR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(dirname "$BLAZOR_DIR")"
+IMAGE="jellyfin-web-blazor-dev:1"
+CACHE="${JFWEB_CACHE:-$HOME/.cache/jellyfin-web-blazor}"
+LOCK="$CACHE/build.lock"
+PORT="${PORT:-5080}"
+SLN="Jellyfin.Web.slnx"
+
+mkdir -p "$CACHE/nuget" "$CACHE/home" "$CACHE/vendor"
+
+ensure_image() {
+    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+        echo "[dev] building toolchain image $IMAGE" >&2
+        flock "$LOCK" docker build -q -t "$IMAGE" -f "$BLAZOR_DIR/docker/Dockerfile.dev" "$BLAZOR_DIR/docker" >&2
+    fi
+}
+
+# run_in [docker args...] -- command...
+run_in() {
+    local docker_args=()
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do docker_args+=("$1"); shift; done
+    shift
+    local tty=()
+    if [ -t 0 ] && [ -t 1 ]; then tty=(-t); fi
+    docker run --rm -i "${tty[@]}" --init \
+        --user "$(id -u):$(id -g)" \
+        -e HOME=/cache/home -e DOTNET_CLI_HOME=/cache/home -e NUGET_PACKAGES=/cache/nuget \
+        -e VENDOR_CACHE=/cache/vendor \
+        -v "$CACHE:/cache" -v "$ROOT:/work" -w /work/blazor \
+        "${docker_args[@]}" "$IMAGE" "$@"
+}
+
+locked() { flock "$LOCK" "$@"; }
+
+do_prepare() { run_in -- bash scripts/prepare-assets.sh; }
+do_build()   { do_prepare && run_in -- dotnet build "$SLN" -warnaserror -nodeReuse:false -p:UseSharedCompilation=false "$@"; }
+do_test()    { run_in -- dotnet test "$SLN" -nodeReuse:false -p:UseSharedCompilation=false "$@"; }
+do_check()   { do_build && do_test --no-build; }
+do_publish() {
+    do_prepare && run_in -- dotnet publish src/Jellyfin.Web/Jellyfin.Web.csproj -c Release \
+        -o artifacts/publish -nodeReuse:false -p:UseSharedCompilation=false "$@"
+}
+
+do_e2e() {
+    local port="${E2E_PORT:-5090}" name="jfweb-e2e-serve"
+    do_prepare
+    mkdir -p "$BLAZOR_DIR/artifacts"
+    docker rm -f "$name" >/dev/null 2>&1 || true
+    trap "docker rm -f '$name' >/dev/null 2>&1 || true" EXIT
+    run_in --name "$name" -p "$port:$port" -- dotnet run --project src/Jellyfin.Web --no-launch-profile \
+        --urls "http://0.0.0.0:$port" -p:UseSharedCompilation=false \
+        > "$BLAZOR_DIR/artifacts/e2e-serve.log" 2>&1 < /dev/null &
+    local i
+    for i in $(seq 1 240); do
+        if curl -fs -o /dev/null "http://localhost:$port/"; then break; fi
+        if ! kill -0 $! 2>/dev/null; then
+            echo "[dev] dev server exited; see artifacts/e2e-serve.log" >&2; tail -30 "$BLAZOR_DIR/artifacts/e2e-serve.log" >&2; return 1
+        fi
+        sleep 2
+    done
+    "$BLAZOR_DIR/scripts/test-server.sh" up >/dev/null
+    APP_URL="http://localhost:$port" "$BLAZOR_DIR/e2e/run" "$@"
+}
+
+# Re-entry point: `locked "$0" __locked <function> args...` runs a function of this script
+# while holding the machine-wide lock.
+if [ "${1:-}" = "__locked" ]; then shift; "$@"; exit $?; fi
+
+cmd="${1:-help}"; [ "$#" -gt 0 ] && shift
+case "$cmd" in
+    build|test|check|prepare|publish|e2e)
+        ensure_image
+        locked "$0" __locked "do_$cmd" "$@" ;;
+    serve)
+        ensure_image
+        locked "$0" __locked do_prepare
+        run_in --name "jfweb-serve-$PORT" -p "$PORT:$PORT" -- dotnet run --project src/Jellyfin.Web --no-launch-profile \
+            --urls "http://0.0.0.0:$PORT" -p:UseSharedCompilation=false "$@" ;;
+    stop)
+        docker rm -f "jfweb-serve-$PORT" >/dev/null 2>&1 || true ;;
+    api)
+        ensure_image
+        locked "$0" __locked run_in -- dotnet run --project tools/ApiSearch -v q -- "$@" ;;
+    dotnet)
+        ensure_image
+        locked "$0" __locked run_in -- dotnet "$@" ;;
+    sh)
+        ensure_image
+        run_in -- bash "$@" ;;
+    clean)
+        find "$BLAZOR_DIR" -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
+        rm -rf "$BLAZOR_DIR/artifacts" "$BLAZOR_DIR/src/Jellyfin.Web/wwwroot/generated" ;;
+    *)
+        sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

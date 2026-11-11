@@ -1,0 +1,116 @@
+// App shell glue: the frame around the original client's pages (see Layout/MainLayout.razor).
+html,
+body,
+#app {
+    height: 100%;
+}
+
+// Port of apps/modern/AppLayout.tsx: a column of app bar offset and page area.
+.jf-layout {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.jf-appbar-offset {
+    flex-shrink: 0;
+    height: 48px;
+}
+
+.jf-main {
+    position: relative;
+    flex-grow: 1;
+    width: 100%;
+}
+
+// Port of components/OffsetAppBar.tsx: see-through at the top of the page, solid once scrolled.
+// interop.js keeps body.jf-scrolled in step with the scroll position.
+.mud-appbar.jf-appbar {
+    background-color: transparent;
+    box-shadow: none;
+    color: inherit;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+
+    .jf-scrolled & {
+        background-color: var(--mud-palette-appbar-background);
+        box-shadow: var(--mud-elevation-1);
+        color: var(--mud-palette-appbar-text);
+    }
+}
+
+.jf-toolbar {
+    flex-wrap: wrap;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 48px;
+
+    @media (min-width: 1200px) {
+        flex-wrap: nowrap;
+    }
+}
+
+.jf-toolbar-nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+
+    .mud-button-root {
+        text-transform: none;
+        white-space: nowrap;
+    }
+}
+
+.jf-toolbar-end {
+    display: flex;
+    flex-grow: 1;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.jf-server-button img {
+    max-width: 1.25em;
+    max-height: 1.25em;
+    margin-inline-end: 8px;
+}
+
+.jf-user-menu-button.mud-icon-button {
+    padding: 0;
+}
+
+// The temporary drawer slides in below the app bar.
+.jf-drawer .mud-drawer-content {
+    padding-top: 48px;
+}
+
+.jf-drawer-subheader {
+    padding: 12px 16px 4px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+// Shown when the runtime reports an unhandled error.
+#blazor-error-ui {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 100000;
+    padding: 0.8em 1.2em;
+    background: #b00020;
+    color: #fff;
+
+    .reload {
+        margin: 0 1em;
+        color: inherit;
+        text-decoration: underline;
+    }
+
+    .dismiss {
+        float: right;
+        cursor: pointer;
+    }
+}

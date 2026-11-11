@@ -1,0 +1,21 @@
+@* Renders ToastService messages with the original toast markup. *@
+@implements IDisposable
+@inject ToastService Toasts
+
+@if (Toasts.Messages.Count > 0)
+{
+    <div class="toastContainer">
+        @foreach (var message in Toasts.Messages)
+        {
+            <div class="toast @(message.Visible ? "toastVisible" : null) @(message.Hiding ? "toastHide" : null)" @key="message">@message.Text</div>
+        }
+    </div>
+}
+
+@code {
+    protected override void OnInitialized() => Toasts.Changed += OnChanged;
+
+    public void Dispose() => Toasts.Changed -= OnChanged;
+
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+}

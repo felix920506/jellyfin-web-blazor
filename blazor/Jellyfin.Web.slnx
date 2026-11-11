@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Jellyfin.Web/Jellyfin.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Jellyfin.Web.Tests/Jellyfin.Web.Tests.csproj" />
+  </Folder>
+</Solution>

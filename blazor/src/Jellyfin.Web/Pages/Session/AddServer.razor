@@ -1,0 +1,75 @@
+@* Asks for a server address. Port of apps/legacy/controllers/session/addServer. *@
+@attribute [Route("/addserver")]
+@attribute [Access(AccessLevel.Public)]
+@inject ServerConnections Connections
+@inject AppRouter Router
+@inject AppDialogs Dialogs
+@inject LoadingService Loading
+@inject Globalize Globalize
+
+<Page Id="addServerPage" Class="mainAnimatedPage standalonePage">
+    <div class="padded-left padded-right padded-bottom-page">
+        <form class="addServerForm" style="margin: 0 auto;" novalidate @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <h1>@Globalize["HeaderConnectToServer"]</h1>
+            <EmbyInput Id="txtServerHost" Type="url" Required="true" Label="@Globalize["LabelServerHost"]"
+                       Description="@Globalize["LabelServerHostHelp"]" @bind-Value="_host" />
+            <br />
+            <EmbyButton Type="submit" Class="raised button-submit block" Disabled="_busy"><span>@Globalize["Connect"]</span></EmbyButton>
+            <EmbyButton Class="raised button-cancel block btnCancel" OnClick="Router.Back"><span>@Globalize["ButtonCancel"]</span></EmbyButton>
+        </form>
+    </div>
+</Page>
+
+@code {
+    private string? _host;
+    private bool _busy;
+
+    private async Task SubmitAsync()
+    {
+        var host = (_host ?? string.Empty).Trim().TrimEnd('/');
+        if (host.Length == 0 || _busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        Loading.Show();
+        ConnectResult result;
+        try
+        {
+            result = await Connections.ConnectToAddressAsync(host);
+        }
+        finally
+        {
+            Loading.Hide();
+            _busy = false;
+        }
+
+        switch (result.State)
+        {
+            case ConnectionState.SignedIn:
+                Router.GoHome();
+                break;
+            case ConnectionState.ServerSignIn:
+                if (result.SystemInfo?.StartupWizardCompleted == false)
+                {
+                    Router.Navigate("/wizard/start");
+                }
+                else
+                {
+                    Router.ShowLogin(result.Server?.Id);
+                }
+
+                break;
+            case ConnectionState.ServerSelection:
+                Router.ShowSelectServer();
+                break;
+            case ConnectionState.ServerUpdateNeeded:
+                await Dialogs.AlertAsync(Globalize.Translate("ServerUpdateNeeded", "https://github.com/jellyfin/jellyfin"));
+                break;
+            default:
+                await Dialogs.AlertAsync(Globalize["MessageUnableToConnectToServer"], Globalize["HeaderConnectionFailure"]);
+                break;
+        }
+    }
+}

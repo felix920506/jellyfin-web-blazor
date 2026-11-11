@@ -1,0 +1,23 @@
+@* Root component. MudBlazor providers, global overlays, then the hash router. *@
+@implements IDisposable
+@inject ThemeManager Theme
+
+<MudThemeProvider Theme="Theme.MudTheme" IsDarkMode="Theme.IsDark" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<HashRouter DefaultLayout="typeof(MainLayout)" />
+
+<ShellSlotHost Slot="ShellSlot.Overlay" />
+<DialogHost />
+<ToastHost />
+<LoadingHost />
+
+@code {
+    protected override void OnInitialized() => Theme.Changed += OnThemeChanged;
+
+    private void OnThemeChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Theme.Changed -= OnThemeChanged;
+}

@@ -1,0 +1,67 @@
+@* A menu of choices. Port of components/actionSheet/actionSheet.ts (non-TV layout). *@
+@inject Globalize Globalize
+@inject AppHost AppHost
+
+<div class="actionSheetContent @(Centered ? "actionSheetContent-centered" : null)">
+    @if (!string.IsNullOrEmpty(Options.Title))
+    {
+        <h1 class="actionSheetTitle">@Options.Title</h1>
+    }
+    @if (!string.IsNullOrEmpty(Options.Text))
+    {
+        <p class="actionSheetText">@Options.Text</p>
+    }
+    <div class="actionSheetScroller scrollY">
+        @foreach (var item in Options.Items)
+        {
+            if (item.Divider)
+            {
+                <div class="actionsheetDivider"></div>
+                continue;
+            }
+
+            var icon = item.Icon ?? (item.Selected ? "check" : null);
+            <button type="button" class="emby-button listItem listItem-button actionSheetMenuItem @(AppHost.IsMobileLayout ? "actionsheet-xlargeFont" : null)"
+                    data-id="@item.Id" @onclick="() => Dialog.Close(item.Id)">
+                @if (icon is not null)
+                {
+                    <span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons @icon" aria-hidden="true"></span>
+                }
+                else if (HasIcons && !Centered)
+                {
+                    <span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons check" aria-hidden="true" style="visibility:hidden;"></span>
+                }
+                <div class="listItemBody actionsheetListItemBody">
+                    <div class="listItemBodyText actionSheetItemText">@item.Name</div>
+                    @if (!string.IsNullOrEmpty(item.SecondaryText))
+                    {
+                        <div class="listItemBodyText secondary">@item.SecondaryText</div>
+                    }
+                </div>
+                @if (!string.IsNullOrEmpty(item.AsideText))
+                {
+                    <div class="listItemAside actionSheetItemAsideText">@item.AsideText</div>
+                }
+            </button>
+        }
+    </div>
+    @if (Options.ShowCancel)
+    {
+        <div class="buttons">
+            <button type="button" class="emby-button btnCloseActionSheet" @onclick="() => Dialog.Cancel()">@Globalize["ButtonCancel"]</button>
+        </div>
+    }
+</div>
+
+@code {
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public ActionSheetOptions Options { get; set; } = default!;
+
+    private bool HasIcons => Options.Items.Any(i => i.Icon is not null || i.Selected);
+
+    // Items line up on their icons; without icons a titled sheet is centred.
+    private bool Centered => !string.IsNullOrEmpty(Options.Title) && !HasIcons;
+}

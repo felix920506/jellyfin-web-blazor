@@ -1,0 +1,53 @@
+@* <input type="radio" is="emby-radio"> with its label. Group radios by Name; Selected marks the checked one. *@
+<label class="mdl-radio mdl-js-radio mdl-js-ripple-effect show-focus @LabelClass">
+    <input type="radio" name="@Name" value="@Value" class="mdl-radio__button @Class" data-radio="true" checked="@Selected" disabled="@Disabled"
+           @onchange="() => OnSelected.InvokeAsync(Value)" @attributes="Attributes" />
+    <div class="mdl-radio__circles">
+        <svg>
+            <defs>
+                <clipPath id="@_clipId">
+                    <circle cx="50%" cy="50%" r="50%" />
+                </clipPath>
+            </defs>
+            <circle class="mdl-radio__outer-circle" cx="50%" cy="50%" r="50%" fill="none" stroke="currentcolor" stroke-width="0.26em" clip-path="url(#@_clipId)" />
+            <circle class="mdl-radio__inner-circle" cx="50%" cy="50%" r="25%" fill="currentcolor" />
+        </svg>
+        <div class="mdl-radio__focus-circle"></div>
+    </div>
+    <span class="radioButtonLabel mdl-radio__label">@(ChildContent ?? (RenderFragment)(b => b.AddContent(0, Label)))</span>
+</label>
+
+@code {
+    private readonly string _clipId = ElementIds.Next("cutoff");
+
+    [Parameter, EditorRequired]
+    public string Name { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string Value { get; set; } = string.Empty;
+
+    [Parameter]
+    public bool Selected { get; set; }
+
+    /// <summary>Raised with <see cref="Value"/> when this radio is chosen.</summary>
+    [Parameter]
+    public EventCallback<string> OnSelected { get; set; }
+
+    [Parameter]
+    public string? Label { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? LabelClass { get; set; }
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+}

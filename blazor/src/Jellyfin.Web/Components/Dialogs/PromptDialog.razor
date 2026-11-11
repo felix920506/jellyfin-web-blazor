@@ -1,0 +1,54 @@
+@* Asks for one line of text. Port of components/prompt/prompt.js. *@
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Title</h3>
+</div>
+<div class="formDialogContent smoothScrollY">
+    <div class="dialogContentInner dialog-content-centered dialogContentInner-mini" style="padding-top:2em;">
+        <form @onsubmit="Submit" @onsubmit:preventDefault="true">
+            <EmbyInput @ref="_input" Id="txtInput" Label="@Label" @bind-Value="_value" Description="@Description" />
+            <div class="formDialogFooter">
+                <button type="submit" class="emby-button raised btnSubmit block formDialogFooterItem button-submit">
+                    <span class="submitText">@(ConfirmText ?? Globalize["ButtonOk"])</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private EmbyInput? _input;
+    private string? _value;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public string? Label { get; set; }
+
+    [Parameter]
+    public string? Value { get; set; }
+
+    [Parameter]
+    public string? Description { get; set; }
+
+    [Parameter]
+    public string? ConfirmText { get; set; }
+
+    protected override void OnInitialized() => _value = Value;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && _input is not null)
+        {
+            await _input.Element.FocusAsync();
+        }
+    }
+
+    private void Submit() => Dialog.Close(_value ?? string.Empty);
+}

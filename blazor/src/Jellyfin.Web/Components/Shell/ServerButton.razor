@@ -1,0 +1,16 @@
+@* Logo and server name, linking home. Port of components/toolbar/ServerButton.tsx. *@
+@implements IDisposable
+@inject JellyfinApi Api
+
+<MudButton Variant="Variant.Text" Color="Color.Inherit" Size="Size.Large" Href="#/" Class="jf-server-button">
+    <img src="generated/lib/jellyfin-ux-web/icon-transparent.png" alt="" aria-hidden="true" />
+    @(string.IsNullOrEmpty(Api.ServerName) ? "Jellyfin" : Api.ServerName)
+</MudButton>
+
+@code {
+    protected override void OnInitialized() => Api.Changed += Refresh;
+
+    public void Dispose() => Api.Changed -= Refresh;
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+}

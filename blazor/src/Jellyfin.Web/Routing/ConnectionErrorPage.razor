@@ -1,0 +1,72 @@
+@* Shown when the first connection fails. Port of components/ConnectionErrorPage.tsx. *@
+@namespace Jellyfin.Web.Routing
+@inject Globalize Globalize
+@inject ServerConnections Connections
+@inject WebConfig Config
+@inject ToastService Toast
+@inject IBrowser Browser
+
+<Page Id="connectionErrorPage" Class="mainAnimatedPage standalonePage" BackButton="false">
+    <div class="padded-left padded-right">
+        <h1>@Title</h1>
+        @if (Result.State == ConnectionState.ServerUpdateNeeded)
+        {
+            <p style="max-width: 80ch">
+                @((MarkupString)Globalize.Translate("ServerUpdateNeeded", "<a href=\"https://jellyfin.org/downloads/server/\">jellyfin.org/downloads/server</a>"))
+            </p>
+        }
+        else
+        {
+            <p style="max-width: 80ch">@Message</p>
+        }
+
+        @if (Config.Multiserver)
+        {
+            <LinkButton Class="raised" Href="#/selectserver">@Globalize["ButtonChangeServer"]</LinkButton>
+        }
+
+        @if (Result.State == ConnectionState.ServerMismatch)
+        {
+            <LinkButton OnClick="ForceConnectAsync" Style="@(_connecting ? "pointer-events: none" : null)">@Globalize["ConnectAnyway"]</LinkButton>
+        }
+    </div>
+</Page>
+
+@code {
+    private bool _connecting;
+
+    [Parameter, EditorRequired]
+    public ConnectResult Result { get; set; } = default!;
+
+    private string Title => Result.State switch
+    {
+        ConnectionState.ServerMismatch => Globalize["HeaderServerMismatch"],
+        ConnectionState.ServerUpdateNeeded => Globalize["HeaderUpdateRequired"],
+        _ => Globalize["HeaderServerUnavailable"]
+    };
+
+    private string Message => Result.State == ConnectionState.ServerMismatch
+        ? Globalize["MessageServerMismatch"]
+        : Globalize["MessageUnableToConnectToServer"];
+
+    private async Task ForceConnectAsync()
+    {
+        _connecting = true;
+        try
+        {
+            var server = Result.Server ?? Connections.GetLastUsedServer();
+            if (server is not null)
+            {
+                await Connections.UpdateSavedServerIdAsync(server);
+            }
+
+            Browser.Reload();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"[ConnectionErrorPage] force connect failed: {ex}");
+            Toast.Show(Globalize["HeaderConnectionFailure"]);
+            _connecting = false;
+        }
+    }
+}

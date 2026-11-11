@@ -1,0 +1,36 @@
+@* <div is="emby-collapse" title="…">: a section that expands when its header is clicked. *@
+<div class="emby-collapse @Class" @attributes="Attributes">
+    <button type="button" class="emby-button emby-collapsible-button iconRight" @onclick="ToggleAsync">
+        <h3 class="emby-collapsible-title" title="@Title">@Title</h3>
+        <span class="material-icons emby-collapse-expandIcon expand_more @(Expanded ? "emby-collapse-expandIconExpanded" : null)" aria-hidden="true"></span>
+    </button>
+    <div class="collapseContent @(Expanded ? "expanded" : "hide")">
+        @ChildContent
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public bool Expanded { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> ExpandedChanged { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private Task ToggleAsync()
+    {
+        Expanded = !Expanded;
+        return ExpandedChanged.InvokeAsync(Expanded);
+    }
+}
