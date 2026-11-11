@@ -1,0 +1,104 @@
+@* The "playback info" overlay of the video OSD. Port of components/playerstats/playerstats.js; the
+   values come from PlayerStatsBuilder and are refreshed while the position advances. *@
+@implements IDisposable
+@inject PlaybackManager Playback
+@inject PlayerStatsBuilder Builder
+@inject IPlaybackTimers Timers
+
+<div class="playerStats @(Visible ? null : "hide")" @onpointerdown:stopPropagation="true" @onclick:stopPropagation="true">
+    <div class="playerStats-content">
+        <button type="button" class="playerStats-closeButton paper-icon-button-light" @onclick="OnClose">
+            <span class="material-icons close" aria-hidden="true"></span>
+        </button>
+        <div class="playerStats-stats">
+            @foreach (var category in _categories)
+            {
+                if (category.Stats.Count == 0)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(category.Name))
+                {
+                    <div class="playerStats-stat playerStats-stat-header">
+                        <div class="playerStats-stat-label">@category.Name</div>
+                        <div class="playerStats-stat-value">@category.SubText</div>
+                    </div>
+                }
+
+                foreach (var stat in category.Stats)
+                {
+                    <div class="playerStats-stat">
+                        <div class="playerStats-stat-label">@stat.Label</div>
+                        <div class="playerStats-stat-value jf-playerStats-value">@stat.Value</div>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private const int RefreshIntervalMs = 700;
+
+    private IReadOnlyList<PlayerStatCategory> _categories = [];
+    private long _lastRefresh;
+    private bool _refreshing;
+    private bool _wasVisible;
+
+    [Parameter]
+    public bool Visible { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    protected override void OnInitialized() => Playback.Event += OnPlaybackEvent;
+
+    protected override void OnParametersSet()
+    {
+        if (Visible && !_wasVisible)
+        {
+            Builder.Reset();
+            _ = RefreshAsync();
+        }
+
+        _wasVisible = Visible;
+    }
+
+    public void Dispose() => Playback.Event -= OnPlaybackEvent;
+
+    private void OnPlaybackEvent(string name)
+    {
+        if (!Visible || name != PlaybackEvents.TimeUpdate || Timers.NowMs - _lastRefresh < RefreshIntervalMs)
+        {
+            return;
+        }
+
+        _ = RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_refreshing)
+        {
+            return;
+        }
+
+        _refreshing = true;
+        _lastRefresh = Timers.NowMs;
+        try
+        {
+            _categories = await Builder.GetStatsAsync();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JSException)
+        {
+            AppLog.Warn("Reading the playback statistics failed: " + exception.Message);
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+}

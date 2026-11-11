@@ -1,0 +1,935 @@
+@* The video player's on-screen display. Port of apps/legacy/controllers/playback/video (index.html
+   and index.js) with the original markup, so that styles/videoosd.scss applies. The video element
+   itself lives outside of the app (wwwroot/js/playback/player.js) below this see-through page.
+
+   Differences from the original:
+   - the header is drawn by the page (the app bar is not shown on this route);
+   - the show transitions are simplified: "hide" is added by a timer instead of transitionend;
+   - buttons are not focused when the OSD appears.
+   PORT-TODO(playback): live TV (programme info, progress by time of day, record button), SyncPlay,
+   AirPlay, subtitle offset (G/H keys), secondary subtitles, media segments (skip intro), the TV
+   layout's key handling and the iOS forced-fullscreen back navigation are not ported. *@
+@attribute [Route("/video")]
+@attribute [Access(AccessLevel.User)]
+@using System.Globalization
+@implements IDisposable
+@inject PlaybackManager Playback
+@inject PlaybackText Text
+@inject PlayerSettingsMenu SettingsMenu
+@inject Globalize Globalize
+@inject AppRouter Router
+@inject AppDialogs Dialogs
+@inject UserSettings UserSettings
+@inject JellyfinApi Api
+@inject IBrowser Browser
+@inject LoadingService Loading
+@inject IPlaybackTimers Timers
+@inject IPlaybackUiInterop Ui
+
+@{
+    var item = Playback.CurrentItem;
+    var commands = Playback.GetSupportedCommands();
+    var canSeek = item is not null && Playback.CanSeek();
+    var paused = Playback.IsPaused;
+    var muted = Playback.IsMuted;
+    var fullscreen = Playback.IsFullscreen;
+    var runtime = RuntimeTicks;
+    var position = Playback.CurrentTimeTicks;
+    var chapters = item?.Chapters;
+    var hasChapters = chapters is { Count: > 1 };
+    var hasPlaylist = Playback.GetPlaylist().Count > 1;
+    var subtitleTracks = item is null ? 0 : Playback.SubtitleTracks().Count;
+    var audioTracks = item is null ? 0 : Playback.AudioTracks().Count;
+}
+
+<Page Id="videoOsdPage" Class="libraryPage jf-videoOsdPage" Title="@(item?.SeriesName ?? item?.Name)"
+      @onpointerdown="OnPagePointerDown" @ondblclick="OnPageDoubleClick" @onwheel="OnWheel">
+    <div class="skinHeader focuscontainer-x skinHeader-withBackground osdHeader jf-osdHeader @(_headerHidden ? "osdHeader-hidden" : null)"
+         @onpointerdown="ShowOsd" @onpointerdown:stopPropagation="true" @ondblclick:stopPropagation="true">
+        <div class="flex align-items-center flex-grow headerTop">
+            <div class="headerLeft">
+                <button type="button" class="headerButton headerButtonLeft headerBackButton paper-icon-button-light"
+                        title="@Globalize["ButtonBack"]" @onclick="Router.Back">
+                    <span class="material-icons arrow_back" aria-hidden="true"></span>
+                </button>
+                <h3 class="pageTitle">@(item is null ? null : Text.OsdTitle(item))</h3>
+            </div>
+            <div class="headerRight"></div>
+        </div>
+    </div>
+
+    <PlayerStatsOverlay Visible="_statsVisible" OnClose="() => _statsVisible = false" />
+
+    <UpNextDialog Item="_nextItem" Visible="_upNextVisible" OnStartNow="StartNextNowAsync" OnHide="HideUpNext" />
+
+    <div class="videoOsdBottom videoOsdBottom-maincontrols @BottomStateClass"
+         @onpointerdown="ShowOsd" @onpointerdown:stopPropagation="true" @ondblclick:stopPropagation="true">
+        <div class="osdControls">
+            <div class="osdTextContainer osdMainTextContainer">
+                <h3 class="osdTitle"></h3>
+                <div class="osdMediaStatus hide">
+                    <span class="material-icons animate autorenew" aria-hidden="true"></span>
+                    <span>@Globalize["FetchingData"]</span>
+                </div>
+            </div>
+            <div class="osdTextContainer osdSecondaryMediaInfo hide"></div>
+
+            <div class="flex flex-direction-row align-items-center" dir="ltr">
+                <div class="osdTextContainer startTimeText osdPositionText" style="margin: 0 .25em 0 0;">@Text.RunningTime(position)</div>
+                <PlaybackSlider ContainerClass="flex-grow" ContainerStyle="margin: .5em 0 .25em;" Class="osdPositionSlider"
+                                Step=".01" KeepProgress="true" Disabled="@(!canSeek)" Value="PositionPercent"
+                                Clear="@(Playback.CurrentMediaSource is { RunTimeTicks: null })"
+                                Buffered="@(PlaybackSlider.BufferedPercent(Playback.BufferedRanges, runtime, position))"
+                                Markers="@Markers(item)" OnChange="value => Playback.SeekPercentAsync(value)">
+                    <BubbleContent Context="value">
+                        @if (runtime is not { } total)
+                        {
+                            <h1 class="sliderBubbleText">--:--</h1>
+                        }
+                        else
+                        {
+                            var ticks = (long)(total / 100d * value);
+                            var chapter = ChapterAt(chapters, ticks);
+                            if (TrickplayOf(item) is { } trickplay)
+                            {
+                                <div class="chapterThumbContainer" style="overflow:hidden">
+                                    <div class="chapterThumbWrapper" style="@TrickplayStyle(item!, trickplay, ticks)"></div>
+                                    <div class="chapterThumbTextContainer">
+                                        <div class="chapterThumbText chapterThumbText-dim">@(chapter.Info?.Name)</div>
+                                        <h2 class="chapterThumbText">@Text.RunningTime(ticks)</h2>
+                                    </div>
+                                </div>
+                            }
+                            else if (chapter.Info is { } info)
+                            {
+                                var image = ChapterImageUrl(item!, info, chapter.Index);
+                                <div class="chapterThumbContainer chapterBubblePosition">
+                                    @if (image is not null)
+                                    {
+                                        <img class="chapterThumb" src="@image" alt="" />
+                                    }
+                                    <div class="chapterThumbTextContainer @(image is null ? "chapterBubblePosition" : null)">
+                                        <div class="chapterThumbText chapterThumbText-dim">@info.Name</div>
+                                        <h2 class="chapterThumbText">@Text.RunningTime(ticks)</h2>
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <h1 class="sliderBubbleText">@Text.RunningTime(ticks)</h1>
+                            }
+                        }
+                    </BubbleContent>
+                </PlaybackSlider>
+                <div class="osdTextContainer endTimeText osdDurationText @(DurationText(runtime, position) is null ? "hide" : null)"
+                     style="margin: 0 0 0 .25em;" @onclick="ToggleRemainingTime">@DurationText(runtime, position)</div>
+            </div>
+
+            <div class="buttons focuscontainer-x">
+                <div dir="ltr">
+                    <button type="button" class="btnPreviousTrack autoSize paper-icon-button-light @(hasPlaylist ? null : "hide")"
+                            title="@(Globalize["PreviousTrack"] + " (Shift+P)")" aria-label="@Globalize["PreviousTrack"]"
+                            @onclick="() => Playback.PreviousTrackAsync()">
+                        <span class="xlargePaperIconButton material-icons skip_previous" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" class="btnPreviousChapter autoSize paper-icon-button-light @(hasChapters ? null : "hide")"
+                            title="@(Globalize["PreviousChapter"] + " (PageDown)")" aria-label="@Globalize["PreviousChapter"]"
+                            @onclick="() => Playback.PreviousChapterAsync()">
+                        <span class="xlargePaperIconButton material-icons undo" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" class="btnRewind paper-icon-button-light" disabled="@(!canSeek)"
+                            title="@(Globalize["Rewind"] + " (J)")" aria-label="@Globalize["Rewind"]"
+                            @onclick="() => Playback.RewindAsync()">
+                        <span class="xlargePaperIconButton material-icons fast_rewind" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" class="btnPause autoSize paper-icon-button-light"
+                            title="@(Globalize[paused ? "Play" : "ButtonPause"] + " (K)")" aria-label="@Globalize[paused ? "Play" : "ButtonPause"]"
+                            @onclick="() => Playback.PlayPauseAsync()">
+                        <span class="xlargePaperIconButton material-icons @(paused ? "play_arrow" : "pause")" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" class="btnFastForward paper-icon-button-light" disabled="@(!canSeek)"
+                            title="@(Globalize["FastForward"] + " (L)")" aria-label="@Globalize["FastForward"]"
+                            @onclick="() => Playback.FastForwardAsync()">
+                        <span class="xlargePaperIconButton material-icons fast_forward" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" class="btnNextChapter autoSize paper-icon-button-light @(hasChapters ? null : "hide")"
+                            title="@(Globalize["NextChapter"] + " (PageUp)")" aria-label="@Globalize["NextChapter"]"
+                            @onclick="() => Playback.NextChapterAsync()">
+                        <span class="xlargePaperIconButton material-icons redo" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" class="btnNextTrack autoSize paper-icon-button-light @(hasPlaylist ? null : "hide")"
+                            title="@(Globalize["NextTrack"] + " (Shift+N)")" aria-label="@Globalize["NextTrack"]"
+                            @onclick="() => Playback.NextTrackAsync()">
+                        <span class="xlargePaperIconButton material-icons skip_next" aria-hidden="true"></span>
+                    </button>
+                </div>
+
+                <div class="osdTimeText">
+                    <span class="endsAtText">@EndsAtText(item, runtime, position)</span>
+                </div>
+
+                <PlaybackFavoriteButton ItemId="@(item?.Id?.ToString("N"))" Class="btnUserRating autoSize" IconClass="xlargePaperIconButton" />
+
+                <button type="button" class="btnSubtitles autoSize paper-icon-button-light @(subtitleTracks > 0 ? null : "hide")"
+                        title="@Globalize["Subtitles"]" @onclick="ShowSubtitleMenuAsync">
+                    <span class="xlargePaperIconButton material-icons closed_caption" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="btnAudio autoSize paper-icon-button-light @(audioTracks > 1 ? null : "hide")"
+                        title="@Globalize["Audio"]" @onclick="ShowAudioMenuAsync">
+                    <span class="xlargePaperIconButton material-icons audiotrack" aria-hidden="true"></span>
+                </button>
+
+                <div class="volumeButtons hide-mouse-idle-tv">
+                    <button type="button" class="buttonMute autoSize paper-icon-button-light @(commands.Contains("Mute") ? null : "hide")"
+                            title="@(Globalize[muted ? "Unmute" : "Mute"] + " (M)")" aria-label="@Globalize[muted ? "Unmute" : "Mute"]"
+                            @onclick="Playback.ToggleMute">
+                        <span class="xlargePaperIconButton material-icons @(muted ? "volume_off" : "volume_up")" aria-hidden="true"></span>
+                    </button>
+                    <PlaybackSlider ContainerClass="@("osdVolumeSliderContainer" + (commands.Contains("SetVolume") ? null : " hide"))"
+                                    Class="osdVolumeSlider" Step="1" Value="Playback.Volume"
+                                    OnInput="value => Playback.SetVolume((int)value)" OnChange="value => Playback.SetVolume((int)value)" />
+                </div>
+
+                <button type="button" class="btnVideoOsdSettings autoSize paper-icon-button-light" title="@Globalize["Settings"]"
+                        @onclick="ShowSettingsMenuAsync">
+                    <span class="largePaperIconButton material-icons settings" aria-hidden="true"></span>
+                </button>
+                @* PORT-TODO(playback): AirPlay is not ported; the button stays hidden. *@
+                <button type="button" class="btnAirPlay hide autoSize paper-icon-button-light" title="@Globalize["AirPlay"]">
+                    <span class="xlargePaperIconButton material-icons airplay" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="btnPip autoSize paper-icon-button-light @(commands.Contains("PictureInPicture") ? null : "hide")"
+                        title="@Globalize["PictureInPicture"]" @onclick="Playback.TogglePictureInPicture">
+                    <span class="xlargePaperIconButton material-icons picture_in_picture_alt" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="btnFullscreen autoSize paper-icon-button-light @(commands.Contains("ToggleFullscreen") ? null : "hide")"
+                        title="@(Globalize[fullscreen ? "ExitFullscreen" : "Fullscreen"] + " (F)")" aria-label="@Globalize[fullscreen ? "ExitFullscreen" : "Fullscreen"]"
+                        @onclick="Playback.ToggleFullscreen">
+                    <span class="xlargePaperIconButton material-icons @(fullscreen ? "fullscreen_exit" : "fullscreen")" aria-hidden="true"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</Page>
+
+@code {
+    private const int TimeUpdateIntervalMs = 700;
+    private const int OsdHideDelayMs = 3000;
+    private const int HideTransitionMs = 350;
+    private const int ClickDelayMs = 300;
+    private const int WaitingDelayMs = 500;
+    private const long TicksPerSecond = 10000000;
+    private const long TicksPerMinute = 60 * TicksPerSecond;
+    private const string MenuOsd = "osd";
+    private const string MenuUpNext = "upnext";
+
+    private DotNetObjectReference<VideoOsd>? _self;
+    private bool _disposed;
+
+    // The original's currentVisibleMenu: "osd", "upnext" or null.
+    private string? _visibleMenu;
+    private bool _headerHidden;
+    private bool _bottomCollapsed;
+    private int _bottomGeneration;
+    private int _idleGeneration;
+    private bool _mouseIsDown;
+    private long _lastPointerDown;
+    private bool _clickPending;
+    private int _clickGeneration;
+    private long _lastTimeUpdate;
+    private int _waitingGeneration;
+
+    private bool _comingUpNextDisplayed;
+    private bool _upNextVisible;
+    private BaseItemDto? _nextItem;
+    private bool _statsVisible;
+
+    // Leaving because playback ended: nothing to stop.
+    private bool _leaving;
+
+    private BaseItemDto? _trickplayItem;
+    private string? _trickplaySourceId;
+    private TrickplayResolution? _trickplay;
+
+    private string? BottomStateClass => _visibleMenu == MenuOsd
+        ? null
+        : _bottomCollapsed ? "videoOsdBottom-hidden hide" : "videoOsdBottom-hidden";
+
+    private long? RuntimeTicks => Playback.DurationTicks is { } duration && duration > 0 ? duration : null;
+
+    private double PositionPercent => RuntimeTicks is { } runtime ? Math.Clamp(Playback.CurrentTimeTicks * 100d / runtime, 0, 100) : 0;
+
+    protected override void OnInitialized()
+    {
+        Playback.Event += OnPlaybackEvent;
+        Playback.PlaybackStopped += OnPlaybackStopped;
+        Dialogs.Changed += OnDialogsChanged;
+        UserSettings.Changed += OnUserSettingsChanged;
+        Globalize.LanguageChanged += Refresh;
+
+        // The local video player tells itself that the OSD is up (it navigated here); see
+        // HtmlVideoPlayer.OnFirstPlaying().
+        RestorePlaybackRate();
+        ShowOsd();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _self = DotNetObjectReference.Create(this);
+            await Ui.AttachOsdAsync(_self);
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _idleGeneration++;
+        _bottomGeneration++;
+        _clickGeneration++;
+        _waitingGeneration++;
+        Playback.Event -= OnPlaybackEvent;
+        Playback.PlaybackStopped -= OnPlaybackStopped;
+        Dialogs.Changed -= OnDialogsChanged;
+        UserSettings.Changed -= OnUserSettingsChanged;
+        Globalize.LanguageChanged -= Refresh;
+        if (_self is not null)
+        {
+            Ui.DetachOsd();
+            _self.Dispose();
+            _self = null;
+        }
+
+        Browser.ToggleClass(DocumentTarget.Body, "mouseIdle", false);
+        Loading.Hide();
+
+        // Port of onViewHideStopPlayback(): leaving the page ends the video.
+        if (!_leaving && Playback.IsPlayingVideo)
+        {
+            _ = Playback.StopAsync();
+        }
+    }
+
+    // --- input from ui.js --------------------------------------------------------------------------
+
+    /// <summary>A key the OSD handles was pressed (the document's keydown; see ui.js).</summary>
+    [JSInvokable]
+    public Task OnKeyDown(string code, bool shift, bool onPositionSlider) =>
+        InvokeAsync(() => HandleKeyAsync(code, shift, onPositionSlider));
+
+    /// <summary>Any key was pressed.</summary>
+    [JSInvokable]
+    public Task OnActivity() => InvokeAsync(ResetIdle);
+
+    /// <summary>The mouse moved noticeably.</summary>
+    [JSInvokable]
+    public Task OnPointerMoved() => InvokeAsync(ShowOsd);
+
+    [JSInvokable]
+    public Task OnMouseDownChanged(bool down) => InvokeAsync(() =>
+    {
+        _mouseIsDown = down;
+        ResetIdle();
+    });
+
+    /// <summary>Port of onKeyDown().</summary>
+    internal async Task HandleKeyAsync(string code, bool shift, bool onPositionSlider)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (DigitOf(code) is { } digit)
+        {
+            await Playback.SeekPercentAsync(digit * 10);
+            return;
+        }
+
+        switch (code)
+        {
+            case "Space":
+            case "KeyK":
+                await Playback.PlayPauseAsync();
+                ShowOsd();
+                break;
+            case "Enter":
+            case "NumpadEnter":
+                if (onPositionSlider)
+                {
+                    await Playback.PlayPauseAsync();
+                }
+
+                ShowOsd();
+                break;
+            case "Escape":
+                // Ignore the key when some dialog is opened.
+                if (_visibleMenu == MenuOsd && Dialogs.Dialogs.Count == 0)
+                {
+                    HideOsd();
+                }
+
+                break;
+            case "ArrowUp":
+                Playback.VolumeUp();
+                break;
+            case "ArrowDown":
+                Playback.VolumeDown();
+                break;
+            case "KeyL":
+            case "ArrowRight":
+                await Playback.FastForwardAsync();
+                ShowOsd();
+                break;
+            case "KeyJ":
+            case "ArrowLeft":
+                await Playback.RewindAsync();
+                ShowOsd();
+                break;
+            case "Comma":
+                if (shift)
+                {
+                    Playback.DecreasePlaybackRate();
+                }
+                else
+                {
+                    await SeekFramesAsync(-1);
+                }
+
+                break;
+            case "Period":
+                if (shift)
+                {
+                    Playback.IncreasePlaybackRate();
+                }
+                else
+                {
+                    await SeekFramesAsync(1);
+                }
+
+                break;
+            case "KeyF":
+                Playback.ToggleFullscreen();
+                break;
+            case "KeyM":
+                Playback.ToggleMute();
+                break;
+            case "KeyP":
+                if (shift)
+                {
+                    await Playback.PreviousTrackAsync();
+                }
+
+                break;
+            case "KeyN":
+                if (shift)
+                {
+                    await Playback.NextTrackAsync();
+                }
+
+                break;
+            case "Home":
+                await Playback.SeekPercentAsync(0);
+                break;
+            case "End":
+                await Playback.SeekPercentAsync(100);
+                break;
+            case "PageUp":
+                await Playback.NextChapterAsync();
+                break;
+            case "PageDown":
+                await Playback.PreviousChapterAsync();
+                break;
+        }
+    }
+
+    private static int? DigitOf(string code)
+    {
+        foreach (var prefix in new[] { "Digit", "Numpad" })
+        {
+            if (code.Length == prefix.Length + 1 && code.StartsWith(prefix, StringComparison.Ordinal) && char.IsAsciiDigit(code[^1]))
+            {
+                return code[^1] - '0';
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Steps single frames while paused.</summary>
+    private Task SeekFramesAsync(int frames)
+    {
+        if (!Playback.IsPaused)
+        {
+            return Task.CompletedTask;
+        }
+
+        var frameRate = Playback.CurrentMediaSource?.MediaStreams?
+            .FirstOrDefault(stream => stream.Type == MediaStream_Type.Video)?.ReferenceFrameRate ?? 24;
+        return frameRate > 0 ? Playback.SeekRelativeAsync((long)(frames / (double)frameRate * TicksPerSecond)) : Task.CompletedTask;
+    }
+
+    // --- pointer -----------------------------------------------------------------------------------
+
+    /// <summary>A press on the picture: touch toggles the OSD, a click pauses, a double click does not.</summary>
+    private void OnPagePointerDown(PointerEventArgs e)
+    {
+        switch (e.PointerType)
+        {
+            case "touch":
+                var now = Timers.NowMs;
+                if (now - _lastPointerDown > ClickDelayMs)
+                {
+                    _lastPointerDown = now;
+                    ToggleOsd();
+                }
+
+                break;
+            case "mouse":
+                if (e.Button != 0)
+                {
+                    break;
+                }
+
+                if (_clickPending)
+                {
+                    // The second press of a double click.
+                    _clickPending = false;
+                    _clickGeneration++;
+                }
+                else
+                {
+                    _clickPending = true;
+                    _ = PlayPauseAfterClickAsync(++_clickGeneration);
+                }
+
+                break;
+            default:
+                _ = Playback.PlayPauseAsync();
+                ShowOsd();
+                break;
+        }
+    }
+
+    private async Task PlayPauseAfterClickAsync(int generation)
+    {
+        await Timers.Delay(ClickDelayMs);
+        if (generation != _clickGeneration || _disposed)
+        {
+            return;
+        }
+
+        _clickPending = false;
+        await Playback.PlayPauseAsync();
+        ShowOsd();
+    }
+
+    private void OnPageDoubleClick() => Playback.ToggleFullscreen();
+
+    private void OnWheel(WheelEventArgs e)
+    {
+        if (Dialogs.Dialogs.Count > 0)
+        {
+            return;
+        }
+
+        if (e.DeltaY < 0)
+        {
+            Playback.VolumeUp();
+        }
+        else if (e.DeltaY > 0)
+        {
+            Playback.VolumeDown();
+        }
+    }
+
+    // --- showing and hiding ------------------------------------------------------------------------
+
+    /// <summary>Port of showOsd(): the header and the controls appear and the idle timer restarts.</summary>
+    private void ShowOsd()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _headerHidden = false;
+        if (_visibleMenu is null)
+        {
+            _visibleMenu = MenuOsd;
+            _bottomCollapsed = false;
+            _bottomGeneration++;
+        }
+
+        Browser.ToggleClass(DocumentTarget.Body, "mouseIdle", false);
+        ResetIdle();
+        StateHasChanged();
+    }
+
+    /// <summary>Port of hideOsd(): everything fades out and the mouse pointer disappears.</summary>
+    private void HideOsd()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _headerHidden = true;
+        if (_visibleMenu is not null)
+        {
+            var wasOsd = _visibleMenu == MenuOsd;
+            _visibleMenu = null;
+            if (wasOsd)
+            {
+                _ = CollapseBottomAsync(++_bottomGeneration);
+            }
+        }
+
+        Browser.ToggleClass(DocumentTarget.Body, "mouseIdle", true);
+        StateHasChanged();
+    }
+
+    private void ToggleOsd()
+    {
+        if (_visibleMenu == MenuOsd)
+        {
+            HideOsd();
+        }
+        else if (_visibleMenu is null)
+        {
+            ShowOsd();
+        }
+    }
+
+    /// <summary>The original takes the controls out of the layout when their fade-out ends.</summary>
+    private async Task CollapseBottomAsync(int generation)
+    {
+        await Timers.Delay(HideTransitionMs);
+        if (generation == _bottomGeneration && !_disposed)
+        {
+            _bottomCollapsed = true;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Port of resetIdle(): the hide timer restarts while something is shown, no button is held and
+    /// no dialog is open.
+    /// </summary>
+    private void ResetIdle()
+    {
+        var generation = ++_idleGeneration;
+        if (_visibleMenu is not null && !_mouseIsDown && Dialogs.Dialogs.Count == 0 && !_disposed)
+        {
+            _ = HideWhenIdleAsync(generation);
+        }
+    }
+
+    private async Task HideWhenIdleAsync(int generation)
+    {
+        await Timers.Delay(OsdHideDelayMs);
+        if (generation == _idleGeneration)
+        {
+            HideOsd();
+        }
+    }
+
+    // --- playback events ---------------------------------------------------------------------------
+
+    private void OnPlaybackEvent(string name) => _ = InvokeAsync(() => HandlePlaybackEvent(name));
+
+    private void HandlePlaybackEvent(string name)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        switch (name)
+        {
+            case PlaybackEvents.TimeUpdate:
+                // Try to avoid hammering the document with changes.
+                var now = Timers.NowMs;
+                if (now - _lastTimeUpdate < TimeUpdateIntervalMs)
+                {
+                    return;
+                }
+
+                _lastTimeUpdate = now;
+                ShowComingUpNextIfNeeded();
+                break;
+            case PlaybackEvents.PlaybackStart:
+                ResetUpNext();
+                RestorePlaybackRate();
+                break;
+            case PlaybackEvents.Waiting:
+                _ = ShowLoadingWhenStalledAsync(++_waitingGeneration);
+                return;
+            case "canplay":
+                _waitingGeneration++;
+                Loading.Hide();
+                return;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ShowLoadingWhenStalledAsync(int generation)
+    {
+        await Timers.Delay(WaitingDelayMs);
+        if (generation == _waitingGeneration && !_disposed)
+        {
+            Loading.Show();
+        }
+    }
+
+    /// <summary>Port of onPlaybackStopped(): the page closes unless another video follows.</summary>
+    private void OnPlaybackStopped(PlaybackStoppedInfo info) => _ = InvokeAsync(() =>
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        ResetUpNext();
+        _waitingGeneration++;
+        Loading.Hide();
+        if (info.NextMediaType != "Video")
+        {
+            _leaving = true;
+            Router.Back();
+        }
+
+        StateHasChanged();
+    });
+
+    private void OnDialogsChanged() => _ = InvokeAsync(ResetIdle);
+
+    private void OnUserSettingsChanged(string name) => Refresh();
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    /// <summary>Port of updatePlaybackRate(): the rate of the browser session applies to every video.</summary>
+    private void RestorePlaybackRate()
+    {
+        if (Playback.CurrentPlayer is null
+            || !double.TryParse(Browser.StorageGet("playbackRateSpeed", session: true), NumberStyles.Float, CultureInfo.InvariantCulture, out var rate)
+            || rate <= 0
+            || Math.Abs(rate - Playback.PlaybackRate) < 0.001)
+        {
+            return;
+        }
+
+        Playback.SetPlaybackRate(rate);
+    }
+
+    // --- up next -----------------------------------------------------------------------------------
+
+    /// <summary>Port of showComingUpNextIfNeeded(): the prompt appears near the end of an episode.</summary>
+    private void ShowComingUpNextIfNeeded()
+    {
+        var position = Playback.CurrentTimeTicks;
+        if (RuntimeTicks is not { } runtime
+            || position <= 0
+            || _comingUpNextDisplayed
+            || _visibleMenu is not null
+            || Playback.CurrentItem?.Type.ToApiString() != "Episode"
+            || !UserSettings.EnableNextVideoInfoOverlay)
+        {
+            return;
+        }
+
+        var showAtSecondsLeft = 30;
+        if (runtime >= 50 * TicksPerMinute)
+        {
+            showAtSecondsLeft = 40;
+        }
+        else if (runtime >= 40 * TicksPerMinute)
+        {
+            showAtSecondsLeft = 35;
+        }
+
+        var showAtTicks = runtime - (showAtSecondsLeft * TicksPerSecond);
+        var remainingTicks = runtime - position;
+        if (position < showAtTicks || runtime < 10 * TicksPerMinute || remainingTicks < 20 * TicksPerSecond)
+        {
+            return;
+        }
+
+        _comingUpNextDisplayed = true;
+        if (Playback.Queue.GetNextItemInfo() is { } next)
+        {
+            _visibleMenu = MenuUpNext;
+            _nextItem = next.Item;
+            _upNextVisible = true;
+        }
+    }
+
+    private void HideUpNext()
+    {
+        _upNextVisible = false;
+        if (_visibleMenu == MenuUpNext)
+        {
+            _visibleMenu = null;
+        }
+    }
+
+    private void ResetUpNext()
+    {
+        _comingUpNextDisplayed = false;
+        HideUpNext();
+    }
+
+    private async Task StartNextNowAsync()
+    {
+        HideUpNext();
+        await Playback.NextTrackAsync();
+    }
+
+    // --- menus -------------------------------------------------------------------------------------
+
+    private async Task ShowAudioMenuAsync()
+    {
+        var current = Playback.AudioStreamIndex;
+        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        {
+            Title = Globalize["Audio"],
+            Items = Playback.AudioTracks()
+                .Select(stream => new ActionSheetItem
+                {
+                    Id = (stream.Index ?? -1).ToString(CultureInfo.InvariantCulture),
+                    Name = stream.DisplayTitle ?? string.Empty,
+                    Selected = stream.Index == current,
+                })
+                .ToList(),
+        });
+        ResetIdle();
+        if (int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) && index != current)
+        {
+            await Playback.SetAudioStreamIndexAsync(index);
+        }
+    }
+
+    private async Task ShowSubtitleMenuAsync()
+    {
+        // PORT-TODO(playback): secondary subtitles are not offered.
+        var current = Playback.SubtitleStreamIndex ?? -1;
+        var items = new List<ActionSheetItem>
+        {
+            new() { Id = "-1", Name = Globalize["Off"], Selected = current == -1 },
+        };
+        items.AddRange(Playback.SubtitleTracks().Select(stream => new ActionSheetItem
+        {
+            Id = (stream.Index ?? -1).ToString(CultureInfo.InvariantCulture),
+            Name = stream.DisplayTitle ?? string.Empty,
+            Selected = stream.Index == current,
+        }));
+
+        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions { Title = Globalize["Subtitles"], Items = items });
+        ResetIdle();
+        if (int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) && index != current)
+        {
+            await Playback.SetSubtitleStreamIndexAsync(index);
+        }
+    }
+
+    private async Task ShowSettingsMenuAsync()
+    {
+        var result = await SettingsMenu.ShowAsync(quality: Playback.CurrentMediaSource?.SupportsTranscoding == true, stats: true);
+        ResetIdle();
+        if (result == "stats")
+        {
+            _statsVisible = !_statsVisible;
+        }
+    }
+
+    private void ToggleRemainingTime() => UserSettings.EnableVideoRemainingTime = !UserSettings.EnableVideoRemainingTime;
+
+    // --- texts and previews ------------------------------------------------------------------------
+
+    /// <summary>The run time, or the time left ("-12:34") when the user prefers that; null hides it.</summary>
+    private string? DurationText(long? runtime, long position)
+    {
+        if (UserSettings.EnableVideoRemainingTime)
+        {
+            return runtime is { } total && total - position >= 0 ? "-" + Text.RunningTime(total - position) : null;
+        }
+
+        return runtime is { } value ? Text.RunningTime(value) : null;
+    }
+
+    private string? EndsAtText(BaseItemDto? item, long? runtime, long position) =>
+        runtime is { } total && item is { RunTimeTicks: > 0 } && item.Type.ToApiString() != "Recording"
+            ? "    " + Text.EndsAt(total, position, Playback.PlaybackRate)
+            : null;
+
+    /// <summary>The chapter starts as fractions of the item's run time.</summary>
+    private static IReadOnlyList<double>? Markers(BaseItemDto? item)
+    {
+        if (item is not { Chapters: { Count: > 1 } chapters, RunTimeTicks: > 0 })
+        {
+            return null;
+        }
+
+        var runtime = (double)item.RunTimeTicks.Value;
+        return chapters.Select(chapter => (chapter.StartPositionTicks ?? 0) / runtime).ToList();
+    }
+
+    /// <summary>The chapter that contains a position.</summary>
+    private static (ChapterInfo? Info, int Index) ChapterAt(IReadOnlyList<ChapterInfo>? chapters, long positionTicks)
+    {
+        ChapterInfo? found = null;
+        var index = -1;
+        for (var i = 0; i < (chapters?.Count ?? 0); i++)
+        {
+            if (positionTicks >= (chapters![i].StartPositionTicks ?? 0))
+            {
+                found = chapters[i];
+                index = i;
+            }
+        }
+
+        return (found, index);
+    }
+
+    /// <summary>
+    /// The trickplay resolution of what plays: the widest one up to a fifth of the screen's width.
+    /// </summary>
+    private TrickplayResolution? TrickplayOf(BaseItemDto? item)
+    {
+        var sourceId = Playback.CurrentMediaSource?.Id;
+        if (!ReferenceEquals(item, _trickplayItem) || sourceId != _trickplaySourceId)
+        {
+            _trickplayItem = item;
+            _trickplaySourceId = sourceId;
+            var environment = Browser.Environment;
+            _trickplay = Trickplay.Select(item, sourceId, environment.ScreenWidth * environment.DevicePixelRatio * 0.2);
+        }
+
+        return _trickplay;
+    }
+
+    private string TrickplayStyle(BaseItemDto item, TrickplayResolution info, long positionTicks)
+    {
+        var tile = Trickplay.Tile(info, positionTicks);
+        var url = Api.GetUrl(
+            $"Videos/{item.Id?.ToString("N")}/Trickplay/{info.Width.ToString(CultureInfo.InvariantCulture)}/{tile.SheetIndex.ToString(CultureInfo.InvariantCulture)}.jpg",
+            ("ApiKey", Api.AccessToken),
+            ("MediaSourceId", Playback.CurrentMediaSource?.Id));
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"overflow:hidden;width:{info.Width}px;height:{info.Height}px;background-image:url('{url}');background-position-x:{tile.OffsetX}px;background-position-y:{tile.OffsetY}px");
+    }
+
+    private string? ChapterImageUrl(BaseItemDto item, ChapterInfo chapter, int index)
+    {
+        if (string.IsNullOrEmpty(chapter.ImageTag))
+        {
+            return null;
+        }
+
+        var id = Playback.CurrentMediaSource?.Id ?? item.Id?.ToString("N");
+        return Api.GetUrl($"Items/{id}/Images/Chapter/{index.ToString(CultureInfo.InvariantCulture)}", ("maxWidth", 400), ("tag", chapter.ImageTag));
+    }
+}

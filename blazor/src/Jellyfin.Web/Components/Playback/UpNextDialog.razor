@@ -1,0 +1,154 @@
+@* The "next episode playing in ..." prompt of the video OSD. Port of
+   components/upnextdialog/upnextdialog.js; the caller supplies the .upNextContainer position. *@
+@implements IDisposable
+@inject Globalize Globalize
+@inject JellyfinApi Api
+@inject PlaybackManager Playback
+@inject PlaybackText Text
+@inject IPlaybackTimers Timers
+
+<div class="upNextContainer upNextDialog @StateClass" @onpointerdown:stopPropagation="true" @onclick:stopPropagation="true">
+    @if (Item is { } item)
+    {
+        <div class="flex flex-direction-column flex-grow">
+            <h2 class="upNextDialog-nextVideoText" style="margin:.25em 0;">
+                @if (ShowStaticNextText)
+                {
+                    @Globalize[item.Type.ToApiString() == "Episode" ? "HeaderNextEpisode" : "HeaderNextVideo"]
+                }
+                else
+                {
+                    var parts = Globalize
+                        .Translate(item.Type.ToApiString() == "Episode" ? "HeaderNextEpisodePlayingInValue" : "HeaderNextVideoPlayingInValue", Marker)
+                        .Split(Marker, 2);
+                    @(parts[0])<span class="upNextDialog-countdownText">@Globalize.Translate("HeaderSecondsValue", SecondsRemaining)</span>@(parts.Length > 1 ? parts[1] : null)
+                }
+            </h2>
+            <h3 class="upNextDialog-title" style="margin:.25em 0 .5em;">@Title(item)</h3>
+            <div class="flex flex-direction-row upNextDialog-mediainfo">
+                @* PORT-TODO(playback): use the shared media-info component once it exists; this is the
+                   subset of mediaInfo.getPrimaryMediaInfoHtml() the prompt shows. *@
+                @if (item.Type.ToApiString() != "Episode" && item.ProductionYear is { } year && year != 0)
+                {
+                    <div class="mediaInfoItem">@year</div>
+                }
+                @if (item.RunTimeTicks is { } runtime && runtime > 0)
+                {
+                    <div class="mediaInfoItem">@PlaybackText.DisplayDuration(runtime)</div>
+                }
+                @if (!string.IsNullOrEmpty(item.OfficialRating) && item.Type.ToApiString() is not ("Season" or "Episode"))
+                {
+                    <div class="mediaInfoItem mediaInfoText mediaInfoOfficialRating">@item.OfficialRating</div>
+                }
+                @if (item.CommunityRating is { } rating)
+                {
+                    <div class="starRatingContainer mediaInfoItem">
+                        <span class="material-icons starIcon star" aria-hidden="true"></span>@rating.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)
+                    </div>
+                }
+                @if (item.CriticRating is { } critic)
+                {
+                    <div class="mediaInfoItem mediaInfoCriticRating @(critic >= 60 ? "mediaInfoCriticRatingFresh" : "mediaInfoCriticRatingRotten")">@critic.ToString("0", System.Globalization.CultureInfo.InvariantCulture)</div>
+                }
+                @if (item.RunTimeTicks is { } total && total > 0)
+                {
+                    <div class="mediaInfoItem endsAt">@Text.EndsAt(total, 0, 1)</div>
+                }
+            </div>
+            <div class="flex flex-direction-row upNextDialog-buttons" style="margin-top:1em;">
+                <button type="button" class="raised raised-mini btnStartNow upNextDialog-button emby-button" @onclick="OnStartNow">@Globalize["HeaderStartNow"]</button>
+                <button type="button" class="raised raised-mini btnHide upNextDialog-button emby-button" @onclick="OnHide">@Globalize["Hide"]</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const string Marker = "\u0001";
+    private const int HideTransitionMs = 350;
+
+    private IDisposable? _countdown;
+    private bool _wasVisible;
+    private bool _collapsed = true;
+    private int _hideGeneration;
+
+    /// <summary>The item that plays next.</summary>
+    [Parameter]
+    public BaseItemDto? Item { get; set; }
+
+    [Parameter]
+    public bool Visible { get; set; }
+
+    [Parameter]
+    public EventCallback OnStartNow { get; set; }
+
+    [Parameter]
+    public EventCallback OnHide { get; set; }
+
+    /// <summary>The user turned off playing the next episode automatically: no countdown.</summary>
+    private bool ShowStaticNextText => Api.User?.Configuration?.EnableNextEpisodeAutoPlay != true;
+
+    private string? StateClass => Visible && Item is not null
+        ? null
+        : _collapsed ? "upNextDialog-hidden hide" : "upNextDialog-hidden";
+
+    private long SecondsRemaining
+    {
+        get
+        {
+            var remainingMs = Playback.DurationTicks is { } duration && duration > 0
+                ? (duration - Playback.CurrentTimeTicks) / 10000d
+                : 0;
+            return (long)Math.Max(Math.Round(remainingMs / 1000, MidpointRounding.AwayFromZero), 0);
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        var visible = Visible && Item is not null;
+        if (visible == _wasVisible)
+        {
+            return;
+        }
+
+        _wasVisible = visible;
+        _countdown?.Dispose();
+        _countdown = null;
+        _hideGeneration++;
+        if (visible)
+        {
+            _collapsed = false;
+            if (!ShowStaticNextText)
+            {
+                _countdown = Timers.SetInterval(() => InvokeAsync(StateHasChanged), 400);
+            }
+        }
+        else
+        {
+            _ = CollapseAfterTransitionAsync(_hideGeneration);
+        }
+    }
+
+    public void Dispose()
+    {
+        _countdown?.Dispose();
+        _hideGeneration++;
+    }
+
+    private string Title(BaseItemDto item)
+    {
+        var title = Text.DisplayName(item);
+        return string.IsNullOrEmpty(item.SeriesName) ? title : item.SeriesName + " - " + title;
+    }
+
+    /// <summary>The original takes the element out of the layout when its fade-out ends.</summary>
+    private async Task CollapseAfterTransitionAsync(int generation)
+    {
+        await Timers.Delay(HideTransitionMs);
+        if (generation == _hideGeneration)
+        {
+            _collapsed = true;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

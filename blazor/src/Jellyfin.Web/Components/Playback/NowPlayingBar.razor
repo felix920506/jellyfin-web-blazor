@@ -1,0 +1,319 @@
+@* The bar at the bottom of the screen while something plays in the background. Port of
+   components/nowPlayingBar/nowPlayingBar.js with the original markup.
+   Not ported: the item context menu (only its playback entries are offered), lyrics, AirPlay. *@
+@attribute [ShellSlot(ShellSlot.Footer)]
+@implements IDisposable
+@inject PlaybackManager Playback
+@inject PlaybackText Text
+@inject Globalize Globalize
+@inject AppRouter Router
+@inject AppHost AppHost
+@inject AppDialogs Dialogs
+@inject JellyfinApi Api
+@inject IPlaybackTimers Timers
+
+<div class="nowPlayingBar @StateClass" @onclick="OpenNowPlaying">
+    @if (_item is { } item)
+    {
+        var lines = PlaybackText.ItemTextLines(item);
+        var imageUrl = Text.ImageUrl(item, height: 70);
+        var commands = Playback.GetSupportedCommands();
+        var paused = Playback.IsPaused;
+        var muted = Playback.IsMuted;
+        var repeatMode = Playback.RepeatMode;
+        var mobile = AppHost.IsMobileLayout;
+
+        <div class="nowPlayingBarTop">
+            <PlaybackSlider ContainerClass="nowPlayingBarPositionContainer" Dir="ltr" Class="slider-medium-thumb nowPlayingBarPositionSlider"
+                            Step=".01" KeepProgress="true" Value="PositionPercent" Disabled="@(!Playback.CanSeek())"
+                            Clear="@(Playback.CurrentMediaSource is { RunTimeTicks: null })" Buffered="BufferedPercent"
+                            BubbleText="PositionBubbleText" OnChange="value => Playback.SeekPercentAsync(value)" />
+
+            <div class="nowPlayingBarInfoContainer">
+                <div class="nowPlayingImage" style="@(imageUrl is null ? "display:none;" : $"background-image:url('{imageUrl}');")"></div>
+                <div class="nowPlayingBarText" style="@(imageUrl is null ? "margin-left:1em;" : null)">
+                    <div>
+                        @if (lines.Count > 0 && !string.IsNullOrEmpty(lines[0]))
+                        {
+                            <a>@lines[0]</a>
+                        }
+                    </div>
+                    <div class="nowPlayingBarSecondaryText">
+                        @if (lines.Count > 1 && !string.IsNullOrEmpty(lines[1]))
+                        {
+                            <a>@lines[1]</a>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="nowPlayingBarCenter @(mobile ? "hide" : null)" dir="ltr">
+                <button type="button" class="previousTrackButton mediaButton paper-icon-button-light" title="@Globalize["ButtonPreviousTrack"]"
+                        @onclick="OnPreviousTrackAsync" @onclick:stopPropagation="true" @ondblclick="() => Playback.PreviousTrackAsync()">
+                    <span class="material-icons skip_previous" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="playPauseButton mediaButton paper-icon-button-light" title="@Globalize[paused ? "Play" : "ButtonPause"]"
+                        @onclick="() => Playback.PlayPauseAsync()" @onclick:stopPropagation="true">
+                    <span class="material-icons @(paused ? "play_arrow" : "pause")" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="stopButton mediaButton paper-icon-button-light" title="@Globalize["ButtonStop"]"
+                        @onclick="() => Playback.StopAsync()" @onclick:stopPropagation="true">
+                    <span class="material-icons stop" aria-hidden="true"></span>
+                </button>
+                @if (!mobile)
+                {
+                    <button type="button" class="nextTrackButton mediaButton paper-icon-button-light" title="@Globalize["ButtonNextTrack"]"
+                            @onclick="() => Playback.NextTrackAsync()" @onclick:stopPropagation="true">
+                        <span class="material-icons skip_next" aria-hidden="true"></span>
+                    </button>
+                }
+                <div class="nowPlayingBarCurrentTime">@TimeText</div>
+            </div>
+
+            <div class="nowPlayingBarRight">
+                <button type="button" class="muteButton mediaButton paper-icon-button-light @(commands.Contains("ToggleMute") ? null : "hide")"
+                        title="@Globalize[muted ? "Unmute" : "Mute"]" @onclick="Playback.ToggleMute" @onclick:stopPropagation="true">
+                    <span class="material-icons @(muted ? "volume_off" : "volume_up")" aria-hidden="true"></span>
+                </button>
+                <PlaybackSlider ContainerClass="@("nowPlayingBarVolumeSliderContainer" + (commands.Contains("SetVolume") ? null : " hide"))"
+                                ContainerStyle="width:9em;vertical-align:middle;display:inline-flex;"
+                                Class="slider-medium-thumb nowPlayingBarVolumeSlider" Step="1" Value="Playback.Volume"
+                                OnInput="value => Playback.SetVolume((int)value)" OnChange="value => Playback.SetVolume((int)value)" />
+
+                @* PORT-TODO(playback): AirPlay and the lyrics page are not ported; their buttons stay hidden. *@
+                <button type="button" class="btnAirPlay mediaButton paper-icon-button-light hide" title="@Globalize["AirPlay"]">
+                    <span class="material-icons airplay" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="openLyricsButton mediaButton paper-icon-button-light hide" title="@Globalize["Lyrics"]">
+                    <span class="material-icons lyrics" style="top:0.1em" aria-hidden="true"></span>
+                </button>
+
+                <button type="button" class="toggleRepeatButton mediaButton paper-icon-button-light @(repeatMode == PlayQueue.RepeatNone ? null : "buttonActive") @(commands.Contains("SetRepeatMode") ? null : "hide")"
+                        title="@Globalize["Repeat"]" @onclick="ToggleRepeat" @onclick:stopPropagation="true">
+                    <span class="material-icons @(repeatMode == PlayQueue.RepeatOne ? "repeat_one" : "repeat")" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="btnShuffleQueue mediaButton paper-icon-button-light @(Playback.ShuffleMode == PlayQueue.Shuffled ? "buttonActive" : null) @(mobile ? "hide" : null)"
+                        title="@Globalize["Shuffle"]" @onclick="Playback.ToggleQueueShuffleMode" @onclick:stopPropagation="true">
+                    <span class="material-icons shuffle" aria-hidden="true"></span>
+                </button>
+
+                <div class="nowPlayingBarUserDataButtons">
+                    <PlaybackFavoriteButton ItemId="@(item.Id?.ToString("N"))" Class="mediaButton" />
+                </div>
+
+                <button type="button" class="playPauseButton mediaButton paper-icon-button-light" title="@Globalize[paused ? "Play" : "ButtonPause"]"
+                        @onclick="() => Playback.PlayPauseAsync()" @onclick:stopPropagation="true">
+                    <span class="material-icons @(paused ? "play_arrow" : "pause")" aria-hidden="true"></span>
+                </button>
+                @if (mobile)
+                {
+                    <button type="button" class="nextTrackButton mediaButton paper-icon-button-light" title="@Globalize["ButtonNextTrack"]"
+                            @onclick="() => Playback.NextTrackAsync()" @onclick:stopPropagation="true">
+                        <span class="material-icons skip_next" aria-hidden="true"></span>
+                    </button>
+                }
+                else
+                {
+                    <button type="button" class="btnToggleContextMenu mediaButton paper-icon-button-light" title="@Globalize["ButtonMore"]"
+                            @onclick="ShowContextMenuAsync" @onclick:stopPropagation="true">
+                        <span class="material-icons more_vert" aria-hidden="true"></span>
+                    </button>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const int TimeUpdateIntervalMs = 700;
+    private const int HideTransitionMs = 350;
+
+    // The item the bar shows. It is kept while the bar slides out.
+    private BaseItemDto? _item;
+    private bool _visible;
+    private bool _collapsed = true;
+    private int _hideGeneration;
+    private long _lastTimeUpdate;
+
+    private string? StateClass => _visible ? null : _collapsed ? "hide nowPlayingBar-hidden" : "nowPlayingBar-hidden";
+
+    private long? RuntimeTicks => Playback.DurationTicks is { } duration && duration > 0 ? duration : null;
+
+    private double PositionPercent => RuntimeTicks is { } runtime ? Math.Clamp(Playback.CurrentTimeTicks * 100d / runtime, 0, 100) : 0;
+
+    private (double Start, double End)? BufferedPercent =>
+        PlaybackSlider.BufferedPercent(Playback.BufferedRanges, RuntimeTicks, Playback.CurrentTimeTicks);
+
+    /// <summary>"1:02 / 3:45"; the run time only when it is known.</summary>
+    private string TimeText
+    {
+        get
+        {
+            var text = Playback.CurrentPlayer is null ? "--:--" : Text.RunningTime(Playback.CurrentTimeTicks);
+            return RuntimeTicks is { } runtime ? text + " / " + Text.RunningTime(runtime) : text;
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        Playback.Event += OnPlaybackEvent;
+        Router.LocationChanged += OnLocationChanged;
+        AppHost.LayoutChanged += Refresh;
+        Globalize.LanguageChanged += Refresh;
+        Api.Changed += Refresh;
+        UpdateVisibility();
+    }
+
+    public void Dispose()
+    {
+        Playback.Event -= OnPlaybackEvent;
+        Router.LocationChanged -= OnLocationChanged;
+        AppHost.LayoutChanged -= Refresh;
+        Globalize.LanguageChanged -= Refresh;
+        Api.Changed -= Refresh;
+        _hideGeneration++;
+    }
+
+    /// <summary>
+    /// Port of onStateChanged()/onPlaybackStopped(): the bar shows what plays unless it is a local
+    /// video (that has the video page), a start that asked not to take over the screen (theme
+    /// media), or a page that has its own controls.
+    /// </summary>
+    private bool ShouldShow()
+    {
+        if (!Api.IsLoggedIn || Router.Location.Path is "/video" or "/queue")
+        {
+            return false;
+        }
+
+        if (Playback.CurrentPlayer is not { } player || Playback.CurrentItem is not { } item || !Playback.IsPlaying)
+        {
+            return false;
+        }
+
+        if (Playback.LastStartState is { IsFullscreen: false })
+        {
+            return false;
+        }
+
+        return !(player.IsLocalPlayer && item.MediaType.ToApiString() == "Video");
+    }
+
+    private void UpdateVisibility()
+    {
+        var show = ShouldShow();
+        if (show)
+        {
+            _item = Playback.CurrentItem;
+            _collapsed = false;
+        }
+
+        if (show == _visible)
+        {
+            return;
+        }
+
+        _visible = show;
+        _hideGeneration++;
+        if (!show)
+        {
+            _ = CollapseAfterTransitionAsync(_hideGeneration);
+        }
+    }
+
+    /// <summary>The original takes the bar out of the layout when it has slid out.</summary>
+    private async Task CollapseAfterTransitionAsync(int generation)
+    {
+        await Timers.Delay(HideTransitionMs);
+        if (generation == _hideGeneration)
+        {
+            _collapsed = true;
+            _item = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnPlaybackEvent(string name)
+    {
+        if (name == PlaybackEvents.TimeUpdate)
+        {
+            // Try to avoid hammering the document with changes.
+            var now = Timers.NowMs;
+            if (!_visible || now - _lastTimeUpdate < TimeUpdateIntervalMs)
+            {
+                return;
+            }
+
+            _lastTimeUpdate = now;
+        }
+
+        Refresh();
+    }
+
+    private void OnLocationChanged(AppLocation location) => Refresh();
+
+    private void Refresh() => _ = InvokeAsync(() =>
+    {
+        UpdateVisibility();
+        StateHasChanged();
+    });
+
+    private void OpenNowPlaying() => Router.ShowNowPlaying();
+
+    private string PositionBubbleText(double value) =>
+        RuntimeTicks is { } runtime ? Text.RunningTime((long)(runtime / 100d * value)) : "--:--";
+
+    /// <summary>
+    /// For audio the button first returns to the start of the track, unless it is (almost) there
+    /// already and a previous track exists.
+    /// </summary>
+    private Task OnPreviousTrackAsync(MouseEventArgs e)
+    {
+        if (Playback.IsPlayingAudio)
+        {
+            // The second click of a double click is handled by the dblclick event.
+            if (e.Detail > 1)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (Playback.CurrentTimeTicks >= 5 * 10000000L || Playback.CurrentPlaylistIndex <= 0)
+            {
+                return Playback.SeekPercentAsync(0);
+            }
+        }
+
+        return Playback.PreviousTrackAsync();
+    }
+
+    private void ToggleRepeat() => Playback.SetRepeatMode(Playback.RepeatMode switch
+    {
+        PlayQueue.RepeatAll => PlayQueue.RepeatOne,
+        PlayQueue.RepeatOne => PlayQueue.RepeatNone,
+        _ => PlayQueue.RepeatAll,
+    });
+
+    private async Task ShowContextMenuAsync()
+    {
+        // PORT-TODO(playback): the full item context menu belongs to the shared item components;
+        // only the two entries the bar adds to it are offered here.
+        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        {
+            Items =
+            [
+                new ActionSheetItem { Id = "stopPlayback", Name = Globalize["StopPlayback"], Icon = "stop" },
+                new ActionSheetItem { Id = "clearQueue", Name = Globalize["ClearQueue"], Icon = "clear_all" },
+            ],
+        });
+
+        switch (id)
+        {
+            case "stopPlayback":
+                await Playback.StopAsync();
+                break;
+            case "clearQueue":
+                Playback.ClearQueue();
+                break;
+        }
+    }
+}

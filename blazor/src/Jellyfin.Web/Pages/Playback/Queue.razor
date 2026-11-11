@@ -1,0 +1,503 @@
+@* The now-playing page: artwork, controls and the play queue. Port of
+   apps/legacy/controllers/playback/queue (index.html) and components/remotecontrol/remotecontrol.js
+   with the original markup, so that remotecontrol.scss applies.
+
+   Differences from the original:
+   - the playlist is reordered with an "Up" and a "Down" button per entry instead of by dragging;
+   - the context menu offers the two entries the page adds to the item menu (stop playback, clear
+     queue); the item menu itself belongs to the shared item components.
+   PORT-TODO(playback): the remote control sections (navigation, send message, type text), saving the
+   queue as a playlist, the lyrics page, the page backdrop and the played/favourite buttons of the
+   playlist entries are not ported. *@
+@attribute [Route("/queue")]
+@attribute [Access(AccessLevel.User)]
+@using System.Globalization
+@implements IDisposable
+@inject PlaybackManager Playback
+@inject PlaybackText Text
+@inject Globalize Globalize
+@inject AppRouter Router
+@inject AppHost AppHost
+@inject AppDialogs Dialogs
+@inject JellyfinApi Api
+@inject ShellState Shell
+@inject IPlaybackTimers Timers
+
+@{
+    var item = Playback.CurrentItem;
+    var commands = Playback.GetSupportedCommands();
+    var mobile = AppHost.IsMobileLayout;
+    var paused = Playback.IsPaused;
+    var muted = Playback.IsMuted;
+    var repeatMode = Playback.RepeatMode;
+    var shuffled = Playback.ShuffleMode == PlayQueue.Shuffled;
+    var isVideo = item?.MediaType.ToApiString() == "Video";
+    var type = item?.Type.ToApiString();
+    var playingVideo = Playback.IsPlayingVideo && item is not null;
+    var playingAudio = !Playback.IsPlayingVideo && item is not null;
+    var audioBook = playingAudio && type == "AudioBook";
+    var showRepeat = !mobile || (playingAudio && !audioBook);
+    var showSkip = mobile ? playingVideo || audioBook : item is not null;
+    var showSecondaryToggles = !mobile || playingVideo;
+    var showMute = commands.Contains("Mute");
+    var showVolume = commands.Contains("SetVolume");
+    var playlist = Playback.GetPlaylist();
+    var playlistVisible = mobile ? _playlistOpen : true;
+    var itemId = item?.Id?.ToString("N");
+    var serverId = Api.ServerId;
+    var isAudioItem = item is not null && (type is "AudioBook" or "Audio" || item.MediaStreams is { Count: > 0 } streams && streams[0].Type.ToApiString() == "Audio");
+    var title = item is null ? string.Empty : string.Join(" - ", PlaybackText.ItemTextLines(item));
+    var imageUrl = item is null ? null : Text.ImageUrl(item, maxHeight: 300);
+
+    RenderFragment volumeControl =
+        @<div class="volumecontrol flex align-items-center flex-wrap-wrap justify-content-center @(!showMute && !showVolume || (mobile && _playlistOpen) ? "hide" : null)">
+            <button type="button" class="buttonMute autoSize paper-icon-button-light @(showMute ? null : "hide")"
+                    title="@Globalize[muted ? "Unmute" : "Mute"]" @onclick="Playback.ToggleMute">
+                <span class="xlargePaperIconButton material-icons @(muted ? "volume_off" : "volume_up")" aria-hidden="true"></span>
+            </button>
+            <PlaybackSlider ContainerClass="@("nowPlayingVolumeSliderContainer" + (showVolume ? null : " hide"))"
+                            Class="nowPlayingVolumeSlider" Step="1" Value="Playback.Volume"
+                            OnInput="value => Playback.SetVolume((int)value)" OnChange="value => Playback.SetVolume((int)value)" />
+        </div>;
+}
+
+<Page Id="nowPlayingPage" Class="@("libraryPage nowPlayingPage noSecondaryNavPage selfBackdropPage" + (isVideo ? null : " hideVideoButtons"))" Title="-">
+    <div class="remoteControlContent padded-left padded-right @(mobile ? null : "padded-bottom")">
+        <div class="nowPlayingInfoContainer">
+            <div class="nowPlayingPageImageContainer @(imageUrl is null ? "nowPlayingPageImageContainerNoAlbum" : null)">
+                @if (item is not null && imageUrl is not null)
+                {
+                    <img class="nowPlayingPageImage @(item.MediaType.ToApiString() == "Audio" ? "nowPlayingPageImageAudio" : "nowPlayingPageImagePoster")" src="@imageUrl" alt="" />
+                }
+                else if (item is not null)
+                {
+                    <div class="nowPlayingPageImageContainerNoAlbum">
+                        <button type="button" class="cardImageContainer coveredImage @DefaultBackgroundClass(item.Name) cardContent cardContent-shadow itemAction">
+                            <span class="cardImageIcon material-icons album" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                }
+            </div>
+
+            <div class="nowPlayingInfoControls">
+                <div class="infoContainer flex">
+                    <div class="nowPlayingInfoContainerMedia">
+                        <h2 class="nowPlayingPageTitle @(title.Length > 0 && type is not ("Audio" or "Episode") ? null : "hide")">@(item is not null && !isAudioItem && type != "Episode" ? title : null)</h2>
+                        <div style="font-weight: bold;" class="nowPlayingSongName nowPlayingEpisode">@(item is not null && (isAudioItem || type == "Episode") ? item.Name : null)</div>
+                        <div class="nowPlayingAlbum nowPlayingSeason">
+                            @if (item is not null && isAudioItem && item.Album is not null)
+                            {
+                                <a class="button-link emby-button" href="@DetailsUrl(item.AlbumId, serverId)">@item.Album</a>
+                            }
+                            else if (item is not null && !isAudioItem && type == "Episode" && item.SeasonName is not null)
+                            {
+                                <a class="button-link emby-button" href="@DetailsUrl(item.SeasonId, serverId)">@item.SeasonName</a>
+                            }
+                        </div>
+                        <div class="nowPlayingArtist nowPlayingSerie">
+                            @if (item is not null && isAudioItem && item.Artists is not null)
+                            {
+                                if (item.ArtistItems is { } artistItems)
+                                {
+                                    for (var i = 0; i < artistItems.Count; i++)
+                                    {
+                                        var artist = artistItems[i];
+                                        <a class="button-link emby-button" href="@DetailsUrl(artist.Id, serverId)">@artist.Name</a>@(i < artistItems.Count - 1 ? ", " : null)
+                                    }
+                                }
+                                else
+                                {
+                                    for (var i = 0; i < item.Artists.Count; i++)
+                                    {
+                                        <a>@item.Artists[i]</a>@(i < item.Artists.Count - 1 ? ", " : null)
+                                    }
+                                }
+                            }
+                            else if (item is not null && !isAudioItem && type == "Episode" && item.SeriesName is not null)
+                            {
+                                if (item.SeriesId is not null)
+                                {
+                                    <a class="button-link emby-button" href="@DetailsUrl(item.SeriesId, serverId)">@item.SeriesName</a>
+                                }
+                                else
+                                {
+                                    @item.SeriesName
+                                }
+                            }
+                        </div>
+                    </div>
+                    <div class="nowPlayingPageUserDataButtonsTitle">
+                        <PlaybackFavoriteButton ItemId="@itemId" />
+                    </div>
+                </div>
+
+                <div class="sliderContainer flex" dir="ltr">
+                    <div class="positionTime">@PositionText</div>
+                    <div class="nowPlayingPositionSliderContainer">
+                        <PlaybackSlider Class="nowPlayingPositionSlider" Step="1" KeepProgress="true" Value="PositionPercent"
+                                        Disabled="@(!Playback.CanSeek())" Clear="@(Playback.CurrentMediaSource is { RunTimeTicks: null })"
+                                        BubbleText="PositionBubbleText" OnChange="value => Playback.SeekPercentAsync(value)" />
+                    </div>
+                    <div class="runtime">@RuntimeText</div>
+                </div>
+
+                <div class="nowPlayingButtonsContainer focuscontainer-x justify-content-space-between">
+                    <div class="nowPlayingInfoButtons" dir="ltr">
+                        <button type="button" class="btnCommand btnRepeat repeatToggleButton autoSize paper-icon-button-light @(repeatMode == PlayQueue.RepeatNone ? null : "buttonActive") @(showRepeat ? null : "hide")"
+                                title="@Globalize["Repeat"]" @onclick="ToggleRepeat">
+                            <span class="material-icons @(repeatMode == PlayQueue.RepeatOne ? "repeat_one" : "repeat")" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnRewind btnNowPlayingRewind btnPlayStateCommand autoSize paper-icon-button-light @(showSkip ? null : "hide")"
+                                title="@Globalize["Rewind"]" @onclick="() => Playback.RewindAsync()">
+                            <span class="material-icons replay_10" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnPreviousTrack btnPlayStateCommand autoSize paper-icon-button-light @(item is null ? "hide" : null)"
+                                title="@Globalize["ButtonPreviousTrack"]" @onclick="OnPreviousTrackAsync" @ondblclick="() => Playback.PreviousTrackAsync()">
+                            <span class="material-icons skip_previous" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnPlayPause btnPlayStateCommand autoSize paper-icon-button-light @(item is null ? "hide" : null)"
+                                title="@Globalize[paused ? "Play" : "ButtonPause"]" @onclick="() => Playback.PlayPauseAsync()">
+                            <span class="material-icons @(paused ? "play_circle_filled" : "pause_circle_filled")" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnPlayStateCommand btnStop autoSize paper-icon-button-light @(item is null ? "hide" : null)"
+                                title="@Globalize["ButtonStop"]" @onclick="() => Playback.StopAsync()">
+                            <span class="material-icons stop" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnPlayStateCommand btnNextTrack autoSize paper-icon-button-light @(item is null ? "hide" : null)"
+                                title="@Globalize["ButtonNextTrack"]" @onclick="() => Playback.NextTrackAsync()">
+                            <span class="material-icons skip_next" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnPlayStateCommand btnFastForward btnNowPlayingFastForward autoSize paper-icon-button-light @(showSkip ? null : "hide")"
+                                title="@Globalize["FastForward"]" @onclick="() => Playback.FastForwardAsync()">
+                            <span class="material-icons forward_30" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnShuffleQueue autoSize paper-icon-button-light @(shuffled ? "buttonActive" : null) @(showRepeat ? null : "hide")"
+                                title="@Globalize["Shuffle"]" @onclick="Playback.ToggleQueueShuffleMode">
+                            <span class="material-icons shuffle" aria-hidden="true"></span>
+                        </button>
+                    </div>
+
+                    <div class="nowPlayingSecondaryButtons">
+                        <button type="button" class="btnAudioTracks videoButton btnPlayStateCommand autoSize paper-icon-button-light @(Playback.AudioTracks().Count > 1 && commands.Contains("SetAudioStreamIndex") ? null : "hide")"
+                                title="@Globalize["ButtonAudioTracks"]" @onclick="ShowAudioMenuAsync">
+                            <span class="material-icons audiotrack" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnSubtitles videoButton btnPlayStateCommand autoSize paper-icon-button-light @(Playback.SubtitleTracks().Count > 0 && commands.Contains("SetSubtitleStreamIndex") ? null : "hide")"
+                                title="@Globalize["Subtitles"]" @onclick="ShowSubtitleMenuAsync">
+                            <span class="material-icons closed_caption" aria-hidden="true"></span>
+                        </button>
+                        <div class="nowPlayingPageUserDataButtons">
+                            <PlaybackFavoriteButton ItemId="@itemId" />
+                        </div>
+                        <button type="button" class="btnToggleFullscreen videoButton btnPlayStateCommand autoSize paper-icon-button-light @(isVideo && commands.Contains("ToggleFullscreen") ? null : "hide")"
+                                title="@Globalize["ButtonFullscreen"]" @onclick="Playback.ToggleFullscreen">
+                            <span class="material-icons fullscreen" aria-hidden="true"></span>
+                        </button>
+                        @* PORT-TODO(playback): the lyrics page is not ported; the button stays hidden. *@
+                        <button type="button" class="btnLyrics autoSize paper-icon-button-light hide" title="@Globalize["Lyrics"]">
+                            <span class="material-icons lyrics" style="top:0.05em" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnShuffleQueue autoSize paper-icon-button-light @(shuffled ? "buttonActive" : null) @(showSecondaryToggles ? null : "hide")"
+                                title="@Globalize["Shuffle"]" @onclick="Playback.ToggleQueueShuffleMode">
+                            <span class="material-icons shuffle" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnCommand btnRepeat repeatToggleButton autoSize paper-icon-button-light @(repeatMode == PlayQueue.RepeatNone ? null : "buttonActive") @(showSecondaryToggles ? null : "hide")"
+                                title="@Globalize["Repeat"]" @onclick="ToggleRepeat">
+                            <span class="material-icons @(repeatMode == PlayQueue.RepeatOne ? "repeat_one" : "repeat")" aria-hidden="true"></span>
+                        </button>
+                        @if (!mobile)
+                        {
+                            @volumeControl
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* PORT-TODO(playback): the remote control sections (navigation buttons, send message, type
+           text) belong to the remote control workstream and are not rendered. *@
+
+        <div class="playlistSection">
+            <div class="@PlaylistButtonsClass(mobile)">
+                <button type="button" id="togglePlaylist" class="btnTogglePlaylist paper-icon-button-light @(mobile && playlist.Count > 0 ? null : "hide")"
+                        title="@Globalize["ButtonTogglePlaylist"]" @onclick="() => _playlistOpen = !_playlistOpen">
+                    <span class="material-icons queue_music" aria-hidden="true"></span>
+                </button>
+                @if (mobile)
+                {
+                    @volumeControl
+                }
+                @* PORT-TODO(playback): saving the queue as a playlist needs the playlist editor; the button stays hidden. *@
+                <button type="button" class="btnSavePlaylist paper-icon-button-light hide" title="@Globalize["Save"]">
+                    <span class="material-icons save" aria-hidden="true"></span>
+                </button>
+                <button type="button" id="toggleContextMenu" class="btnToggleContextMenu paper-icon-button-light" title="@Globalize["ButtonMore"]"
+                        @onclick="ShowContextMenuAsync">
+                    <span class="material-icons more_vert" aria-hidden="true"></span>
+                </button>
+            </div>
+            <div id="playlist" class="playlist itemsContainer vertical-list nowPlayingPlaylist @(playlistVisible ? null : "hide")">
+                @for (var i = 0; i < playlist.Count; i++)
+                {
+                    var entry = playlist[i];
+                    var index = i;
+                    var playlistItemId = entry.PlaylistItemId;
+                    var current = playlistItemId is not null && playlistItemId == Playback.CurrentPlaylistItemId;
+                    var entryImage = Text.ImageUrl(entry, maxHeight: 80);
+                    var indicator = current ? (paused ? " playlistIndexIndicatorImage playlistIndexIndicatorPausedImage" : " playlistIndexIndicatorImage") : null;
+                    <div class="listItem listItem-border" @key="playlistItemId" data-playlistitemid="@playlistItemId" data-action="setplaylistindex"
+                         data-id="@(entry.Id?.ToString("N"))" data-type="@entry.Type.ToApiString()">
+                        @if (entryImage is not null)
+                        {
+                            <div class="@("listItemImage itemAction" + indicator)" style="background-image:url('@entryImage');"
+                                 @onclick="() => JumpToAsync(playlistItemId)"></div>
+                        }
+                        else
+                        {
+                            <div class="@("listItemImage itemAction cardImageContainer " + DefaultBackgroundClass(entry.Name) + indicator)"
+                                 @onclick="() => JumpToAsync(playlistItemId)">
+                                <span class="cardImageIcon material-icons @DefaultIcon(entry)" aria-hidden="true"></span>
+                            </div>
+                        }
+                        <div class="listItemBody itemAction" @onclick="() => JumpToAsync(playlistItemId)">
+                            <div class="listItemBodyText"><bdi>@Text.DisplayName(entry)</bdi></div>
+                            @if (entry.ArtistItems is { Count: > 0 } entryArtists)
+                            {
+                                <div class="secondary listItemBodyText"><bdi>@string.Join(", ", entryArtists.Select(a => a.Name))</bdi></div>
+                            }
+                        </div>
+                        <div class="secondary listItemMediaInfo">
+                            @if (entry.RunTimeTicks is { } entryRuntime && entryRuntime > 0)
+                            {
+                                <div class="mediaInfoItem">@Text.RunningTime(entryRuntime)</div>
+                            }
+                        </div>
+                        <div class="listViewUserDataButtons">
+                            <button type="button" class="listItemButton itemAction paper-icon-button-light jf-playlistMoveUp" title="@Globalize["Up"]"
+                                    disabled="@(index == 0)" @onclick="() => Move(playlistItemId, index - 1)">
+                                <span class="material-icons keyboard_arrow_up" aria-hidden="true"></span>
+                            </button>
+                            <button type="button" class="listItemButton itemAction paper-icon-button-light jf-playlistMoveDown" title="@Globalize["Down"]"
+                                    disabled="@(index == playlist.Count - 1)" @onclick="() => Move(playlistItemId, index + 1)">
+                                <span class="material-icons keyboard_arrow_down" aria-hidden="true"></span>
+                            </button>
+                        </div>
+                        <button type="button" class="listItemButton itemAction paper-icon-button-light" data-action="custom" data-customaction="remove"
+                                title="@Globalize["ButtonRemove"]" @onclick="() => RemoveAsync(playlistItemId)">
+                            <span class="material-icons remove_circle_outline" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</Page>
+
+@code {
+    private const int TimeUpdateIntervalMs = 700;
+
+    private bool _playlistOpen;
+    private long _lastTimeUpdate;
+
+    private long? RuntimeTicks => Playback.DurationTicks is { } duration && duration > 0 ? duration : null;
+
+    private double PositionPercent => RuntimeTicks is { } runtime ? Math.Clamp(Playback.CurrentTimeTicks * 100d / runtime, 0, 100) : 0;
+
+    private string PositionText => Playback.CurrentItem is null ? "--:--" : Text.RunningTime(Playback.CurrentTimeTicks);
+
+    private string RuntimeText => RuntimeTicks is { } runtime ? Text.RunningTime(runtime) : "--:--";
+
+    protected override void OnInitialized()
+    {
+        Shell.SetTransparentHeader(true);
+        Playback.Event += OnPlaybackEvent;
+        Playback.PlaybackStopped += OnPlaybackStopped;
+        AppHost.LayoutChanged += Refresh;
+        Globalize.LanguageChanged += Refresh;
+    }
+
+    public void Dispose()
+    {
+        Shell.SetTransparentHeader(false);
+        Playback.Event -= OnPlaybackEvent;
+        Playback.PlaybackStopped -= OnPlaybackStopped;
+        AppHost.LayoutChanged -= Refresh;
+        Globalize.LanguageChanged -= Refresh;
+    }
+
+    /// <summary>Port of cardBuilder.getDefaultBackgroundClass(): a colour chosen by the name.</summary>
+    internal static string DefaultBackgroundClass(string? name)
+    {
+        var index = 1;
+        if (!string.IsNullOrEmpty(name))
+        {
+            var code = ((int)name[name.Length / 2]).ToString(CultureInfo.InvariantCulture);
+            var sum = code.Sum(digit => digit - '0');
+            index = (sum % 10 % 5) + 1;
+        }
+
+        return "defaultCardBackground defaultCardBackground" + index.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Port of getItemTypeIcon() for the types a queue holds.</summary>
+    private static string DefaultIcon(BaseItemDto item) => item.Type.ToApiString() switch
+    {
+        "MusicAlbum" => "album",
+        "Audio" => "audiotrack",
+        "Movie" => "movie",
+        "Episode" or "Series" => "tv",
+        "Program" => "live_tv",
+        "Book" => "book",
+        _ => "folder",
+    };
+
+    private static string DetailsUrl(Guid? id, string? serverId) => $"#/details?id={id?.ToString("N")}&serverId={serverId}";
+
+    private static string PlaylistButtonsClass(bool mobile, bool open) =>
+        "playlistSectionButton flex focuscontainer-x " + (mobile
+            ? "align-items-center justify-content-space-between" + (open ? null : " playlistSectionButtonTransparent")
+            : "align-items-right justify-content-flex-end");
+
+    private string PlaylistButtonsClass(bool mobile) => PlaylistButtonsClass(mobile, _playlistOpen);
+
+    private void OnPlaybackEvent(string name)
+    {
+        if (name == PlaybackEvents.TimeUpdate)
+        {
+            // Try to avoid hammering the document with changes.
+            var now = Timers.NowMs;
+            if (now - _lastTimeUpdate < TimeUpdateIntervalMs)
+            {
+                return;
+            }
+
+            _lastTimeUpdate = now;
+        }
+
+        Refresh();
+    }
+
+    /// <summary>Port of onPlaybackStopped(): the page closes when nothing follows.</summary>
+    private void OnPlaybackStopped(PlaybackStoppedInfo info)
+    {
+        if (string.IsNullOrEmpty(info.NextMediaType))
+        {
+            _ = InvokeAsync(Router.Back);
+        }
+    }
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    private string PositionBubbleText(double value) =>
+        RuntimeTicks is { } runtime ? Text.RunningTime((long)(runtime / 100d * value)) : "--:--";
+
+    /// <summary>
+    /// For audio the button first returns to the start of the track, unless it is (almost) there
+    /// already and a previous track exists.
+    /// </summary>
+    private Task OnPreviousTrackAsync(MouseEventArgs e)
+    {
+        if (Playback.IsPlayingAudio)
+        {
+            // The second click of a double click is handled by the dblclick event.
+            if (e.Detail > 1)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (Playback.CurrentTimeTicks >= 5 * 10000000L || Playback.CurrentPlaylistIndex <= 0)
+            {
+                return Playback.SeekPercentAsync(0);
+            }
+        }
+
+        return Playback.PreviousTrackAsync();
+    }
+
+    private void ToggleRepeat() => Playback.SetRepeatMode(Playback.RepeatMode switch
+    {
+        PlayQueue.RepeatAll => PlayQueue.RepeatOne,
+        PlayQueue.RepeatOne => PlayQueue.RepeatNone,
+        _ => PlayQueue.RepeatAll,
+    });
+
+    private Task JumpToAsync(string? playlistItemId) =>
+        playlistItemId is null ? Task.CompletedTask : Playback.SetCurrentPlaylistItemAsync(playlistItemId);
+
+    private Task RemoveAsync(string? playlistItemId) =>
+        playlistItemId is null ? Task.CompletedTask : Playback.RemoveFromPlaylistAsync([playlistItemId]);
+
+    /// <summary>Stands in for the original's drag reordering.</summary>
+    private void Move(string? playlistItemId, int newIndex)
+    {
+        if (playlistItemId is not null)
+        {
+            Playback.MovePlaylistItem(playlistItemId, newIndex);
+        }
+    }
+
+    private async Task ShowAudioMenuAsync()
+    {
+        var current = Playback.AudioStreamIndex;
+        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        {
+            Items = Playback.AudioTracks()
+                .Select(stream => new ActionSheetItem
+                {
+                    Id = (stream.Index ?? -1).ToString(CultureInfo.InvariantCulture),
+                    Name = stream.DisplayTitle ?? string.Empty,
+                    Selected = stream.Index == current,
+                })
+                .ToList(),
+        });
+        if (int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) && index != current)
+        {
+            await Playback.SetAudioStreamIndexAsync(index);
+        }
+    }
+
+    private async Task ShowSubtitleMenuAsync()
+    {
+        var current = Playback.SubtitleStreamIndex ?? -1;
+        var items = new List<ActionSheetItem>
+        {
+            new() { Id = "-1", Name = Globalize["Off"], Selected = current == -1 },
+        };
+        items.AddRange(Playback.SubtitleTracks().Select(stream => new ActionSheetItem
+        {
+            Id = (stream.Index ?? -1).ToString(CultureInfo.InvariantCulture),
+            Name = stream.DisplayTitle ?? string.Empty,
+            Selected = stream.Index == current,
+        }));
+
+        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions { Items = items });
+        if (int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) && index != current)
+        {
+            await Playback.SetSubtitleStreamIndexAsync(index);
+        }
+    }
+
+    private async Task ShowContextMenuAsync()
+    {
+        // PORT-TODO(playback): the full item context menu belongs to the shared item components;
+        // only the two entries this page adds to it are offered here.
+        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        {
+            Items =
+            [
+                new ActionSheetItem { Id = "stopPlayback", Name = Globalize["StopPlayback"], Icon = "stop" },
+                new ActionSheetItem { Id = "clearQueue", Name = Globalize["ClearQueue"], Icon = "clear_all" },
+            ],
+        });
+
+        switch (id)
+        {
+            case "stopPlayback":
+                await Playback.StopAsync();
+                break;
+            case "clearQueue":
+                Playback.ClearQueue();
+                break;
+        }
+    }
+}

@@ -1,0 +1,234 @@
+@* <input is="emby-slider"> as the playback UI uses it (elements/emby-slider/emby-slider.js): the
+   range input with its coloured track, buffered range, chapter markers and the bubble that follows
+   the pointer. The value is owned by the parent; while the user drags, the thumb follows the user
+   and the parent's value is ignored until the change is committed.
+   Not ported: clamping the bubble to the track's edges, keyboard steps and TV keyboard dragging. *@
+@using System.Globalization
+@implements IDisposable
+@inject IPlaybackUiInterop Ui
+@inject AppHost AppHost
+
+<div class="sliderContainer mdl-slider-container @ContainerClass" style="@ContainerStyle" dir="@Dir"
+     @onclick:stopPropagation="true" @onpointerdown:stopPropagation="StopPointerDown">
+    @if (Markers is { Count: > 0 })
+    {
+        <div class="sliderMarkerContainer">
+            @foreach (var marker in Markers)
+            {
+                var position = Min + (marker * (Max - Min));
+                <span class="sliderMarker @(Value >= position ? "watched" : "unwatched")" aria-hidden="true"
+                      style="left: calc(@(Text(marker * 100))% - 1px);"></span>
+            }
+        </div>
+    }
+    <input @ref="_input" type="range" step="@Step" min="@Text(Min)" max="@Text(Max)" value="@Text(ThumbValue)"
+           class="@Class mdl-slider mdl-js-slider @(AppHost.IsMobileLayout ? null : "mdl-slider-hoverthumb")"
+           data-embyslider="true" data-slider-keep-progress="@(KeepProgress ? "true" : null)"
+           aria-label="@Label" disabled="@Disabled"
+           @oninput="OnInputAsync" @onchange="OnChangeAsync" />
+    <div class="mdl-slider-background-flex-container">
+        <div class="mdl-slider-background-flex">
+            <div class="mdl-slider-background-flex-inner">
+                <div class="mdl-slider-background-upper" style="@UpperStyle"></div>
+                <div class="mdl-slider-background-lower @(Clear ? "mdl-slider-background-lower-clear" : null)" style="width: @(Text(Percent(TrackValue)))%;"></div>
+            </div>
+        </div>
+    </div>
+    <div class="sliderBubbleTrack">
+        <div class="sliderBubble @(BubblePercent is null ? "hide" : null)" style="left: @(Text(BubblePercent ?? 0))%;">
+            @if (BubblePercent is { } percent)
+            {
+                var value = Min + (percent / 100 * (Max - Min));
+                if (BubbleContent is not null)
+                {
+                    @BubbleContent(value)
+                }
+                else
+                {
+                    <h1 class="sliderBubbleText">@(BubbleText is null ? Text(Math.Round(value)) : BubbleText(value))</h1>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private ElementReference _input;
+    private DotNetObjectReference<PlaybackSlider>? _self;
+    private bool _dragging;
+    private double _dragValue;
+    private double? _hoverFraction;
+
+    /// <summary>The classes of the input (e.g. "osdPositionSlider").</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>Classes of the surrounding .sliderContainer.</summary>
+    [Parameter]
+    public string? ContainerClass { get; set; }
+
+    [Parameter]
+    public string? ContainerStyle { get; set; }
+
+    [Parameter]
+    public string? Dir { get; set; }
+
+    /// <summary>Keep pointer presses on the slider from reaching the page (the OSD toggles on them).</summary>
+    [Parameter]
+    public bool StopPointerDown { get; set; }
+
+    [Parameter]
+    public string? Label { get; set; }
+
+    [Parameter]
+    public double Value { get; set; }
+
+    [Parameter]
+    public double Min { get; set; }
+
+    [Parameter]
+    public double Max { get; set; } = 100;
+
+    [Parameter]
+    public string Step { get; set; } = "1";
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    /// <summary>data-slider-keep-progress: the coloured track keeps showing the parent's value while dragging.</summary>
+    [Parameter]
+    public bool KeepProgress { get; set; }
+
+    /// <summary>setIsClear(): no coloured track (the length of the media is unknown).</summary>
+    [Parameter]
+    public bool Clear { get; set; }
+
+    /// <summary>The buffered range to draw, in percent of the track.</summary>
+    [Parameter]
+    public (double Start, double End)? Buffered { get; set; }
+
+    /// <summary>Marker positions as fractions (0..1) of the track.</summary>
+    [Parameter]
+    public IReadOnlyList<double>? Markers { get; set; }
+
+    /// <summary>Raised while dragging, with the value under the thumb.</summary>
+    [Parameter]
+    public EventCallback<double> OnInput { get; set; }
+
+    /// <summary>Raised when the user commits a value.</summary>
+    [Parameter]
+    public EventCallback<double> OnChange { get; set; }
+
+    /// <summary>The bubble's text for a value (getBubbleText).</summary>
+    [Parameter]
+    public Func<double, string>? BubbleText { get; set; }
+
+    /// <summary>The bubble's content for a value (getBubbleHtml); wins over <see cref="BubbleText"/>.</summary>
+    [Parameter]
+    public RenderFragment<double>? BubbleContent { get; set; }
+
+    /// <summary>The user is dragging the thumb.</summary>
+    public bool Dragging => _dragging;
+
+    private double ThumbValue => _dragging ? _dragValue : Value;
+
+    private double TrackValue => _dragging && !KeepProgress ? _dragValue : Value;
+
+    /// <summary>Where the bubble is, in percent of the track; null when it is hidden.</summary>
+    private double? BubblePercent => _hoverFraction is { } fraction
+        ? fraction * 100
+        : _dragging ? Percent(_dragValue) : null;
+
+    private string UpperStyle
+    {
+        get
+        {
+            var (start, end) = Buffered ?? (0, 0);
+            start = Math.Max(start, 0);
+            return $"left: {Text(start)}%; width: {Text(Math.Clamp(end - start, 0, 100))}%;";
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _self = DotNetObjectReference.Create(this);
+            await Ui.AttachSliderAsync(_input, _self);
+        }
+    }
+
+    /// <summary>
+    /// Port of setBufferedRanges(): the buffered range around the position, in percent of the run time.
+    /// </summary>
+    public static (double Start, double End)? BufferedPercent(IReadOnlyList<BufferedRange> ranges, long? runtimeTicks, long positionTicks)
+    {
+        if (runtimeTicks is not { } runtime || runtime <= 0)
+        {
+            return null;
+        }
+
+        foreach (var range in ranges)
+        {
+            if (positionTicks < range.End)
+            {
+                return (range.Start * 100d / runtime, range.End * 100d / runtime);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Called by ui.js while the pointer is over the slider.</summary>
+    [JSInvokable]
+    public Task OnHover(double fraction)
+    {
+        if (Disabled)
+        {
+            return Task.CompletedTask;
+        }
+
+        _hoverFraction = Math.Clamp(fraction, 0, 1);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>Called by ui.js when the pointer leaves the slider.</summary>
+    [JSInvokable]
+    public Task OnHoverEnd()
+    {
+        _hoverFraction = null;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        if (_self is not null)
+        {
+            Ui.DetachSlider(_input);
+            _self.Dispose();
+            _self = null;
+        }
+    }
+
+    private static string Text(double value) => value.ToString("0.####", CultureInfo.InvariantCulture);
+
+    private static double Parse(object? value) =>
+        double.TryParse(value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) ? number : 0;
+
+    private double Percent(double value) => Max > Min ? Math.Clamp((value - Min) / (Max - Min) * 100, 0, 100) : 0;
+
+    private Task OnInputAsync(ChangeEventArgs e)
+    {
+        _dragging = true;
+        _dragValue = Parse(e.Value);
+        return OnInput.InvokeAsync(_dragValue);
+    }
+
+    private Task OnChangeAsync(ChangeEventArgs e)
+    {
+        var value = Parse(e.Value);
+        _dragging = false;
+        _dragValue = value;
+        return OnChange.InvokeAsync(value);
+    }
+}
