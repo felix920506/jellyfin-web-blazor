@@ -136,8 +136,10 @@
         Assert.True(Hidden(cut, ".fldExternalPlayer"));
         Assert.True(Hidden(cut, ".fldLimitSegmentLength"));
         Assert.True(Hidden(cut, ".fldEnableHi10p"));
-        Assert.True(Hidden(cut, ".fldStillWatchingOption"));
         Assert.False(Hidden(cut, ".fldAudioNormalization"));
+
+        // config.json lists the still-watching plugin, so its field shows.
+        Assert.False(Hidden(cut, ".fldStillWatchingOption"));
 
         Assert.Single(this.UserLoads(TestApp.UserId));
         Assert.Single(App.Server.RequestsTo("/System/Info"));

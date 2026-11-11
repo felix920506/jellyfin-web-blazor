@@ -103,8 +103,10 @@ afterwards. Central files are conflict magnets, so the foundation offers convent
   `Interop/`, `wwwroot/index.html`, `_Imports.razor`, the test `Support/` folder, `dev`,
   `scripts/`), keep the change minimal and additive and list it in your final report.
 - **Namespaces**: do not add `@using` lines to the root `_Imports.razor`. Shared components in a
-  new folder under `Components/` get a folder-level `_Imports.razor` containing
-  `@namespace Jellyfin.Web.Components`, so they are visible everywhere without imports. C#
+  new folder under `Components/` start with the line `@namespace Jellyfin.Web.Components`
+  in every `.razor` file, so they are visible everywhere without imports. (Do not put
+  `@namespace` into a folder-level `_Imports.razor`: two folders doing that for the same
+  namespace do not compile.) C#
   services use `namespace Jellyfin.Web.Services;` whatever folder they are in. Pages use the
   default namespace of their folder. Prefix names that could collide across areas
   (`DashboardUserCard`, not `UserCard`).

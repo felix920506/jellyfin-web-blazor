@@ -37,6 +37,9 @@ public sealed class ServerConnections(
     /// <summary>Raised after sign-out.</summary>
     public event Func<Task>? LocalUserSignedOut;
 
+    /// <summary>Raised at the start of a sign-out, while requests can still be authenticated.</summary>
+    public event Func<Task>? LocalUserSigningOut;
+
     /// <summary>Raised after every successful connection to a server.</summary>
     public event Action<ConnectResult>? Connected;
 
@@ -257,6 +260,7 @@ public sealed class ServerConnections(
     /// <summary>Signs out of the current server and forgets its token.</summary>
     public async Task LogoutAsync()
     {
+        await RaiseAsync(LocalUserSigningOut, h => h());
         if (api.IsLoggedIn)
         {
             try

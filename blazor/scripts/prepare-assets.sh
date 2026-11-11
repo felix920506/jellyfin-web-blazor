@@ -68,8 +68,12 @@ if [ ! -f "$OUT/css/.stamp" ] || [ -n "$(css_inputs_hash)" ] || [ "${BASH_SOURCE
                      styles/librarybrowser styles/dashboard styles/detailtable styles/livetv; do
             emit "$first"
         done
+        # Element stylesheets come before component ones, as in the original (components import
+        # the elements they use), so single-class component rules win over element defaults.
+        ( cd "$SRC" && find elements -name '*.scss' ! -name '_*' | LC_ALL=C sort ) |
+            while read -r f; do i=$((i + 1)); echo "@use \"${f%.scss}\" as e$i;"; done
         # Everything else, except partials, per-platform sheets, themes and the ones emitted above.
-        ( cd "$SRC" && find components elements lib plugins apps styles -name '*.scss' \
+        ( cd "$SRC" && find components lib plugins apps styles -name '*.scss' \
               ! -name '_*' ! -path 'styles/noto-sans/*' \
               ! -path 'styles/fonts.scss' ! -path 'styles/fonts.noto.scss' ! -path 'styles/fonts.sized.scss' \
               ! -path 'styles/site.scss' ! -path 'styles/flexstyles.scss' ! -path 'styles/scrollstyles.scss' \

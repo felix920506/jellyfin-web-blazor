@@ -1,8 +1,2 @@
 // Styles of the session, wizard and user settings pages that the original client does not have.
 
-// DialogHost renders the backdrop inside .dialogContainer (the original inserts it before the
-// container), so the backdrop's z-index would put it above the dialog and swallow every click.
-// The container is a flex box, which lets z-index apply to the dialog without positioning it.
-.dialogContainer > .dialog {
-    z-index: 999999;
-}

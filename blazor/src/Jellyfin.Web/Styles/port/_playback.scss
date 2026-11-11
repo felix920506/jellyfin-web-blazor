@@ -19,13 +19,6 @@
     right: 0;
 }
 
-// DialogHost renders the backdrop inside .dialogContainer (the original inserts it before the
-// container), so the backdrop's z-index would put it above the dialog and swallow every click:
-// the menus of the OSD could not be used. The container is a flex box, which lets z-index apply
-// to the dialog without positioning it. (The session workstream's _session.scss has the same rule.)
-.dialogContainer > .dialog {
-    z-index: 999999;
-}
 
 // Values of the playback info overlay may span several lines.
 .jf-playerStats-value {

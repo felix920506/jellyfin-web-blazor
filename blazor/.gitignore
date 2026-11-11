@@ -4,3 +4,5 @@ artifacts/
 src/Jellyfin.Web/wwwroot/generated/
 *.user
 .vs/
+# The original client ignores its config.json everywhere; the port ships one.
+!src/Jellyfin.Web/wwwroot/config.json

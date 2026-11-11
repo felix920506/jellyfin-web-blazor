@@ -87,6 +87,9 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
             RegisterPlayer(player);
         }
 
+        // Stopping at the start of the sign-out lets the stop report reach the server; the second
+        // subscription covers sign-outs that do not go through LogoutAsync.
+        connections.LocalUserSigningOut += OnLocalUserSignedOutAsync;
         connections.LocalUserSignedOut += OnLocalUserSignedOutAsync;
     }
 
