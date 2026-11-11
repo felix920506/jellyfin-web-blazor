@@ -8,7 +8,7 @@ Everything runs in Docker through `./dev` (run it without arguments for the comm
 
 ```
 ./dev check                 # build (warnings are errors) + tests
-scripts/test-server.sh up   # a throwaway Jellyfin server on http://localhost:18096 (admin / jellyfin)
+scripts/test-server.sh up   # a throwaway Jellyfin server with sample media on http://localhost:18096 (admin / jellyfin)
 ./dev serve                 # the app on http://localhost:5080
 ./dev e2e smoke.py          # browser smoke test (Playwright in Docker)
 ```
