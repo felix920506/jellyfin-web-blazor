@@ -28,7 +28,7 @@ public sealed class PlayerData
 }
 
 /// <summary>Details of a "playbackstop" event.</summary>
-public sealed record PlaybackStopInfo(IMediaPlayer Player, PlayerState State, BaseItemDto? NextItem, string? NextMediaType);
+public sealed record PlaybackStoppedInfo(IMediaPlayer Player, PlayerState State, BaseItemDto? NextItem, string? NextMediaType);
 
 /// <summary>
 /// The playback manager. Port of components/playback/playbackmanager.js for the local players:
@@ -97,7 +97,7 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
     public event Action<string>? Event;
 
     /// <summary>Raised with the details of a "playbackstop".</summary>
-    public event Action<PlaybackStopInfo>? PlaybackStopped;
+    public event Action<PlaybackStoppedInfo>? PlaybackStopped;
 
     /// <summary>The registered players; local players first, in registration order.</summary>
     public IReadOnlyList<IMediaPlayer> Players => _players;

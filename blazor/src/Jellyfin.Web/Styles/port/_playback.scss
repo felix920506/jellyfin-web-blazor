@@ -1,0 +1,31 @@
+// Playback glue: what the original gets from its view container and custom elements.
+
+// The original video page is a .mainAnimatedPage that fills the viewport; the port's page must do
+// the same so that presses anywhere over the video reach it.
+.jf-videoOsdPage {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 0 !important;
+}
+
+// The original reuses the app's header (fixed at the top); the port's video page draws its own.
+.jf-osdHeader {
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    right: 0;
+}
+
+// Values of the playback info overlay may span several lines.
+.jf-playerStats-value {
+    white-space: pre-line;
+}
+
+// Reorder buttons of the play queue (they stand in for the original's drag handle).
+.jf-playlistMoveUp[disabled],
+.jf-playlistMoveDown[disabled] {
+    opacity: 0.3;
+}

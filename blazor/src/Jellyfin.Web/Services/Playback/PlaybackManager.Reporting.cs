@@ -453,7 +453,7 @@ public sealed partial class PlaybackManager
         }
 
         var newPlayer = nextItem is not null ? GetPlayer(nextItem.Item) : null;
-        var stopInfo = new PlaybackStopInfo(player, state, nextItem?.Item, nextMediaType);
+        var stopInfo = new PlaybackStoppedInfo(player, state, nextItem?.Item, nextMediaType);
         if (newPlayer is null)
         {
             data.StreamInfo = null;
@@ -534,7 +534,7 @@ public sealed partial class PlaybackManager
         state.NextMediaType = nextMediaType;
         try
         {
-            PlaybackStopped?.Invoke(new PlaybackStopInfo(activePlayer, state, newItem, nextMediaType));
+            PlaybackStopped?.Invoke(new PlaybackStoppedInfo(activePlayer, state, newItem, nextMediaType));
         }
         catch (Exception ex)
         {

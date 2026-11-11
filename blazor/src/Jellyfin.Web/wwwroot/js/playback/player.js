@@ -753,6 +753,8 @@ export function setPictureInPicture(enabled) {
 export function navigatedToOsd() {
     const player = players.video;
     if (player && player.container) {
+        // The page behind the OSD becomes see-through and the video moves below it.
+        setTransparency(true);
         player.container.classList.remove('videoPlayerContainer-onTop');
     }
 }

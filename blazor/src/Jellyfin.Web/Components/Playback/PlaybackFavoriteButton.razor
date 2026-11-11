@@ -1,0 +1,92 @@
+@* <button is="emby-ratingbutton"> for the item that is playing. Like the original now-playing
+   views it loads the item's user data from the server (the playing item may not carry it) and
+   toggles the favourite state with the original requests. *@
+@inject JellyfinApi Api
+@inject Globalize Globalize
+
+@if (_itemId is not null && _canRate)
+{
+    <button type="button" class="@Class paper-icon-button-light @(_isFavorite ? "ratingbutton-withrating" : null)"
+            data-id="@_itemId" data-isfavorite="@(_isFavorite ? "true" : "false")"
+            title="@Globalize[_isFavorite ? "Favorite" : "AddToFavorites"]"
+            @onclick="ToggleAsync" @onclick:stopPropagation="true">
+        <span class="@IconClass material-icons favorite @(_isFavorite ? "ratingbutton-icon-withrating" : null)" aria-hidden="true"></span>
+    </button>
+}
+
+@code {
+    private string? _itemId;
+    private bool _canRate;
+    private bool _isFavorite;
+
+    /// <summary>The id of the item, or null for none.</summary>
+    [Parameter]
+    public string? ItemId { get; set; }
+
+    /// <summary>Classes besides paper-icon-button-light (e.g. "mediaButton").</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>Classes of the icon besides the icon itself (e.g. "xlargePaperIconButton").</summary>
+    [Parameter]
+    public string? IconClass { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ItemId == _itemId)
+        {
+            return;
+        }
+
+        var itemId = ItemId;
+        _itemId = itemId;
+        _canRate = false;
+        _isFavorite = false;
+        if (itemId is null || !Api.IsLoggedIn)
+        {
+            return;
+        }
+
+        try
+        {
+            using var response = await Api.SendAsync(HttpMethod.Get, Api.GetUrl($"Users/{Api.UserIdText}/Items/{itemId}"));
+            response.EnsureSuccessStatusCode();
+            var item = KiotaJson.Parse(await response.Content.ReadAsStringAsync(), BaseItemDto.CreateFromDiscriminatorValue);
+            if (_itemId == itemId && item is not null)
+            {
+                _canRate = PlaybackText.CanRate(item);
+                _isFavorite = item.UserData?.IsFavorite == true;
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            AppLog.Warn("Loading the user data of the playing item failed: " + exception.Message);
+        }
+    }
+
+    /// <summary>Port of emby-ratingbutton's onClick(): apiClient.updateFavoriteStatus().</summary>
+    private async Task ToggleAsync()
+    {
+        if (_itemId is not { } itemId)
+        {
+            return;
+        }
+
+        try
+        {
+            using var response = await Api.SendAsync(
+                _isFavorite ? HttpMethod.Delete : HttpMethod.Post,
+                Api.GetUrl($"Users/{Api.UserIdText}/FavoriteItems/{itemId}"));
+            response.EnsureSuccessStatusCode();
+            var userData = KiotaJson.Parse(await response.Content.ReadAsStringAsync(), UserItemDataDto.CreateFromDiscriminatorValue);
+            if (_itemId == itemId)
+            {
+                _isFavorite = userData?.IsFavorite == true;
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            AppLog.Warn("Changing the favourite state failed: " + exception.Message);
+        }
+    }
+}
