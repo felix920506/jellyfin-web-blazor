@@ -1,0 +1,327 @@
+@* Settings: home screen (/mypreferenceshome). *@
+@using System.Net
+@using System.Text.Json
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.User
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private static readonly Guid Other = SettingsTestExtensions.OtherUserId;
+    private static readonly Guid Movies = Guid.Parse("a0000000-0000-0000-0000-000000000001");
+    private static readonly Guid Shows = Guid.Parse("a0000000-0000-0000-0000-000000000002");
+    private static readonly Guid Collections = Guid.Parse("a0000000-0000-0000-0000-000000000003");
+    private static readonly Guid LiveTv = Guid.Parse("a0000000-0000-0000-0000-000000000004");
+    private static readonly Guid Playlists = Guid.Parse("a0000000-0000-0000-0000-000000000005");
+    private static readonly Guid Channel = Guid.Parse("a0000000-0000-0000-0000-000000000006");
+    private static readonly Guid Mixed = Guid.Parse("a0000000-0000-0000-0000-000000000007");
+
+    private static string N(Guid id) => id.ToString("N");
+
+    private static object View(Guid id, string name, string type, string? collectionType) =>
+        new { Id = id, Name = name, Type = type, CollectionType = collectionType };
+
+    private void ScriptViews() => App.Server.OnGet("/UserViews", new
+    {
+        Items = new[]
+        {
+            View(Movies, "Movies", "CollectionFolder", "movies"),
+            View(Shows, "Shows", "CollectionFolder", "tvshows"),
+            View(Collections, "Collections", "UserView", "boxsets"),
+            View(LiveTv, "Live TV", "UserView", "livetv"),
+            View(Playlists, "Playlists", "UserView", "playlists"),
+            View(Channel, "Trailers", "Channel", null),
+            View(Mixed, "Stuff", "CollectionFolder", null)
+        },
+        TotalRecordCount = 7
+    });
+
+    private void ScriptGroups() => App.Server.OnGet("/UserViews/GroupingOptions", new[]
+    {
+        new { Id = N(Movies), Name = "Movies" },
+        new { Id = N(Shows), Name = "Shows" }
+    });
+
+    private static object UserJson(Guid id) => new
+    {
+        Id = id,
+        Name = "tester",
+        Policy = new { IsAdministrator = false },
+        Configuration = new
+        {
+            HidePlayedInLatest = true,
+            PlayDefaultAudioTrack = true,
+            GroupedFolders = new[] { Shows },
+            MyMediaExcludes = new[] { Playlists },
+            LatestItemsExcludes = new[] { Shows },
+            OrderedViews = new[] { Movies, Shows }
+        }
+    };
+
+    private void ScriptEverything(Guid? userId = null, bool admin = false)
+    {
+        SignIn(admin);
+        this.ScriptUser(userId ?? TestApp.UserId, UserJson(userId ?? TestApp.UserId));
+        this.ScriptPreferences(new Dictionary<string, string>
+        {
+            ["homesection0"] = "resume",
+            ["homesection1"] = "resume",
+            ["homesection2"] = "nextup",
+            ["homesection5"] = "bogus",
+            ["landing-" + N(Movies)] = "favorites",
+            ["landing-livetv"] = "guide",
+            ["tvhome"] = "vertical"
+        });
+        ScriptViews();
+        ScriptGroups();
+        App.Server.OnPost("/Users/Configuration");
+    }
+
+    private IRenderedComponent<HomePreferences> RenderLoaded(string? userId = null)
+    {
+        var cut = Render<HomePreferences>(parameters => parameters.Add(page => page.UserId, userId));
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll(".folderGroupList .checkboxList")));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        return cut;
+    }
+
+    private static List<Guid> Guids(JsonElement element, string name) =>
+        element.GetProperty(name).EnumerateArray().Select(value => Guid.Parse(value.GetString()!)).ToList();
+
+    private static AngleSharp.Dom.IElement ByFolder(IRenderedComponent<HomePreferences> cut, string selector, string folderId) =>
+        cut.Find($"{selector}[data-folderid='{folderId}']");
+
+    [Fact]
+    public void The_home_sections_show_the_stored_choice_or_the_default()
+    {
+        ScriptEverything();
+
+        var cut = RenderLoaded();
+
+        Assert.Equal("page libraryPage userPreferencesPage noSecondaryNavPage", cut.Find("#homeScreenPreferencesPage").ClassName);
+        Assert.Equal(
+            ["resume", "", "nextup", "", "", "", "", "", "", ""],
+            Enumerable.Range(1, 10).Select(index => cut.Find("#selectHomeSection" + index).Value()));
+        // The default section of a position is offered with an empty value.
+        Assert.Equal(
+            ["", "librarybuttons", "activerecordings", "resume", "resumeaudio", "resumebook", "latestmedia", "nextup", "livetv", "none"],
+            cut.FindAll("#selectHomeSection1 option").Select(option => option.Value()));
+        Assert.Equal(
+            ["smalllibrarytiles", "librarybuttons", "activerecordings", "", "resumeaudio", "resumebook", "latestmedia", "nextup", "livetv", "none"],
+            cut.FindAll("#selectHomeSection2 option").Select(option => option.Value()));
+        Assert.Equal(this.T("HeaderMyMedia"), cut.Find("#selectHomeSection1 option").TextContent);
+        var globalize = Services.GetRequiredService<Globalize>();
+        Assert.Equal(globalize.Translate("LabelHomeScreenSectionValue", 1), cut.Find("label[for=selectHomeSection1]").TextContent);
+        Assert.Equal(globalize.Translate("LabelHomeScreenSectionValue", 10), cut.Find("label[for=selectHomeSection10]").TextContent);
+        Assert.True(cut.Find("input.chkHidePlayedFromLatest").IsChecked());
+        // The TV home screen belongs to the TV layout, which the port does not have.
+        Assert.True(cut.Find(".selectTVHomeScreenContainer").HasClass("hide"));
+        Assert.Equal("vertical", cut.Find("select.selectTVHomeScreen").Value());
+    }
+
+    [Fact]
+    public void The_libraries_are_listed_with_their_settings()
+    {
+        ScriptEverything();
+
+        var cut = RenderLoaded();
+
+        Assert.Equal(
+            new[] { Movies, Shows, Collections, LiveTv, Playlists, Channel, Mixed }.Select(N),
+            cut.FindAll(".viewOrderList .viewItem").Select(item => item.GetAttribute("data-viewid")));
+        Assert.Equal("Movies", cut.Find(".viewOrderList .viewItem .listItemBody").TextContent.Trim());
+        Assert.Equal(
+            ["Movies", "Shows", "Collections", "Live TV", "Playlists", "Trailers", "Stuff"],
+            cut.FindAll(".perLibrarySettings h2.sectionTitle").Select(title => title.TextContent));
+
+        // "Display in My Media" exists for channels, collections and playlists.
+        Assert.Equal(
+            new[] { Collections, Playlists, Channel }.Select(N),
+            cut.FindAll("input.chkIncludeInMyMedia").Select(input => input.GetAttribute("data-folderid")));
+        Assert.True(ByFolder(cut, "input.chkIncludeInMyMedia", N(Collections)).IsChecked());
+        Assert.False(ByFolder(cut, "input.chkIncludeInMyMedia", N(Playlists)).IsChecked());
+
+        // The other home sections exclude playlists, live TV, collections and channel libraries.
+        Assert.Equal(
+            new[] { Movies, Shows, Channel, Mixed }.Select(N),
+            cut.FindAll("input.chkIncludeInLatest").Select(input => input.GetAttribute("data-folderid")));
+        Assert.True(ByFolder(cut, "input.chkIncludeInLatest", N(Movies)).IsChecked());
+        Assert.False(ByFolder(cut, "input.chkIncludeInLatest", N(Shows)).IsChecked());
+
+        // Landing screens: live TV is stored under "livetv", a folder without a type is mixed content.
+        Assert.Equal(
+            [N(Movies), N(Shows), "livetv", N(Mixed)],
+            cut.FindAll("select.selectLanding").Select(select => select.GetAttribute("data-folderid")));
+        Assert.Equal(
+            ["favorites", "", "guide", ""],
+            cut.FindAll("select.selectLanding").Select(select => select.Value()));
+        Assert.Equal(
+            ["", "suggestions", "favorites", "collections", "genres", "studios", "playlists"],
+            ByFolder(cut, "select.selectLanding", N(Movies)).QuerySelectorAll("option").Select(option => option.Value()));
+        Assert.Equal(
+            ["", "suggestions", "mixed", "collections", "playlists"],
+            ByFolder(cut, "select.selectLanding", N(Mixed)).QuerySelectorAll("option").Select(option => option.Value()));
+
+        Assert.Equal([N(Movies), N(Shows)], cut.FindAll("input.chkGroupFolder").Select(input => input.GetAttribute("data-folderid")));
+        Assert.False(cut.Find("#chkGroupFolder" + N(Movies)).IsChecked());
+        Assert.True(cut.Find("#chkGroupFolder" + N(Shows)).IsChecked());
+
+        var views = Assert.Single(App.Server.RequestsTo("/UserViews"));
+        Assert.True(views.QueryIs("userId", TestApp.UserId));
+        Assert.Equal("true", views.Query("includeHidden"));
+        Assert.True(Assert.Single(App.Server.RequestsTo("/UserViews/GroupingOptions")).QueryIs("userId", TestApp.UserId));
+    }
+
+    [Fact]
+    public async Task Libraries_are_moved_up_and_down()
+    {
+        ScriptEverything();
+        var cut = RenderLoaded();
+        IEnumerable<string?> Order() => cut.FindAll(".viewOrderList .viewItem").Select(item => item.GetAttribute("data-viewid"));
+
+        await this.Settle(() => cut.Find($".viewItem[data-viewid='{N(Shows)}'] .btnViewItemUp").ClickAsync(new MouseEventArgs()));
+        Assert.Equal(new[] { Shows, Movies, Collections, LiveTv, Playlists, Channel, Mixed }.Select(N), Order());
+
+        await this.Settle(() => cut.Find($".viewItem[data-viewid='{N(Shows)}'] .btnViewItemUp").ClickAsync(new MouseEventArgs()));
+        await this.Settle(() => cut.Find($".viewItem[data-viewid='{N(Mixed)}'] .btnViewItemDown").ClickAsync(new MouseEventArgs()));
+        Assert.Equal(new[] { Shows, Movies, Collections, LiveTv, Playlists, Channel, Mixed }.Select(N), Order());
+
+        await this.Settle(() => cut.Find($".viewItem[data-viewid='{N(Movies)}'] .btnViewItemDown").ClickAsync(new MouseEventArgs()));
+        Assert.Equal(new[] { Shows, Collections, Movies, LiveTv, Playlists, Channel, Mixed }.Select(N), Order());
+    }
+
+    [Fact]
+    public void Leaving_my_media_hides_the_other_sections_checkbox()
+    {
+        ScriptEverything();
+        var cut = RenderLoaded();
+        AngleSharp.Dom.IElement? LatestField() => ByFolder(cut, "input.chkIncludeInLatest", N(Channel)).Closest("label");
+
+        Assert.False(LatestField()!.HasClass("hide"));
+
+        ByFolder(cut, "input.chkIncludeInMyMedia", N(Channel)).Change(false);
+        Assert.True(LatestField()!.HasClass("fldIncludeInLatest"));
+        Assert.True(LatestField()!.HasClass("hide"));
+
+        ByFolder(cut, "input.chkIncludeInMyMedia", N(Channel)).Change(true);
+        Assert.False(LatestField()!.HasClass("hide"));
+    }
+
+    [Fact]
+    public async Task Saving_posts_the_configuration_and_stores_sections_and_landing_screens()
+    {
+        ScriptEverything();
+        var cut = RenderLoaded();
+
+        cut.Find("#selectHomeSection1").Change("librarybuttons");
+        cut.Find("#selectHomeSection3").Change(string.Empty);
+        cut.Find("#selectHomeSection10").Change("livetv");
+        cut.Find("input.chkHidePlayedFromLatest").Change(false);
+        await this.Settle(() => cut.Find($".viewItem[data-viewid='{N(Shows)}'] .btnViewItemUp").ClickAsync(new MouseEventArgs()));
+        ByFolder(cut, "input.chkIncludeInLatest", N(Movies)).Change(false);
+        ByFolder(cut, "input.chkIncludeInMyMedia", N(Playlists)).Change(true);
+        ByFolder(cut, "input.chkIncludeInMyMedia", N(Collections)).Change(false);
+        ByFolder(cut, "select.selectLanding", N(Movies)).Change("genres");
+        ByFolder(cut, "select.selectLanding", "livetv").Change(string.Empty);
+        cut.Find("#chkGroupFolder" + N(Movies)).Change(true);
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal([this.T("SettingsSaved")], this.Toasts()), TimeSpan.FromSeconds(5));
+        var request = this.PostedConfiguration();
+        Assert.NotNull(request);
+        Assert.True(request.QueryIs("userId", TestApp.UserId));
+        var configuration = request.JsonBody();
+        Assert.False(configuration.Flag("HidePlayedInLatest"));
+        Assert.Equal([Movies, Shows], Guids(configuration, "LatestItemsExcludes"));
+        Assert.Equal([Collections], Guids(configuration, "MyMediaExcludes"));
+        Assert.Equal([Movies, Shows], Guids(configuration, "GroupedFolders"));
+        Assert.Equal([Shows, Movies, Collections, LiveTv, Playlists, Channel, Mixed], Guids(configuration, "OrderedViews"));
+        // The rest of the configuration is sent back as it was read.
+        Assert.True(configuration.Flag("PlayDefaultAudioTrack"));
+
+        cut.Eventually(() => Assert.NotNull(this.PostedPreferences()));
+        var preferences = this.PostedPreferences()!.Value;
+        Assert.Equal(
+            ["librarybuttons", "", "", "", "", "", "", "", "", "livetv"],
+            Enumerable.Range(0, 10).Select(index => preferences.Text("homesection" + index)));
+        Assert.Equal("genres", preferences.Text("landing-" + N(Movies)));
+        Assert.Equal(string.Empty, preferences.Text("landing-" + N(Shows)));
+        Assert.Equal(string.Empty, preferences.Text("landing-livetv"));
+        Assert.Equal(string.Empty, preferences.Text("landing-" + N(Mixed)));
+        Assert.Equal("vertical", preferences.Text("tvhome"));
+        Assert.Equal("librarybuttons", this.UserSetting("homesection0"));
+        Assert.Equal("genres", this.UserSetting("landing-" + N(Movies)));
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task An_administrator_edits_the_home_screen_of_another_user()
+    {
+        ScriptEverything(userId: Other, admin: true);
+        var cut = RenderLoaded(N(Other));
+
+        cut.Find("#selectHomeSection1").Change("none");
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal([this.T("SettingsSaved")], this.Toasts()), TimeSpan.FromSeconds(5));
+        Assert.True(Assert.Single(App.Server.RequestsTo("/UserViews")).QueryIs("userId", Other));
+        Assert.True(Assert.Single(App.Server.RequestsTo("/UserViews/GroupingOptions")).QueryIs("userId", Other));
+        Assert.True(this.PostedConfiguration()!.QueryIs("userId", Other));
+        Assert.All(App.Server.RequestsTo("/DisplayPreferences/usersettings"), preferences => Assert.True(preferences.QueryIs("userId", Other)));
+        Assert.Equal("none", this.UserSetting("homesection0", Other));
+        Assert.Null(this.UserSetting("homesection0"));
+        Assert.Empty(this.UserLoads(TestApp.UserId));
+    }
+
+    [Fact]
+    public async Task A_rejected_configuration_shows_no_confirmation()
+    {
+        ScriptEverything();
+        App.Server.OnPost("/Users/Configuration", _ => FakeHttp.Status(HttpStatusCode.BadRequest));
+        var cut = RenderLoaded();
+
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.NotNull(this.PostedConfiguration()));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        Assert.Empty(this.Toasts());
+    }
+
+    [Fact]
+    public void Libraries_that_cannot_be_loaded_keep_the_page_loading()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId));
+        this.ScriptPreferences(new Dictionary<string, string> { ["homesection0"] = "nextup" });
+        ScriptGroups();
+
+        var cut = Render<HomePreferences>();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/UserViews")));
+        // The sections are shown already; the libraries never arrive.
+        cut.Eventually(() => Assert.Equal("nextup", cut.Find("#selectHomeSection1").Value()));
+        Assert.Empty(cut.FindAll(".viewItem"));
+        Assert.Empty(cut.FindAll(".folderGroupList .checkboxList"));
+        Assert.True(this.IsLoading());
+    }
+
+    [Fact]
+    public void A_user_that_cannot_be_loaded_keeps_the_page_loading()
+    {
+        SignIn();
+        this.ScriptPreferences();
+        ScriptViews();
+        ScriptGroups();
+
+        var cut = Render<HomePreferences>();
+
+        cut.Eventually(() => Assert.Single(this.UserLoads(TestApp.UserId)));
+        Assert.True(this.IsLoading());
+        Assert.Empty(App.Server.RequestsTo("/UserViews"));
+        Assert.NotNull(cut.Find("#homeScreenPreferencesPage"));
+    }
+}

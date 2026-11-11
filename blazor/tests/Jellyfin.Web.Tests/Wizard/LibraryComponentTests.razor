@@ -1,0 +1,263 @@
+@* The reusable library components: directory picker and library options editor. *@
+@using System.Net
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+
+    private void ScriptFolder()
+    {
+        this.UseServer();
+        App.Server.OnGet("/Environment/DirectoryContents", new object[]
+        {
+            new { Name = "Movies", Path = "/media/Movies", Type = "Directory" },
+            new { Name = "notes.txt", Path = "/media/notes.txt", Type = "File" }
+        });
+        App.Server.OnGet("/Environment/ParentPath", "\"/\"");
+    }
+
+    private void ScriptAvailableOptions() =>
+        App.Server.OnGet("/Libraries/AvailableOptions", new
+        {
+            MetadataSavers = new[] { new { Name = "Nfo", DefaultEnabled = false } },
+            MetadataReaders = new[] { new { Name = "Nfo", DefaultEnabled = true }, new { Name = "Sidecar", DefaultEnabled = true } },
+            SubtitleFetchers = Array.Empty<object>(),
+            LyricFetchers = Array.Empty<object>(),
+            MediaSegmentProviders = new[] { new { Name = "Chapter Segments", DefaultEnabled = true } },
+            TypeOptions = new[]
+            {
+                new
+                {
+                    Type = "Movie",
+                    MetadataFetchers = new[] { new { Name = "TheMovieDb", DefaultEnabled = true }, new { Name = "The Open Movie Database", DefaultEnabled = false } },
+                    ImageFetchers = new[] { new { Name = "TheMovieDb", DefaultEnabled = true } }
+                }
+            }
+        });
+
+    [Fact]
+    public async Task The_picker_lists_a_folder_and_returns_the_submitted_path()
+    {
+        ScriptFolder();
+        App.Server.OnPost("/Environment/ValidatePath");
+        var dialogs = this.RenderDialogs();
+
+        var result = DirectoryBrowser.ShowAsync(this.Dialogs(), path: "/media", header: "Pick", instruction: "Choose a folder", includeFiles: true);
+
+        dialogs.Eventually(() => Assert.Equal(["...", "Movies", "notes.txt"], dialogs.FindAll(".results .listItemBodyText").Select(entry => entry.TextContent)));
+        Assert.True(dialogs.Find(".dialog").HasClass("directoryPicker"));
+        Assert.Equal("Pick", dialogs.Find(".formDialogHeaderTitle").TextContent);
+        Assert.StartsWith("Choose a folder", dialogs.Find(".infoBanner").TextContent, StringComparison.Ordinal);
+        Assert.Equal(this.T("LabelPath"), dialogs.Find("label.inputLabel").TextContent);
+        Assert.Equal("/media", dialogs.Find("#txtDirectoryPickerPath").Value());
+        var contents = Assert.Single(App.Server.RequestsTo("/Environment/DirectoryContents"));
+        Assert.Equal("/media", contents.Query("path"));
+        Assert.Equal("true", contents.Query("includeDirectories"));
+        Assert.Equal("true", contents.Query("includeFiles"));
+        Assert.Empty(App.Server.RequestsTo("/Environment/DefaultDirectoryBrowser"));
+
+        // A file only fills in the path; a folder would be opened.
+        dialogs.Find(".lnkFile").Click();
+        Assert.Equal("/media/notes.txt", dialogs.Find("#txtDirectoryPickerPath").Value());
+        Assert.Single(App.Server.RequestsTo("/Environment/DirectoryContents"));
+
+        dialogs.Find(".directoryPicker form").Submit();
+
+        Assert.Equal("/media/notes.txt", await result.WaitAsync(Timeout));
+        dialogs.Eventually(() => Assert.Empty(dialogs.FindAll(".dialogContainer")));
+        Assert.Equal("/media/notes.txt", Assert.Single(App.Server.RequestsTo("/Environment/ValidatePath")).JsonBody().Text("Path"));
+    }
+
+    [Fact]
+    public async Task The_picker_starts_at_the_servers_default_path_or_its_drives()
+    {
+        this.UseServer();
+        App.Server.OnGet("/Environment/DefaultDirectoryBrowser", new { Path = string.Empty });
+        App.Server.OnGet("/Environment/Drives", new[] { new { Name = "C:", Path = "C:\\", Type = "Directory" } });
+        var dialogs = this.RenderDialogs();
+
+        var result = DirectoryBrowser.ShowAsync(this.Dialogs());
+
+        dialogs.Eventually(() => Assert.Equal(["C:\\"], dialogs.FindAll(".results .lnkDirectory").Select(entry => entry.GetAttribute("data-path"))));
+        Assert.Equal(this.T("HeaderSelectPath"), dialogs.Find(".formDialogHeaderTitle").TextContent);
+        Assert.Equal(this.T("LabelFolder"), dialogs.Find("label.inputLabel").TextContent);
+        Assert.Empty(dialogs.FindAll(".infoBanner"));
+
+        dialogs.Find(".btnCloseDialog").Click();
+
+        Assert.Null(await result.WaitAsync(Timeout));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, false, "PathNotFound")]
+    [InlineData(HttpStatusCode.InternalServerError, false, "PathNotFound")]
+    [InlineData(HttpStatusCode.InternalServerError, true, "WriteAccessRequired")]
+    public async Task An_invalid_path_is_reported_but_still_returned(HttpStatusCode status, bool validateWriteable, string messageKey)
+    {
+        ScriptFolder();
+        App.Server.OnPost("/Environment/ValidatePath", _ => FakeHttp.Status(status));
+        var dialogs = this.RenderDialogs();
+
+        var result = DirectoryBrowser.ShowAsync(this.Dialogs(), path: "/media", validateWriteable: validateWriteable);
+        dialogs.Eventually(() => Assert.NotEmpty(dialogs.FindAll(".results .lnkDirectory")));
+        dialogs.Find(".directoryPicker form").Submit();
+
+        Assert.Equal("/media", await result.WaitAsync(Timeout));
+        dialogs.Eventually(() => Assert.Equal(this.T(messageKey), dialogs.Find("div.text").TextContent));
+        Assert.Equal(validateWriteable, Assert.Single(App.Server.RequestsTo("/Environment/ValidatePath")).JsonBody().Flag("ValidateWriteable"));
+    }
+
+    [Fact]
+    public async Task A_read_only_picker_only_confirms_its_path()
+    {
+        ScriptFolder();
+        App.Server.OnPost("/Environment/ValidatePath");
+        var dialogs = this.RenderDialogs();
+
+        var result = DirectoryBrowser.ShowAsync(this.Dialogs(), path: "/media", instruction: "ignored", pathReadOnly: true);
+
+        dialogs.Eventually(() => Assert.Equal("/media", dialogs.Find("#txtDirectoryPickerPath").Value()));
+        Assert.True(dialogs.Find("#txtDirectoryPickerPath").HasAttribute("readonly"));
+        Assert.Empty(dialogs.FindAll(".results"));
+        Assert.Empty(dialogs.FindAll(".btnRefreshDirectories"));
+        Assert.Empty(dialogs.FindAll(".infoBanner"));
+        Assert.Empty(App.Server.RequestsTo("/Environment/DirectoryContents"));
+
+        dialogs.Find(".directoryPicker form").Submit();
+
+        Assert.Equal("/media", await result.WaitAsync(Timeout));
+    }
+
+    [Fact]
+    public void The_editor_shows_the_fields_of_the_content_type()
+    {
+        this.UseServer();
+        ScriptAvailableOptions();
+
+        var shows = Render<LibraryOptionsEditor>(parameters => parameters.Add(editor => editor.ContentType, "tvshows"));
+
+        shows.Eventually(() => Assert.NotEmpty(shows.FindAll(".metadataFetcherItem")));
+        Assert.False(shows.Find(".fldSeasonZeroDisplayName").HasClass("hide"));
+        Assert.Equal("Specials", shows.Find("#txtSeasonZeroName").Value());
+        Assert.False(shows.Find(".chkAutomaticallyGroupSeriesContainer").HasClass("hide"));
+        Assert.False(shows.Find(".chkEnableEmbeddedTitlesContainer").HasClass("hide"));
+        Assert.True(shows.Find(".chkEnableLUFSScanContainer").HasClass("hide"));
+        Assert.True(shows.Find(".chkEnablePhotosContainer").HasClass("hide"));
+        Assert.True(shows.Find(".chkAutomaticallyAddToCollectionContainer").HasClass("hide"));
+        Assert.False(shows.Find(".fldAllowEmbeddedSubtitlesContainer").HasClass("hide"));
+        Assert.Contains(App.Server.RequestsTo("/Libraries/AvailableOptions"), request =>
+            request.Query("LibraryContentType") == "tvshows" && string.Equals(request.Query("IsNewLibrary"), "false", StringComparison.OrdinalIgnoreCase));
+
+        // Another type reloads the plugins and shows other fields.
+        shows.Render(parameters => parameters.Add(editor => editor.ContentType, "music"));
+
+        shows.Eventually(() => Assert.Contains(App.Server.RequestsTo("/Libraries/AvailableOptions"), request => request.Query("LibraryContentType") == "music"));
+        Assert.True(shows.Find(".fldSeasonZeroDisplayName").HasClass("hide"));
+        Assert.False(shows.Find(".chkEnableLUFSScanContainer").HasClass("hide"));
+        Assert.True(shows.Find(".chkEnableEmbeddedTitlesContainer").HasClass("hide"));
+        Assert.True(shows.Find(".fldAllowEmbeddedSubtitlesContainer").HasClass("hide"));
+    }
+
+    [Fact]
+    public void The_editor_starts_with_the_defaults_of_the_original_template()
+    {
+        this.UseServer();
+
+        // Without an answer about the available plugins only the plain fields are there.
+        var cut = Render<LibraryOptionsEditor>(parameters => parameters.Add(editor => editor.ContentType, "movies"));
+        cut.Eventually(() => Assert.NotEmpty(App.Server.RequestsTo("/Libraries/AvailableOptions")));
+
+        var options = cut.Instance.GetLibraryOptions();
+
+        Assert.True(options.Enabled);
+        Assert.True(options.EnableRealtimeMonitor);
+        Assert.True(options.EnablePhotos);
+        Assert.Equal("Specials", options.SeasonZeroDisplayName);
+        Assert.Equal(0, options.AutomaticRefreshIntervalDays);
+        Assert.Equal(LibraryOptions_AllowEmbeddedSubtitles.AllowAll, options.AllowEmbeddedSubtitles);
+        Assert.True(options.RequirePerfectSubtitleMatch);
+        Assert.True(options.SaveSubtitlesWithMedia);
+        Assert.Equal(["/", "|", ";", "\\"], options.CustomTagDelimiters);
+        Assert.Empty(options.DelimiterWhitelist!);
+        Assert.Empty(options.TypeOptions!);
+        Assert.Empty(options.MetadataSavers!);
+        Assert.True(cut.Find(".metadataFetchers").HasClass("hide"));
+        Assert.True(cut.Find(".fldMetadataLanguage").HasClass("hide"));
+    }
+
+    [Fact]
+    public void The_editor_shows_and_returns_the_options_of_a_library()
+    {
+        this.UseServer();
+        ScriptAvailableOptions();
+        App.Server.OnGet("/Localization/Cultures", new[] { new { DisplayName = "German", TwoLetterISOLanguageName = "de", ThreeLetterISOLanguageName = "deu" } });
+        App.Server.OnGet("/Localization/Countries", new[] { new { DisplayName = "Germany", TwoLetterISORegionName = "DE" } });
+        var library = new LibraryOptions
+        {
+            Enabled = true,
+            EnableRealtimeMonitor = false,
+            PreferredMetadataLanguage = "de",
+            MetadataCountryCode = "DE",
+            AutomaticRefreshIntervalDays = 60,
+            MetadataSavers = ["Nfo"],
+            LocalMetadataReaderOrder = ["Sidecar", "Nfo"],
+            DisabledMediaSegmentProviders = ["Chapter Segments"],
+            TypeOptions =
+            [
+                new TypeOptions
+                {
+                    Type = "Movie",
+                    MetadataFetchers = ["The Open Movie Database"],
+                    MetadataFetcherOrder = ["The Open Movie Database", "TheMovieDb"],
+                    ImageFetchers = [],
+                    ImageOptions = [new ImageOption { Limit = 3, MinWidth = 1280 }]
+                }
+            ]
+        };
+
+        var cut = Render<LibraryOptionsEditor>(parameters => parameters
+            .Add(editor => editor.ContentType, "movies")
+            .Add(editor => editor.LibraryOptions, library));
+
+        cut.Eventually(() => Assert.Equal(
+            ["The Open Movie Database", "TheMovieDb"],
+            cut.FindAll(".metadataFetcherItem").Select(item => item.GetAttribute("data-pluginname"))));
+        Assert.True(cut.Find(".chkMetadataFetcher[data-pluginname='The Open Movie Database']").IsChecked());
+        Assert.False(cut.Find(".chkMetadataFetcher[data-pluginname='TheMovieDb']").IsChecked());
+        Assert.False(cut.Find(".chkImageFetcher").IsChecked());
+        Assert.True(cut.Find(".chkMetadataSaver").IsChecked());
+        Assert.False(cut.Find(".chkMediaSegmentProvider").IsChecked());
+        Assert.Equal(["Sidecar", "Nfo"], cut.FindAll(".localReaderOption").Select(item => item.GetAttribute("data-pluginname")));
+        Assert.Equal("de", cut.Find("#selectLanguage").Value());
+        Assert.Equal("DE", cut.Find("#selectCountry").Value());
+        Assert.Equal("60", cut.Find("#selectAutoRefreshInterval").Value());
+        Assert.False(cut.Find(".chkEnableRealtimeMonitor").IsChecked());
+        Assert.False(cut.Find(".fldMetadataLanguage").HasClass("hide"));
+
+        // Reordering and checking are part of what the editor returns.
+        cut.Find(".metadataFetcherItem .btnSortableMoveDown").Click();
+        cut.Find(".chkImageFetcher").Change(true);
+        var options = cut.Instance.GetLibraryOptions();
+
+        var movie = Assert.Single(options.TypeOptions!);
+        Assert.Equal(["TheMovieDb", "The Open Movie Database"], movie.MetadataFetcherOrder);
+        Assert.Equal(["The Open Movie Database"], movie.MetadataFetchers);
+        Assert.Equal(["TheMovieDb"], movie.ImageFetchers);
+        Assert.Equal(3, Assert.Single(movie.ImageOptions!).Limit);
+        Assert.Equal(["Nfo"], options.MetadataSavers);
+        Assert.Equal(["Sidecar", "Nfo"], options.LocalMetadataReaderOrder);
+        Assert.Equal(["Chapter Segments"], options.DisabledMediaSegmentProviders);
+        Assert.Equal(["Chapter Segments"], options.MediaSegmentProviderOrder);
+        Assert.Equal("de", options.PreferredMetadataLanguage);
+        Assert.Equal("DE", options.MetadataCountryCode);
+        Assert.Equal(60, options.AutomaticRefreshIntervalDays);
+        Assert.False(options.EnableRealtimeMonitor);
+    }
+}

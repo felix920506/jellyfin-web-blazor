@@ -1,0 +1,620 @@
+@* The options of a media library. Port of components/libraryoptionseditor (template and logic). *@
+@inject JellyfinApi Api
+@inject Globalize Globalize
+
+<h2>@Globalize["HeaderLibrarySettings"]</h2>
+@Check("chkEnabledContainer", null, "chkEnabled", "EnableLibrary", "EnableLibraryHelp", _enabled, v => _enabled = v)
+
+<EmbySelect ContainerClass="@("fldMetadataLanguage" + Hide(!HasMetadataFetchers))" Id="selectLanguage" Label="@Globalize["LabelMetadataDownloadLanguage"]" @bind-Value="_language">
+    <option value=""></option>
+    @foreach (var culture in _cultures)
+    {
+        <option value="@culture.TwoLetterISOLanguageName">@culture.DisplayName</option>
+    }
+</EmbySelect>
+<EmbySelect ContainerClass="@("fldMetadataCountry" + Hide(!HasMetadataFetchers))" Id="selectCountry" Label="@Globalize["LabelCountry"]" @bind-Value="_country">
+    <option value=""></option>
+    @foreach (var country in _countries)
+    {
+        <option value="@country.TwoLetterISORegionName">@country.DisplayName</option>
+    }
+</EmbySelect>
+@Check("chkEnablePhotosContainer" + Hide(!(_contentType is "homevideos" or "photos")), null, "chkEnablePhotos", "EnablePhotos", "EnablePhotosHelp", _enablePhotos, v => _enablePhotos = v)
+
+<EmbyInput ContainerClass="@("fldSeasonZeroDisplayName advanced" + Hide(!IsTvShows))" Id="txtSeasonZeroName" Label="@Globalize["LabelSpecialSeasonsDisplayName"]"
+           Required="IsTvShows" @bind-Value="_seasonZeroName" />
+@Check("chkEnableEmbeddedTitlesContainer advanced" + Hide(!SupportsEmbeddedTitles), "chkEnableEmbeddedTitles", null, "PreferEmbeddedTitlesOverFileNames", "PreferEmbeddedTitlesOverFileNamesHelp", _enableEmbeddedTitles, v => _enableEmbeddedTitles = v)
+@Check("chkEnableEmbeddedExtrasTitlesContainer advanced" + Hide(!(SupportsEmbeddedTitles && _enableEmbeddedTitles)), "chkEnableEmbeddedExtrasTitles", null, "PreferEmbeddedExtrasTitlesOverFileNames", "PreferEmbeddedExtrasTitlesOverFileNamesHelp", _enableEmbeddedExtrasTitles, v => _enableEmbeddedExtrasTitles = v)
+@Check("chkEnableEmbeddedEpisodeInfosContainer advanced" + Hide(!IsTvShows), "chkEnableEmbeddedEpisodeInfos", null, "PreferEmbeddedEpisodeInfosOverFileNames", "PreferEmbeddedEpisodeInfosOverFileNamesHelp", _enableEmbeddedEpisodeInfos, v => _enableEmbeddedEpisodeInfos = v)
+<div class="@("selectContainer fldAllowEmbeddedSubtitlesContainer advanced" + Hide(!HasSubtitleOptions))" style="margin: 2em 0;">
+    <label class="selectLabel" for="selectAllowEmbeddedSubtitles">@Globalize["AllowEmbeddedSubtitles"]</label>
+    <select id="selectAllowEmbeddedSubtitles" class="emby-select-withcolor emby-select" value="@_allowEmbeddedSubtitles"
+            @onchange="args => _allowEmbeddedSubtitles = args.Value?.ToString()">
+        <option value="AllowAll">@Globalize["AllowEmbeddedSubtitlesAllowAllOption"]</option>
+        <option value="AllowText">@Globalize["AllowEmbeddedSubtitlesAllowTextOption"]</option>
+        <option value="AllowImage">@Globalize["AllowEmbeddedSubtitlesAllowImageOption"]</option>
+        <option value="AllowNone">@Globalize["AllowEmbeddedSubtitlesAllowNoneOption"]</option>
+    </select>
+    @SelectArrow
+    <div class="fieldDescription">@Globalize["AllowEmbeddedSubtitlesHelp"]</div>
+</div>
+
+@Check("advanced", null, "chkEnableRealtimeMonitor", "LabelEnableRealtimeMonitor", "LabelEnableRealtimeMonitorHelp", _enableRealtimeMonitor, v => _enableRealtimeMonitor = v)
+@Check("chkEnableLUFSScanContainer advanced" + Hide(_contentType != "music"), null, "chkEnableLUFSScan", "LabelEnableLUFSScan", "LabelEnableLUFSScanHelp", _enableLufsScan, v => _enableLufsScan = v)
+@Check("chkAutomaticallyAddToCollectionContainer advanced" + Hide(!(_contentType is "movies" or "mixed")), "chkAutomaticallyAddToCollection", null, "LabelAutomaticallyAddToCollection", "LabelAutomaticallyAddToCollectionHelp", _automaticallyAddToCollection, v => _automaticallyAddToCollection = v)
+
+<div class="@("metadataReaders advanced" + Hide(_metadataReaders.Count < 2))" style="margin-bottom: 2em;">
+    @if (_metadataReaders.Count > 0)
+    {
+        <h3 class="checkboxListLabel">@Globalize["LabelMetadataReaders"]</h3>
+        <LibraryPluginList Rows="_metadataReaders" ItemClass="localReaderOption" Icon="live_tv" />
+        <div class="fieldDescription">@Globalize["LabelMetadataReadersHelp"]</div>
+    }
+</div>
+
+<div class="@("metadataFetchers" + Hide(!HasMetadataFetchers))" style="margin-bottom: 2em;">
+    @foreach (var section in _metadataFetchers)
+    {
+        <div class="metadataFetcher" data-type="@section.Type" @key="section">
+            <h3 class="checkboxListLabel">@Globalize.Translate("LabelTypeMetadataDownloaders", Globalize["TypeOptionPlural" + section.Type])</h3>
+            <LibraryPluginList Rows="section.Rows" ItemClass="metadataFetcherItem" CheckboxClass="chkMetadataFetcher" />
+            <div class="fieldDescription">@Globalize["LabelMetadataDownloadersHelp"]</div>
+        </div>
+    }
+</div>
+
+<div class="@("selectContainer fldAutoRefreshInterval advanced" + Hide(!HasMetadataFetchers))" style="margin: 2em 0;">
+    <label class="selectLabel" for="selectAutoRefreshInterval">@Globalize["LabelAutomaticallyRefreshInternetMetadataEvery"]</label>
+    <select id="selectAutoRefreshInterval" class="emby-select-withcolor emby-select" value="@_autoRefreshInterval"
+            @onchange="args => _autoRefreshInterval = args.Value?.ToString()">
+        <option value="0">@Globalize["Never"]</option>
+        @foreach (var days in RefreshIntervals)
+        {
+            <option value="@days">@Globalize.Translate("EveryNDays", days)</option>
+        }
+    </select>
+    @SelectArrow
+    <div class="fieldDescription">@Globalize["MessageEnablingOptionLongerScans"]</div>
+</div>
+
+<div class="@("metadataSavers" + Hide(_metadataSavers.Count == 0))" style="margin-bottom: 2em;">
+    @if (_metadataSavers.Count > 0)
+    {
+        <h3 class="checkboxListLabel">@Globalize["LabelMetadataSavers"]</h3>
+        <div class="checkboxList paperList checkboxList-paperList">
+            @foreach (var saver in _metadataSavers)
+            {
+                var row = saver;
+                <EmbyCheckbox Class="chkMetadataSaver" Label="@row.Name" data-pluginname="@row.Name" data-defaultenabled="@(row.DefaultEnabled ? "true" : "false")"
+                              Value="row.Checked" ValueChanged="value => row.Checked = value" @key="row" />
+            }
+        </div>
+        <div class="fieldDescription" style="margin-top:.25em;">@Globalize["LabelMetadataSaversHelp"]</div>
+    }
+</div>
+
+<div class="@("imageFetchers advanced" + Hide(_imageFetchers.Count == 0))" style="margin-bottom: 2em;">
+    @foreach (var section in _imageFetchers)
+    {
+        <div class="imageFetcher" data-type="@section.Type" @key="section">
+            <div class="flex align-items-center" style="margin:1.5em 0 .5em;">
+                <h3 class="checkboxListLabel" style="margin:0;">@Globalize.Translate("HeaderTypeImageFetchers", Globalize["TypeOptionPlural" + section.Type])</h3>
+                @* PORT-TODO(session): the "Fetcher settings" button (.btnImageOptionsForType) opens components/imageOptionsEditor,
+                   which is not ported. Image options of an edited library are kept as they are. *@
+            </div>
+            <LibraryPluginList Rows="section.Rows" ItemClass="imageFetcherItem" CheckboxClass="chkImageFetcher" />
+            <div class="fieldDescription">@Globalize["LabelImageFetchersHelp"]</div>
+        </div>
+    }
+</div>
+
+<div class="@("similarItemProviders advanced" + Hide(_similarItemProviders.Count == 0))" style="margin-bottom: 2em;">
+    @foreach (var section in _similarItemProviders)
+    {
+        <div class="similarItemProvider" data-type="@section.Type" @key="section">
+            <h3 class="checkboxListLabel">@Globalize.Translate("HeaderTypeSimilarItemProviders", Globalize["TypeOptionPlural" + section.Type])</h3>
+            <LibraryPluginList Rows="section.Rows" ItemClass="similarItemProviderItem" CheckboxClass="chkSimilarItemProvider" />
+            <div class="fieldDescription">@Globalize["LabelSimilarItemProvidersHelp"]</div>
+        </div>
+    }
+</div>
+
+@Check("chkSaveLocalContainer" + Hide(_imageFetchers.Count == 0), "chkSaveLocal", null, "LabelSaveLocalMetadata", "LabelSaveLocalMetadataHelp", _saveLocalMetadata, v => _saveLocalMetadata = v)
+@Check("chkAutomaticallyGroupSeriesContainer advanced" + Hide(!IsTvShows), null, "chkAutomaticallyGroupSeries", "OptionAutomaticallyGroupSeries", "OptionAutomaticallyGroupSeriesHelp", _automaticallyGroupSeries, v => _automaticallyGroupSeries = v)
+
+<div class="@("mediaSegmentProviders advanced" + Hide(_mediaSegmentProviders.Count == 0))" style="margin-bottom: 2em;">
+    @if (_mediaSegmentProviders.Count > 0)
+    {
+        <h3 class="checkboxListLabel">@Globalize["LabelMediaSegmentProviders"]</h3>
+        <LibraryPluginList Rows="_mediaSegmentProviders" ItemClass="mediaSegmentProviderItem" CheckboxClass="chkMediaSegmentProvider" />
+        <div class="fieldDescription">@Globalize["MediaSegmentProvidersHelp"]</div>
+    }
+</div>
+
+<div class="@("trickplaySettingsSection" + Hide(!HasChapterOptions))">
+    <h2>@Globalize["Trickplay"]</h2>
+    @Check("fldExtractTrickplayImages", null, "chkExtractTrickplayImages", "OptionExtractTrickplayImage", "ExtractTrickplayImagesHelp", _extractTrickplayImages, v => _extractTrickplayImages = v)
+    @Check("fldExtractTrickplayDuringLibraryScan advanced", null, "chkExtractTrickplayDuringLibraryScan", "LabelExtractTrickplayDuringLibraryScan", "LabelExtractTrickplayDuringLibraryScanHelp", _extractTrickplayDuringLibraryScan, v => _extractTrickplayDuringLibraryScan = v)
+    @Check("fldSaveTrickplayLocally advanced", null, "chkSaveTrickplayLocally", "LabelSaveTrickplayLocally", "LabelSaveTrickplayLocallyHelp", _saveTrickplayLocally, v => _saveTrickplayLocally = v)
+</div>
+
+<div class="@("chapterSettingsSection" + Hide(!HasChapterOptions))">
+    <h2>@Globalize["HeaderChapterImages"]</h2>
+    @Check("fldExtractChapterImages", null, "chkExtractChapterImages", "OptionExtractChapterImage", "ExtractChapterImagesHelp", _extractChapterImages, v => _extractChapterImages = v)
+    @Check("fldExtractChaptersDuringLibraryScan advanced", null, "chkExtractChaptersDuringLibraryScan", "LabelExtractChaptersDuringLibraryScan", "LabelExtractChaptersDuringLibraryScanHelp", _extractChaptersDuringLibraryScan, v => _extractChaptersDuringLibraryScan = v)
+</div>
+
+<div class="@("subtitleDownloadSettings" + Hide(!HasSubtitleOptions))">
+    <h2>@Globalize["HeaderSubtitleDownloads"]</h2>
+    <div class="@("subtitleProviderSettings" + Hide(!_hasSubtitleFetchers))">
+        <div>
+            <h3 class="checkboxListLabel">@Globalize["LabelDownloadLanguages"]</h3>
+            <div class="subtitleDownloadLanguages paperList checkboxList" style="max-height: 10.5em; overflow-y: auto; padding: .5em 1em;">
+                @foreach (var culture in _cultures)
+                {
+                    var language = (culture.ThreeLetterISOLanguageName ?? string.Empty).ToLowerInvariant();
+                    <EmbyCheckbox Class="chkSubtitleLanguage" Label="@culture.DisplayName" data-lang="@language"
+                                  Value="_subtitleLanguages.Contains(language)" ValueChanged="value => SetSubtitleLanguage(language, value)" />
+                }
+            </div>
+        </div>
+        <br />
+
+        <div class="subtitleFetchers advanced" style="margin-bottom: 2em;">
+            @if (_subtitleFetchers.Count > 0)
+            {
+                <h3 class="checkboxListLabel">@Globalize["LabelSubtitleDownloaders"]</h3>
+                <LibraryPluginList Rows="_subtitleFetchers" ItemClass="subtitleFetcherItem" CheckboxClass="chkSubtitleFetcher" />
+                <div class="fieldDescription">@Globalize["SubtitleDownloadersHelp"]</div>
+            }
+        </div>
+
+        @Check(string.Empty, "chkRequirePerfectMatch", null, "OptionRequirePerfectSubtitleMatch", "OptionRequirePerfectSubtitleMatchHelp", _requirePerfectMatch, v => _requirePerfectMatch = v)
+        @Check("advanced", "chkSkipIfAudioTrackPresent", null, "LabelSkipIfAudioTrackPresent", "LabelSkipIfAudioTrackPresentHelp", _skipIfAudioTrackPresent, v => _skipIfAudioTrackPresent = v)
+        @Check("advanced", "chkSkipIfGraphicalSubsPresent", null, "LabelSkipIfGraphicalSubsPresent", "LabelSkipIfGraphicalSubsPresentHelp", _skipIfGraphicalSubsPresent, v => _skipIfGraphicalSubsPresent = v)
+    </div>
+
+    <div class="fldSaveSubtitlesSettings">
+        @Check(string.Empty, "chkSaveSubtitlesLocally", null, "SaveSubtitlesIntoMediaFolders", "SaveSubtitlesIntoMediaFoldersHelp", _saveSubtitlesLocally, v => _saveSubtitlesLocally = v)
+    </div>
+</div>
+
+<div class="@("lyricSettingsSection" + Hide(_contentType != "music"))">
+    <h2>@Globalize["Lyrics"]</h2>
+
+    <div class="lyricFetchers advanced" style="margin-bottom: 2em;">
+        @if (_lyricFetchers.Count > 0)
+        {
+            <h3 class="checkboxListLabel">@Globalize["LabelLyricDownloaders"]</h3>
+            <LibraryPluginList Rows="_lyricFetchers" ItemClass="lyricFetcherItem" CheckboxClass="chkLyricFetcher" />
+            <div class="fieldDescription">@Globalize["LyricDownloadersHelp"]</div>
+        }
+    </div>
+
+    @Check("advanced", "chkSaveLyricsLocally", null, "SaveLyricsIntoMediaFolders", "SaveLyricsIntoMediaFoldersHelp", _saveLyricsLocally, v => _saveLyricsLocally = v)
+</div>
+
+<div class="@("audioTagSettingsSection" + Hide(_contentType != "music"))">
+    <h2>@Globalize["LabelAudioTagSettings"]</h2>
+    @Check("advanced", "chkPreferNonstandardArtistsTag", null, "PreferNonstandardArtistsTag", "PreferNonstandardArtistsTagHelp", _preferNonstandardArtistsTag, v => _preferNonstandardArtistsTag = v)
+    @Check("advanced", "chkUseCustomTagDelimiters", null, "UseCustomTagDelimiters", "UseCustomTagDelimitersHelp", _useCustomTagDelimiters, v => _useCustomTagDelimiters = v)
+    <EmbyInput Id="customTagDelimitersInput" Label="@Globalize["LabelCustomTagDelimiters"]" Description="@Globalize["LabelCustomTagDelimitersHelp"]"
+               @bind-Value="_customTagDelimiters" />
+    <EmbyTextarea Id="tagDelimiterWhitelist" Label="@Globalize["LabelDelimiterWhitelist"]" Class="textarea-mono" style="resize: none;min-height:2.5em"
+                  Description="@Globalize["LabelDelimiterWhitelistHelp"]" @bind-Value="_delimiterWhitelist" />
+</div>
+
+@code {
+    private static readonly int[] RefreshIntervals = [30, 60, 90];
+
+    private readonly List<LibraryPluginRow> _metadataReaders = [];
+    private readonly List<SaverRow> _metadataSavers = [];
+    private readonly List<TypeSection> _metadataFetchers = [];
+    private readonly List<TypeSection> _imageFetchers = [];
+    private readonly List<TypeSection> _similarItemProviders = [];
+    private readonly List<LibraryPluginRow> _subtitleFetchers = [];
+    private readonly List<LibraryPluginRow> _lyricFetchers = [];
+    private readonly List<LibraryPluginRow> _mediaSegmentProviders = [];
+    private readonly HashSet<string> _subtitleLanguages = new(StringComparer.Ordinal);
+
+    private List<CultureDto> _cultures = [];
+    private List<CountryInfo> _countries = [];
+    private LibraryOptionsResultDto? _availableOptions;
+    private LibraryOptions _currentLibraryOptions = new() { TypeOptions = [] };
+    private string _contentType = string.Empty;
+    private string? _appliedContentType;
+    private bool _embedded;
+    private int _loadVersion;
+    private bool _hasSubtitleFetchers;
+
+    // Defaults of the original template.
+    private bool _enabled = true;
+    private string? _language = string.Empty;
+    private string? _country = string.Empty;
+    private bool _enablePhotos = true;
+    private string? _seasonZeroName = "Specials";
+    private bool _enableEmbeddedTitles;
+    private bool _enableEmbeddedExtrasTitles;
+    private bool _enableEmbeddedEpisodeInfos;
+    private string? _allowEmbeddedSubtitles = "AllowAll";
+    private bool _enableRealtimeMonitor = true;
+    private bool _enableLufsScan = true;
+    private bool _automaticallyAddToCollection;
+    private string? _autoRefreshInterval = "0";
+    private bool _saveLocalMetadata;
+    private bool _automaticallyGroupSeries;
+    private bool _extractTrickplayImages;
+    private bool _extractTrickplayDuringLibraryScan;
+    private bool _saveTrickplayLocally;
+    private bool _extractChapterImages;
+    private bool _extractChaptersDuringLibraryScan;
+    private bool _requirePerfectMatch = true;
+    private bool _skipIfAudioTrackPresent;
+    private bool _skipIfGraphicalSubsPresent;
+    private bool _saveSubtitlesLocally = true;
+    private bool _saveLyricsLocally;
+    private bool _preferNonstandardArtistsTag;
+    private bool _useCustomTagDelimiters;
+    private string? _customTagDelimiters = "/|;\\";
+    private string? _delimiterWhitelist = string.Empty;
+
+    /// <summary>
+    /// The library's content type as the server spells it ("movies", "tvshows", …), "mixed", or
+    /// empty. Changing it reloads the available plugins like the original's setContentType.
+    /// </summary>
+    [Parameter]
+    public string? ContentType { get; set; }
+
+    /// <summary>The options of an existing library to edit; null shows the template defaults.</summary>
+    [Parameter]
+    public LibraryOptions? LibraryOptions { get; set; }
+
+    /// <summary>
+    /// Sent as IsNewLibrary to Libraries/AvailableOptions. The original only sets it when it is
+    /// embedded with libraryOptions === null, which the library creator does not do.
+    /// </summary>
+    [Parameter]
+    public bool IsNewLibrary { get; set; }
+
+    private bool IsTvShows => _contentType == "tvshows";
+
+    private bool SupportsEmbeddedTitles => !(_contentType is "books" or "boxsets" or "playlists" or "music");
+
+    private bool HasSubtitleOptions => _contentType is "tvshows" or "movies" or "musicvideos" or "mixed";
+
+    // "mixed" is not empty and not in the original's CHAPTER_CONTENT_TYPES either.
+    private bool HasChapterOptions => _contentType is "" or "homevideos" or "movies" or "musicvideos" or "tvshows";
+
+    private bool HasMetadataFetchers => _metadataFetchers.Count > 0;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var contentType = ContentType ?? string.Empty;
+        if (!_embedded)
+        {
+            // embed(): languages and countries first, then the content type, then the options.
+            _embedded = true;
+            _appliedContentType = contentType;
+            _contentType = contentType;
+            await Task.WhenAll(LoadCulturesAsync(), LoadCountriesAsync());
+            await LoadAvailableOptionsAsync(contentType);
+            if (LibraryOptions is not null)
+            {
+                SetLibraryOptions(LibraryOptions);
+            }
+        }
+        else if (contentType != _appliedContentType)
+        {
+            _appliedContentType = contentType;
+            _contentType = contentType;
+            await LoadAvailableOptionsAsync(contentType);
+        }
+    }
+
+    /// <summary>Port of getLibraryOptions: the options as currently entered.</summary>
+    public LibraryOptions GetLibraryOptions()
+    {
+        var options = new LibraryOptions
+        {
+            Enabled = _enabled,
+            EnablePhotos = _enablePhotos,
+            EnableRealtimeMonitor = _enableRealtimeMonitor,
+            EnableLUFSScan = _enableLufsScan,
+            ExtractTrickplayImagesDuringLibraryScan = _extractTrickplayDuringLibraryScan,
+            SaveTrickplayWithMedia = _saveTrickplayLocally,
+            EnableTrickplayImageExtraction = _extractTrickplayImages,
+            ExtractChapterImagesDuringLibraryScan = _extractChaptersDuringLibraryScan,
+            EnableChapterImageExtraction = _extractChapterImages,
+            SaveLocalMetadata = _saveLocalMetadata,
+            EnableAutomaticSeriesGrouping = _automaticallyGroupSeries,
+            PreferredMetadataLanguage = _language ?? string.Empty,
+            MetadataCountryCode = _country ?? string.Empty,
+            SeasonZeroDisplayName = _seasonZeroName ?? string.Empty,
+            AutomaticRefreshIntervalDays = int.TryParse(_autoRefreshInterval, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var days) ? days : 0,
+            EnableEmbeddedTitles = _enableEmbeddedTitles,
+            EnableEmbeddedExtrasTitles = _enableEmbeddedExtrasTitles,
+            EnableEmbeddedEpisodeInfos = _enableEmbeddedEpisodeInfos,
+            AllowEmbeddedSubtitles = EnumText.Parse<LibraryOptions_AllowEmbeddedSubtitles>(_allowEmbeddedSubtitles),
+            SkipSubtitlesIfEmbeddedSubtitlesPresent = _skipIfGraphicalSubsPresent,
+            SkipSubtitlesIfAudioTrackMatches = _skipIfAudioTrackPresent,
+            SaveSubtitlesWithMedia = _saveSubtitlesLocally,
+            SaveLyricsWithMedia = _saveLyricsLocally,
+            RequirePerfectSubtitleMatch = _requirePerfectMatch,
+            AutomaticallyAddToCollection = _automaticallyAddToCollection,
+            PreferNonstandardArtistsTag = _preferNonstandardArtistsTag,
+            UseCustomTagDelimiters = _useCustomTagDelimiters,
+            MetadataSavers = _metadataSavers.Where(s => s.Checked).Select(s => s.Name).ToList(),
+            TypeOptions = [],
+            LocalMetadataReaderOrder = _metadataReaders.Select(r => r.Name).ToList(),
+            SubtitleDownloadLanguages = _cultures
+                .Select(c => (c.ThreeLetterISOLanguageName ?? string.Empty).ToLowerInvariant())
+                .Where(_subtitleLanguages.Contains)
+                .ToList(),
+            CustomTagDelimiters = (_customTagDelimiters ?? string.Empty).Select(c => c.ToString()).ToList(),
+            DelimiterWhitelist = (_delimiterWhitelist ?? string.Empty).Split('\n').Where(item => item.Trim().Length > 0).ToList(),
+            DisabledSubtitleFetchers = Unchecked(_subtitleFetchers),
+            SubtitleFetcherOrder = Names(_subtitleFetchers),
+            DisabledLyricFetchers = Unchecked(_lyricFetchers),
+            LyricFetcherOrder = Names(_lyricFetchers),
+            DisabledMediaSegmentProviders = Unchecked(_mediaSegmentProviders),
+            MediaSegmentProviderOrder = Names(_mediaSegmentProviders)
+        };
+
+#pragma warning disable CS0618 // The original always sends EnableInternetProviders: true.
+        options.EnableInternetProviders = true;
+#pragma warning restore CS0618
+
+        foreach (var section in _metadataFetchers)
+        {
+            var typeOptions = TypeOptionsOf(options, section.Type, create: true)!;
+            typeOptions.MetadataFetchers = Checked(section.Rows);
+            typeOptions.MetadataFetcherOrder = Names(section.Rows);
+        }
+
+        foreach (var section in _imageFetchers)
+        {
+            var typeOptions = TypeOptionsOf(options, section.Type, create: true)!;
+            typeOptions.ImageFetchers = Checked(section.Rows);
+            typeOptions.ImageFetcherOrder = Names(section.Rows);
+        }
+
+        foreach (var section in _similarItemProviders)
+        {
+            var typeOptions = TypeOptionsOf(options, section.Type, create: true)!;
+            typeOptions.SimilarItemProviders = Checked(section.Rows);
+            typeOptions.SimilarItemProviderOrder = Names(section.Rows);
+        }
+
+        // setImageOptionsIntoOptions: image options are not edited here; keep the library's.
+        foreach (var original in _currentLibraryOptions.TypeOptions ?? [])
+        {
+            var typeOptions = TypeOptionsOf(options, original.Type, create: true)!;
+            if (original.ImageOptions is not null)
+            {
+                typeOptions.ImageOptions = original.ImageOptions;
+            }
+        }
+
+        return options;
+    }
+
+    /// <summary>Port of setLibraryOptions: shows the options of an existing library.</summary>
+    public void SetLibraryOptions(LibraryOptions options)
+    {
+        _currentLibraryOptions = options;
+        _language = options.PreferredMetadataLanguage ?? string.Empty;
+        _country = options.MetadataCountryCode ?? string.Empty;
+        _autoRefreshInterval = (options.AutomaticRefreshIntervalDays ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _seasonZeroName = string.IsNullOrEmpty(options.SeasonZeroDisplayName) ? "Specials" : options.SeasonZeroDisplayName;
+        _enabled = options.Enabled == true;
+        _enablePhotos = options.EnablePhotos == true;
+        _enableRealtimeMonitor = options.EnableRealtimeMonitor == true;
+        _enableLufsScan = options.EnableLUFSScan == true;
+        _extractTrickplayDuringLibraryScan = options.ExtractTrickplayImagesDuringLibraryScan == true;
+        _extractTrickplayImages = options.EnableTrickplayImageExtraction == true;
+        _saveTrickplayLocally = options.SaveTrickplayWithMedia == true;
+        _extractChaptersDuringLibraryScan = options.ExtractChapterImagesDuringLibraryScan == true;
+        _extractChapterImages = options.EnableChapterImageExtraction == true;
+        _saveLocalMetadata = options.SaveLocalMetadata == true;
+        _automaticallyGroupSeries = options.EnableAutomaticSeriesGrouping == true;
+        _enableEmbeddedTitles = options.EnableEmbeddedTitles == true;
+        _enableEmbeddedExtrasTitles = options.EnableEmbeddedExtrasTitles == true;
+        _enableEmbeddedEpisodeInfos = options.EnableEmbeddedEpisodeInfos == true;
+        _allowEmbeddedSubtitles = options.AllowEmbeddedSubtitles.ToApiString() ?? "AllowAll";
+        _skipIfGraphicalSubsPresent = options.SkipSubtitlesIfEmbeddedSubtitlesPresent == true;
+        _saveSubtitlesLocally = options.SaveSubtitlesWithMedia == true;
+        _saveLyricsLocally = options.SaveLyricsWithMedia == true;
+        _skipIfAudioTrackPresent = options.SkipSubtitlesIfAudioTrackMatches == true;
+        _requirePerfectMatch = options.RequirePerfectSubtitleMatch == true;
+        _automaticallyAddToCollection = options.AutomaticallyAddToCollection == true;
+        _preferNonstandardArtistsTag = options.PreferNonstandardArtistsTag == true;
+        _useCustomTagDelimiters = options.UseCustomTagDelimiters == true;
+        foreach (var saver in _metadataSavers)
+        {
+            saver.Checked = options.MetadataSavers is not null ? options.MetadataSavers.Contains(saver.Name) : saver.DefaultEnabled;
+        }
+
+        _subtitleLanguages.Clear();
+        foreach (var language in options.SubtitleDownloadLanguages ?? [])
+        {
+            _subtitleLanguages.Add(language);
+        }
+
+        _customTagDelimiters = string.Concat(options.CustomTagDelimiters ?? []);
+        _delimiterWhitelist = string.Join('\n', (options.DelimiterWhitelist ?? []).Where(item => item.Trim().Length > 0));
+
+        if (_availableOptions is not null)
+        {
+            RenderPlugins(_availableOptions, options);
+        }
+
+        StateHasChanged();
+    }
+
+    private static readonly RenderFragment SelectArrow =
+        @<div class="selectArrowContainer">
+            <div style="visibility:hidden;display:none;">0</div>
+            <span class="selectArrow material-icons keyboard_arrow_down" aria-hidden="true"></span>
+        </div>;
+
+    private static string? Hide(bool hidden) => hidden ? " hide" : null;
+
+    private static List<string> Names(IEnumerable<LibraryPluginRow> rows) => rows.Select(r => r.Name).ToList();
+
+    private static List<string> Checked(IEnumerable<LibraryPluginRow> rows) => rows.Where(r => r.Checked).Select(r => r.Name).ToList();
+
+    private static List<string> Unchecked(IEnumerable<LibraryPluginRow> rows) => rows.Where(r => !r.Checked).Select(r => r.Name).ToList();
+
+    private static TypeOptions? TypeOptionsOf(LibraryOptions options, string? type, bool create = false)
+    {
+        options.TypeOptions ??= [];
+        var typeOptions = options.TypeOptions.FirstOrDefault(t => t.Type == type);
+        if (typeOptions is null && create)
+        {
+            typeOptions = new TypeOptions { Type = type };
+            options.TypeOptions.Add(typeOptions);
+        }
+
+        return typeOptions;
+    }
+
+    private static List<LibraryPluginRow> Rows(List<LibraryOptionInfoDto>? plugins, List<string>? order, Func<LibraryOptionInfoDto, bool> isChecked) =>
+        LibraryUi.OrderPlugins(plugins, order, p => p.Name)
+            .Select(p => new LibraryPluginRow(p.Name ?? string.Empty, isChecked(p)))
+            .ToList();
+
+    private RenderFragment Check(string? containerClass, string? id, string? checkboxClass, string labelKey, string helpKey, bool value, Action<bool> set) =>
+        @<div class="checkboxContainer checkboxContainer-withDescription @containerClass">
+            <EmbyCheckbox Id="@id" Class="@checkboxClass" Label="@Globalize[labelKey]" Value="value" ValueChanged="set" />
+            <div class="fieldDescription checkboxFieldDescription">@Globalize[helpKey]</div>
+        </div>;
+
+    private void SetSubtitleLanguage(string language, bool selected)
+    {
+        if (selected)
+        {
+            _subtitleLanguages.Add(language);
+        }
+        else
+        {
+            _subtitleLanguages.Remove(language);
+        }
+    }
+
+    private async Task LoadCulturesAsync()
+    {
+        try
+        {
+            _cultures = await Api.Client.Localization.Cultures.GetAsync() ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LibraryOptionsEditor] loading the languages failed: " + ex.Message);
+        }
+    }
+
+    private async Task LoadCountriesAsync()
+    {
+        try
+        {
+            _countries = await Api.Client.Localization.Countries.GetAsync() ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LibraryOptionsEditor] loading the countries failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>Port of populateMetadataSettings; a failed request leaves the lists as they are.</summary>
+    private async Task LoadAvailableOptionsAsync(string contentType)
+    {
+        var version = ++_loadVersion;
+        LibraryOptionsResultDto? available;
+        try
+        {
+            // Sent as the original sends it: the content type goes out as chosen, including
+            // "mixed", which the server rejects; the plugins of the previous type then stay.
+            var url = Api.GetUrl("Libraries/AvailableOptions", ("LibraryContentType", contentType), ("IsNewLibrary", IsNewLibrary));
+            using var response = await Api.SendAsync(HttpMethod.Get, url);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            available = KiotaJson.Parse(await response.Content.ReadAsStringAsync(), LibraryOptionsResultDto.CreateFromDiscriminatorValue);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return;
+        }
+
+        if (available is null || version != _loadVersion)
+        {
+            return;
+        }
+
+        _availableOptions = available;
+        RenderPlugins(available, null);
+        _hasSubtitleFetchers = available.SubtitleFetchers is { Count: > 0 };
+    }
+
+    /// <summary>The render* functions: the plugin lists for the available options and a library's options.</summary>
+    private void RenderPlugins(LibraryOptionsResultDto available, LibraryOptions? options)
+    {
+        if (options is null)
+        {
+            // New lists start unchecked; setLibraryOptions checks them.
+            _metadataSavers.Clear();
+            _metadataSavers.AddRange((available.MetadataSavers ?? []).Select(s => new SaverRow(s.Name ?? string.Empty, s.DefaultEnabled == true)));
+        }
+
+        _metadataReaders.Clear();
+        _metadataReaders.AddRange(Rows(available.MetadataReaders, options?.LocalMetadataReaderOrder, _ => false));
+
+        _metadataFetchers.Clear();
+        _imageFetchers.Clear();
+        _similarItemProviders.Clear();
+        foreach (var type in available.TypeOptions ?? [])
+        {
+            var configured = options is null ? null : TypeOptionsOf(options, type.Type);
+
+            var metadataFetchers = Rows(type.MetadataFetchers, configured?.MetadataFetcherOrder, p => configured?.MetadataFetchers?.Contains(p.Name ?? string.Empty) ?? p.DefaultEnabled == true);
+            if (metadataFetchers.Count > 0)
+            {
+                _metadataFetchers.Add(new TypeSection(type.Type ?? string.Empty, metadataFetchers));
+            }
+
+            var imageFetchers = Rows(type.ImageFetchers, configured?.ImageFetcherOrder, p => configured?.ImageFetchers?.Contains(p.Name ?? string.Empty) ?? p.DefaultEnabled == true);
+            if (imageFetchers.Count > 0)
+            {
+                _imageFetchers.Add(new TypeSection(type.Type ?? string.Empty, imageFetchers));
+            }
+
+            var similarItemProviders = Rows(type.SimilarItemProviders, configured?.SimilarItemProviderOrder, p => configured?.SimilarItemProviders?.Contains(p.Name ?? string.Empty) ?? p.DefaultEnabled == true);
+            if (similarItemProviders.Count > 0)
+            {
+                _similarItemProviders.Add(new TypeSection(type.Type ?? string.Empty, similarItemProviders));
+            }
+        }
+
+        _subtitleFetchers.Clear();
+        _subtitleFetchers.AddRange(Rows(available.SubtitleFetchers, options?.SubtitleFetcherOrder, p => options?.DisabledSubtitleFetchers is { } disabled ? !disabled.Contains(p.Name ?? string.Empty) : p.DefaultEnabled == true));
+
+        _lyricFetchers.Clear();
+        _lyricFetchers.AddRange(Rows(available.LyricFetchers, options?.LyricFetcherOrder, p => options?.DisabledLyricFetchers is { } disabled ? !disabled.Contains(p.Name ?? string.Empty) : p.DefaultEnabled == true));
+
+        _mediaSegmentProviders.Clear();
+        _mediaSegmentProviders.AddRange(Rows(available.MediaSegmentProviders, options?.MediaSegmentProviderOrder, p => options?.DisabledMediaSegmentProviders is { } disabled ? !disabled.Contains(p.Name ?? string.Empty) : p.DefaultEnabled == true));
+    }
+
+    private sealed class SaverRow(string name, bool defaultEnabled)
+    {
+        public string Name { get; } = name;
+
+        public bool DefaultEnabled { get; } = defaultEnabled;
+
+        public bool Checked { get; set; }
+    }
+
+    private sealed record TypeSection(string Type, List<LibraryPluginRow> Rows);
+}

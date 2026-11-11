@@ -1,0 +1,344 @@
+@* Settings: display (/mypreferencesdisplay). *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.User
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private static readonly Guid Other = SettingsTestExtensions.OtherUserId;
+
+    private static object UserJson(Guid id, bool admin = false, bool displayMissingEpisodes = false) => new
+    {
+        Id = id,
+        Name = id == TestApp.UserId ? "tester" : "guest",
+        Policy = new { IsAdministrator = admin },
+        Configuration = new { DisplayMissingEpisodes = displayMissingEpisodes, PlayDefaultAudioTrack = true }
+    };
+
+    private Task UseThemesAsync(params string[] plugins) => this.UseConfigAsync(new
+    {
+        themes = new[]
+        {
+            new { name = "Dark", id = "dark", color = "#202020", @default = true },
+            new { name = "Light", id = "light", color = "#303030", @default = false }
+        },
+        plugins
+    });
+
+    /// <summary>Renders the page and waits until the user's settings are in the form.</summary>
+    private IRenderedComponent<DisplayPreferences> RenderLoaded(string? userId = null)
+    {
+        var cut = Render<DisplayPreferences>(parameters => parameters.Add(page => page.UserId, userId));
+        cut.Eventually(() => Assert.False(string.IsNullOrEmpty(cut.Find("#txtScreensaverTime").Value())));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        return cut;
+    }
+
+    private void ScriptSignedInUser(bool admin = false, bool displayMissingEpisodes = false, object? customPrefs = null)
+    {
+        SignIn(admin);
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, admin, displayMissingEpisodes));
+        this.ScriptPreferences(customPrefs);
+        App.Server.OnPost("/Users/Configuration");
+    }
+
+    [Fact]
+    public async Task A_new_user_sees_the_defaults_of_the_original()
+    {
+        await UseThemesAsync();
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+
+        Assert.Equal("page libraryPage userPreferencesPage noSecondaryNavPage", cut.Find("#displayPreferencesPage").ClassName);
+        Assert.Equal(string.Empty, cut.Find("#selectLanguage").Value());
+        Assert.Equal(72, cut.FindAll("#selectLanguage option").Count);
+        Assert.Equal(this.T("Auto"), cut.Find("#selectLanguage option").TextContent);
+        Assert.Equal(string.Empty, cut.Find("select.selectDateTimeLocale").Value());
+        Assert.DoesNotContain("eu", cut.FindAll("select.selectDateTimeLocale option").Select(option => option.Value()));
+        Assert.Equal(["", "desktop", "mobile"], cut.FindAll("select.selectLayout option").Select(option => option.Value()));
+        Assert.Equal(string.Empty, cut.Find("select.selectLayout").Value());
+        Assert.Equal(["dark", "light"], cut.FindAll("#selectTheme option").Select(option => option.Value()));
+        Assert.Equal("dark", cut.Find("#selectTheme").Value());
+        Assert.Equal("dark", cut.Find("#selectDashboardTheme").Value());
+        Assert.True(cut.Find(".selectDashboardThemeContainer").HasClass("hide"));
+        Assert.False(cut.Find("#chkDisableCustomCss").IsChecked());
+        Assert.True(string.IsNullOrEmpty(cut.Find("#txtLocalCustomCss").Value()));
+        Assert.Equal(["none", "backdropscreensaver", "logoscreensaver"], cut.FindAll("select.selectScreensaver option").Select(option => option.Value()));
+        Assert.Equal("none", cut.Find("select.selectScreensaver").Value());
+        Assert.Equal("180", cut.Find("#txtScreensaverTime").Value());
+        Assert.Equal("5", cut.Find("#txtBackdropScreensaverInterval").Value());
+        Assert.Equal("5", cut.Find("#txtSlideshowInterval").Value());
+        Assert.True(cut.Find("#chkFadein").IsChecked());
+        Assert.True(cut.Find("#chkBlurhash").IsChecked());
+        Assert.Equal("100", cut.Find("#txtLibraryPageSize").Value());
+        Assert.False(cut.Find("#chkBackdrops").IsChecked());
+        Assert.False(cut.Find("#chkThemeSong").IsChecked());
+        Assert.False(cut.Find("#chkThemeVideo").IsChecked());
+        Assert.False(cut.Find("input.chkDisplayMissingEpisodes").IsChecked());
+        Assert.Equal("365", cut.Find("#txtMaxDaysForNextUp").Value());
+        Assert.False(cut.Find("#chkRewatchingNextUp").IsChecked());
+        Assert.False(cut.Find("#chkUseEpisodeImagesInNextUp").IsChecked());
+        Assert.True(cut.Find("#chkDetailsBanner").IsChecked());
+        Assert.Equal(
+            [this.T("Localization"), this.T("Display"), this.T("HeaderLibraries"), this.T("NextUp"), this.T("ItemDetails")],
+            cut.FindAll("h2.sectionTitle").Select(title => title.TextContent));
+        Assert.Equal("https://github.com/jellyfin/jellyfin", cut.Find(".learnHowToContributeContainer a").GetAttribute("href"));
+
+        var preferences = Assert.Single(App.Server.RequestsTo("/DisplayPreferences/usersettings"));
+        Assert.True(preferences.QueryIs("userId", TestApp.UserId));
+        Assert.Equal("emby", preferences.Query("client"));
+    }
+
+    [Fact]
+    public async Task Stored_settings_are_shown()
+    {
+        await UseThemesAsync();
+        foreach (var (name, value) in new Dictionary<string, string>
+        {
+            ["language"] = "de",
+            ["datetimelocale"] = "fr",
+            ["appTheme"] = "light",
+            ["screensaver"] = "logoscreensaver",
+            ["customCss"] = "body { color: red; }",
+            ["disableCustomCss"] = "true",
+            ["enableBackdrops"] = "true",
+            ["blurhash"] = "false",
+            ["fastFadein"] = "false",
+            ["detailsBanner"] = "false",
+            ["libraryPageSize"] = "50",
+            ["maxDaysForNextUp"] = "30",
+            ["enableRewatchingInNextUp"] = "true",
+            ["enableThemeSongs"] = "true",
+            ["enableThemeVideos"] = "true",
+            ["backdropScreensaverInterval"] = "9",
+            ["slideshowInterval"] = "7",
+            ["screensaverTime"] = "600"
+        })
+        {
+            this.StoreUserSetting(name, value);
+        }
+
+        this.StoreAppSetting("layout", "mobile");
+        ScriptSignedInUser(admin: true, displayMissingEpisodes: true, customPrefs: new { dashboardTheme = "light", useEpisodeImagesInNextUpAndResume = "true" });
+
+        var cut = RenderLoaded();
+
+        Assert.Equal("de", cut.Find("#selectLanguage").Value());
+        Assert.Equal("fr", cut.Find("select.selectDateTimeLocale").Value());
+        Assert.Equal("mobile", cut.Find("select.selectLayout").Value());
+        Assert.Equal("light", cut.Find("#selectTheme").Value());
+        Assert.Equal("light", cut.Find("#selectDashboardTheme").Value());
+        Assert.False(cut.Find(".selectDashboardThemeContainer").HasClass("hide"));
+        Assert.True(cut.Find("#chkDisableCustomCss").IsChecked());
+        Assert.Equal("body { color: red; }", cut.Find("#txtLocalCustomCss").Value());
+        Assert.Equal("logoscreensaver", cut.Find("select.selectScreensaver").Value());
+        Assert.Equal("600", cut.Find("#txtScreensaverTime").Value());
+        Assert.Equal("9", cut.Find("#txtBackdropScreensaverInterval").Value());
+        Assert.Equal("7", cut.Find("#txtSlideshowInterval").Value());
+        Assert.False(cut.Find("#chkFadein").IsChecked());
+        Assert.False(cut.Find("#chkBlurhash").IsChecked());
+        Assert.Equal("50", cut.Find("#txtLibraryPageSize").Value());
+        Assert.True(cut.Find("#chkBackdrops").IsChecked());
+        Assert.True(cut.Find("#chkThemeSong").IsChecked());
+        Assert.True(cut.Find("#chkThemeVideo").IsChecked());
+        Assert.True(cut.Find("input.chkDisplayMissingEpisodes").IsChecked());
+        Assert.Equal("30", cut.Find("#txtMaxDaysForNextUp").Value());
+        Assert.True(cut.Find("#chkRewatchingNextUp").IsChecked());
+        Assert.True(cut.Find("#chkUseEpisodeImagesInNextUp").IsChecked());
+        Assert.False(cut.Find("#chkDetailsBanner").IsChecked());
+    }
+
+    [Fact]
+    public async Task Only_the_configured_screensavers_are_offered()
+    {
+        await UseThemesAsync("backdropScreensaver/plugin", "playAccessValidation/plugin");
+        this.StoreUserSetting("screensaver", "logoscreensaver");
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+
+        Assert.Equal(["none", "backdropscreensaver"], cut.FindAll("select.selectScreensaver option").Select(option => option.Value()));
+        Assert.Equal([this.T("None"), this.T("BackdropScreensaver")], cut.FindAll("select.selectScreensaver option").Select(option => option.TextContent));
+        // A screensaver that is not available selects "None".
+        Assert.Equal("none", cut.Find("select.selectScreensaver").Value());
+    }
+
+    [Fact]
+    public async Task Saving_stores_the_settings_and_applies_theme_language_and_layout()
+    {
+        await UseThemesAsync();
+        ScriptSignedInUser(admin: true);
+        var cut = RenderLoaded();
+        var english = this.T("SettingsSaved");
+
+        cut.Find("#selectLanguage").Change("de");
+        cut.Find("select.selectDateTimeLocale").Change("fr");
+        cut.Find("select.selectLayout").Change("mobile");
+        cut.Find("#selectTheme").Change("light");
+        cut.Find("#selectDashboardTheme").Change("light");
+        cut.Find("#chkDisableCustomCss").Change(true);
+        cut.Find("#txtLocalCustomCss").Input(".x { color: red; }");
+        cut.Find("select.selectScreensaver").Change("backdropscreensaver");
+        cut.Find("#txtScreensaverTime").Input("300");
+        cut.Find("#txtBackdropScreensaverInterval").Input("12");
+        cut.Find("#txtSlideshowInterval").Input("8");
+        cut.Find("#chkFadein").Change(false);
+        cut.Find("#chkBlurhash").Change(false);
+        cut.Find("#txtLibraryPageSize").Input("40");
+        cut.Find("#chkBackdrops").Change(true);
+        cut.Find("#chkThemeSong").Change(true);
+        cut.Find("#chkThemeVideo").Change(true);
+        cut.Find("input.chkDisplayMissingEpisodes").Change(true);
+        cut.Find("#txtMaxDaysForNextUp").Input("14");
+        cut.Find("#chkRewatchingNextUp").Change(true);
+        cut.Find("#chkUseEpisodeImagesInNextUp").Change(true);
+        cut.Find("#chkDetailsBanner").Change(false);
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Single(this.Toasts()), TimeSpan.FromSeconds(5));
+
+        // Settings of this device and user live in local storage under the original's keys.
+        var expected = new Dictionary<string, string>
+        {
+            ["language"] = "de",
+            ["datetimelocale"] = "fr",
+            ["appTheme"] = "light",
+            ["dashboardTheme"] = "light",
+            ["screensaver"] = "backdropscreensaver",
+            ["customCss"] = ".x { color: red; }",
+            ["disableCustomCss"] = "true",
+            ["enableBackdrops"] = "true",
+            ["blurhash"] = "false",
+            ["fastFadein"] = "false",
+            ["detailsBanner"] = "false",
+            ["libraryPageSize"] = "40",
+            ["maxDaysForNextUp"] = "14",
+            ["enableRewatchingInNextUp"] = "true",
+            ["useEpisodeImagesInNextUpAndResume"] = "true",
+            ["enableThemeSongs"] = "true",
+            ["enableThemeVideos"] = "true",
+            ["backdropScreensaverInterval"] = "12",
+            ["slideshowInterval"] = "8",
+            ["screensaverTime"] = "300"
+        };
+        Assert.All(expected, setting => Assert.Equal(setting.Value, this.UserSetting(setting.Key)));
+
+        // The synced settings go to the display preferences on the server.
+        cut.Eventually(() => Assert.NotNull(this.PostedPreferences()));
+        var preferences = this.PostedPreferences()!.Value;
+        Assert.Equal("light", preferences.Text("dashboardTheme"));
+        Assert.Equal("true", preferences.Text("useEpisodeImagesInNextUpAndResume"));
+        Assert.Null(preferences.Text("appTheme"));
+        Assert.Null(preferences.Text("language"));
+        var preferencesPost = App.Server.Requests.Last(request => request.Method == HttpMethod.Post && request.Path.EndsWith("/DisplayPreferences/usersettings", StringComparison.Ordinal));
+        Assert.True(preferencesPost.QueryIs("userId", TestApp.UserId));
+        Assert.Equal("emby", preferencesPost.Query("client"));
+
+        // The user configuration is sent back with the changed flag.
+        var configuration = this.PostedConfiguration();
+        Assert.NotNull(configuration);
+        Assert.True(configuration.QueryIs("userId", TestApp.UserId));
+        Assert.True(configuration.JsonBody().Flag("DisplayMissingEpisodes"));
+        Assert.True(configuration.JsonBody().Flag("PlayDefaultAudioTrack"));
+
+        // Live effects.
+        Assert.Equal("light", App.Browser.Attributes["html:data-theme"]);
+        Assert.Equal("generated/themes/light/theme.css", App.Browser.Stylesheets["cssTheme"]);
+        Assert.Equal("light", Services.GetRequiredService<ThemeManager>().CurrentId);
+        Assert.Equal("de", Services.GetRequiredService<Globalize>().Culture);
+        Assert.Equal("mobile", this.AppSetting("layout"));
+        Assert.Contains("html:layout-mobile", App.Browser.Classes);
+        Assert.DoesNotContain("html:layout-desktop", App.Browser.Classes);
+
+        // The confirmation is already in the new language.
+        var toast = Assert.Single(this.Toasts());
+        Assert.Equal(this.T("SettingsSaved"), toast);
+        Assert.NotEqual(english, toast);
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task Choosing_the_automatic_layout_removes_the_stored_one()
+    {
+        await UseThemesAsync();
+        this.StoreAppSetting("layout", "mobile");
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+
+        cut.Find("select.selectLayout").Change(string.Empty);
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Single(this.Toasts()), TimeSpan.FromSeconds(5));
+        Assert.Null(this.AppSetting("layout"));
+        Assert.Contains("html:layout-desktop", App.Browser.Classes);
+    }
+
+    [Fact]
+    public async Task Another_users_settings_do_not_change_the_running_app()
+    {
+        await UseThemesAsync();
+        SignIn(admin: true);
+        this.ScriptUser(Other, UserJson(Other));
+        this.ScriptPreferences();
+        App.Server.OnPost("/Users/Configuration");
+        var cut = RenderLoaded(Other.ToString("N"));
+        // The dashboard theme is a setting of administrators.
+        Assert.True(cut.Find(".selectDashboardThemeContainer").HasClass("hide"));
+
+        cut.Find("#selectLanguage").Change("de");
+        cut.Find("#selectTheme").Change("light");
+        cut.Find("input.chkDisplayMissingEpisodes").Change(true);
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal([this.T("SettingsSaved")], this.Toasts()), TimeSpan.FromSeconds(5));
+        Assert.Equal("light", this.UserSetting("appTheme", Other));
+        Assert.Equal("de", this.UserSetting("language", Other));
+        Assert.Null(this.UserSetting("appTheme"));
+        Assert.Null(this.UserSetting("language"));
+        Assert.NotEqual("light", App.Browser.Attributes.GetValueOrDefault("html:data-theme"));
+        Assert.Equal("en-us", Services.GetRequiredService<Globalize>().Culture);
+        var configuration = this.PostedConfiguration();
+        Assert.NotNull(configuration);
+        Assert.True(configuration.QueryIs("userId", Other));
+        Assert.True(configuration.JsonBody().Flag("DisplayMissingEpisodes"));
+        Assert.All(App.Server.RequestsTo("/DisplayPreferences/usersettings"), request => Assert.True(request.QueryIs("userId", Other)));
+        Assert.NotEmpty(this.UserLoads(Other));
+        Assert.Empty(this.UserLoads(TestApp.UserId));
+    }
+
+    [Fact]
+    public async Task A_rejected_configuration_shows_no_confirmation()
+    {
+        await UseThemesAsync();
+        ScriptSignedInUser();
+        App.Server.OnPost("/Users/Configuration", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+        var cut = RenderLoaded();
+
+        cut.Find("#chkBackdrops").Change(true);
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.NotNull(this.PostedConfiguration()));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        Assert.Empty(this.Toasts());
+    }
+
+    [Fact]
+    public async Task A_user_that_cannot_be_loaded_keeps_the_page_loading()
+    {
+        await UseThemesAsync();
+        SignIn();
+        this.ScriptPreferences();
+
+        var cut = Render<DisplayPreferences>();
+
+        cut.Eventually(() => Assert.Single(this.UserLoads(TestApp.UserId)));
+        Assert.True(this.IsLoading());
+        Assert.NotNull(cut.Find("#displayPreferencesPage"));
+        Assert.Empty(App.Server.RequestsTo("/DisplayPreferences/usersettings"));
+    }
+}

@@ -1,0 +1,133 @@
+@* The settings menu. Port of apps/legacy/routes/user/settings. *@
+@attribute [Route("/mypreferencesmenu")]
+@attribute [Access(AccessLevel.User)]
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject AppHost Host
+@inject WebConfig Config
+@inject ServerConnections Connections
+@inject LoadingService Loading
+@inject Globalize Globalize
+
+@if (_user is not null && _quickConnectKnown)
+{
+    var userId = UserPages.IdText(_userId);
+    <Page Id="myPreferencesMenuPage" Class="libraryPage userPreferencesPage noSecondaryNavPage mainAnimatedPage" Title="@Globalize["Settings"]">
+        <div class="padded-left padded-right padded-bottom-page padded-top">
+            <div class="readOnlyContent" style="margin:0 auto;">
+                <div class="verticalSection verticalSection-extrabottompadding">
+                    <h2 class="sectionTitle headerUsername" style="padding-left:0.25em;">@_user.Name</h2>
+
+                    <MenuEntry Href="@($"#/userprofile?userId={userId}")" Class="lnkUserProfile" Icon="person" Text="@Globalize["Profile"]" />
+                    @if (_quickConnectEnabled)
+                    {
+                        <MenuEntry Href="@($"#/quickconnect?userId={userId}")" Class="lnkQuickConnectPreferences" Icon="phonelink_lock" Text="@Globalize["QuickConnect"]" />
+                    }
+                    <MenuEntry Href="@($"#/mypreferencesdisplay?userId={userId}")" Class="lnkDisplayPreferences" Icon="tv" Text="@Globalize["Display"]" />
+                    <MenuEntry Href="@($"#/mypreferenceshome?userId={userId}")" Class="lnkHomePreferences" Icon="home" Text="@Globalize["Home"]" />
+                    <MenuEntry Href="@($"#/mypreferencesplayback?userId={userId}")" Class="lnkPlaybackPreferences" Icon="play_circle_filled" Text="@Globalize["TitlePlayback"]" />
+                    <MenuEntry Href="@($"#/mypreferencessubtitles?userId={userId}")" Class="lnkSubtitlePreferences" Icon="closed_caption" Text="@Globalize["Subtitles"]" />
+                    @* The download manager and client settings entries exist in native shells only. *@
+                    @if (IsLoggedInUser && !Host.Browser.Mobile)
+                    {
+                        <MenuEntry Href="@($"#/mypreferencescontrols?userId={userId}")" Class="lnkControlsPreferences" Icon="keyboard" Text="@Globalize["Controls"]" />
+                    }
+                </div>
+
+                @if (IsLoggedInUser && _user.Policy?.IsAdministrator == true)
+                {
+                    <div class="adminSection verticalSection verticalSection-extrabottompadding">
+                        <h2 class="sectionTitle headerUsername" style="padding-left:0.25em;">@Globalize["HeaderAdmin"]</h2>
+                        <MenuEntry Href="#/dashboard" Icon="dns" Text="@Globalize["ManageServer"]" />
+                        <MenuEntry Href="#/metadata" Icon="mode_edit" Text="@Globalize["ManageMetadata"]" />
+                    </div>
+                }
+
+                @if (IsLoggedInUser)
+                {
+                    <div class="userSection verticalSection verticalSection-extrabottompadding">
+                        <h2 class="sectionTitle headerUsername" style="padding-left:0.25em;">@Globalize["HeaderUser"]</h2>
+                        @if (Config.Multiserver)
+                        {
+                            <MenuEntry Class="selectServer" Icon="storage" Text="@Globalize["SelectServer"]" OnClick="Router.ShowSelectServer" />
+                        }
+                        <MenuEntry Class="btnLogout" Icon="exit_to_app" Text="@Globalize["ButtonSignOut"]" OnClick="SignOutAsync" />
+                    </div>
+                }
+            </div>
+        </div>
+    </Page>
+}
+
+@code {
+    private Guid? _userId;
+    private UserDto? _user;
+    private bool _quickConnectKnown;
+    private bool _quickConnectEnabled;
+
+    /// <summary>The user whose settings are edited (administrators may edit other users).</summary>
+    [Parameter]
+    public string? UserId { get; set; }
+
+    private bool IsLoggedInUser => _userId is not null && _userId == Api.UserId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The original shows the loading indicator until the user and the Quick Connect state are known.
+        Loading.Show();
+        _userId = UserPages.ResolveUserId(Api, UserId);
+
+        var quickConnect = LoadQuickConnectAsync();
+        if (IsLoggedInUser)
+        {
+            _user = Api.User;
+        }
+        else if (_userId is not null)
+        {
+            try
+            {
+                var users = await Api.Client.Users.GetAsync() ?? [];
+                _user = users.FirstOrDefault(user => user.Id == _userId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                AppLog.Warn("[UserSettingsPage] loading the users failed: " + ex.Message);
+            }
+        }
+
+        await quickConnect;
+        if (_user is not null)
+        {
+            Loading.Hide();
+        }
+    }
+
+    private async Task LoadQuickConnectAsync()
+    {
+        try
+        {
+            _quickConnectEnabled = await Api.Client.QuickConnect.Enabled.GetAsync() == true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _quickConnectEnabled = false;
+        }
+
+        _quickConnectKnown = true;
+    }
+
+    // Port of Dashboard.logout.
+    private async Task SignOutAsync()
+    {
+        var serverId = Api.ServerId;
+        await Connections.LogoutAsync();
+        if (Config.Multiserver)
+        {
+            Router.ShowSelectServer();
+        }
+        else
+        {
+            Router.ShowLogin(serverId);
+        }
+    }
+}

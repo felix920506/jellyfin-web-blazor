@@ -1,0 +1,44 @@
+@* Settings: controls. Port of controllers/user/controls. *@
+@attribute [Route("/mypreferencescontrols")]
+@attribute [Access(AccessLevel.User)]
+@inject AppSettings Settings
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<Page Id="controlsPreferencesPage" Class="libraryPage userPreferencesPage noSecondaryNavPage" Title="@Globalize["Controls"]">
+    <div class="padded-left padded-right padded-bottom-page">
+        <form style="margin: 0 auto;" @onsubmit="Save" @onsubmit:preventDefault="true">
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">@Globalize["Controls"]</h2>
+                <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription enableGamepadContainer" Class="chkEnableGamepad"
+                              Label="@Globalize["LabelEnableGamepad"]" Description="@Globalize["EnableGamepadHelp"]" @bind-Value="_enableGamepad">
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["LabelPleaseRestart"]</div>
+                </PrefCheckbox>
+                @* Smooth scrolling is a setting of the TV layout, which the port does not have. *@
+                <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription smoothScrollContainer hide" Class="chkSmoothScroll"
+                              Label="@Globalize["EnableSmoothScroll"]" @bind-Value="_enableSmoothScroll" />
+            </div>
+            <EmbyButton Type="submit" Class="raised button-submit block btnSave">
+                <span>@Globalize["Save"]</span>
+            </EmbyButton>
+        </form>
+    </div>
+</Page>
+
+@code {
+    private bool _enableGamepad;
+    private bool _enableSmoothScroll;
+
+    protected override void OnInitialized()
+    {
+        _enableGamepad = Settings.EnableGamepad;
+        _enableSmoothScroll = Settings.EnableSmoothScroll;
+    }
+
+    private void Save()
+    {
+        Settings.EnableGamepad = _enableGamepad;
+        Settings.EnableSmoothScroll = _enableSmoothScroll;
+        Toasts.Show(Globalize["SettingsSaved"]);
+    }
+}

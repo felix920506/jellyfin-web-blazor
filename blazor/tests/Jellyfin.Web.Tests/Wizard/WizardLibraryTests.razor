@@ -1,0 +1,348 @@
+@* The library step of the startup wizard and the "add media library" dialog it opens. *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Wizard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private static readonly object Films = new { Name = "Films", CollectionType = "movies", ItemId = "f1", Locations = new[] { "/media/Movies" } };
+
+    private static readonly object Stuff = new
+    {
+        Name = "Stuff",
+        ItemId = "f2",
+        Locations = new[] { "/a", "/b" },
+        PrimaryImageItemId = "f2",
+        RefreshStatus = "Active",
+        RefreshProgress = 40.0
+    };
+
+    private int LibraryLoads => App.Server.RequestsTo("/Library/VirtualFolders").Count(request => request.Method == HttpMethod.Get);
+
+    private (IRenderedComponent<WizardLibrary> Page, IRenderedComponent<DialogHost> Dialogs) Open(params object[] folders)
+    {
+        this.UseServer();
+        App.Server.OnGet("/Library/VirtualFolders", folders);
+        var cut = Render<WizardLibrary>();
+        var dialogs = this.RenderDialogs();
+        cut.Eventually(() => Assert.Equal(folders.Length + 1, cut.FindAll("#divVirtualFolders .card").Count));
+        return (cut, dialogs);
+    }
+
+    private void ScriptFileSystem()
+    {
+        App.Server.OnGet("/Environment/DefaultDirectoryBrowser", new { Path = string.Empty });
+        App.Server.OnGet("/Environment/Drives", new[] { new { Name = "/media", Path = "/media", Type = "Directory" } });
+        App.Server.OnGet("/Environment/DirectoryContents", request => request.Query("path") == "/media"
+            ? new[] { new { Name = "Movies", Path = "/media/Movies", Type = "Directory" } }
+            : Array.Empty<object>());
+        App.Server.OnGet("/Environment/ParentPath", "\"/\"");
+        App.Server.OnPost("/Environment/ValidatePath");
+    }
+
+    private void ScriptAvailableOptions() =>
+        App.Server.OnGet("/Libraries/AvailableOptions", new
+        {
+            MetadataSavers = new[] { new { Name = "Nfo", DefaultEnabled = false } },
+            MetadataReaders = new[] { new { Name = "Nfo", DefaultEnabled = true } },
+            SubtitleFetchers = Array.Empty<object>(),
+            LyricFetchers = Array.Empty<object>(),
+            MediaSegmentProviders = Array.Empty<object>(),
+            TypeOptions = new[]
+            {
+                new
+                {
+                    Type = "Movie",
+                    MetadataFetchers = new[] { new { Name = "TheMovieDb", DefaultEnabled = true }, new { Name = "The Open Movie Database", DefaultEnabled = false } },
+                    ImageFetchers = new[] { new { Name = "TheMovieDb", DefaultEnabled = true } }
+                }
+            }
+        });
+
+    /// <summary>Opens the creator from the "add" card, chooses movies and picks /media/Movies.</summary>
+    private (IRenderedComponent<WizardLibrary> Page, IRenderedComponent<DialogHost> Dialogs) OpenCreatorWithFolder()
+    {
+        ScriptFileSystem();
+        ScriptAvailableOptions();
+        var (cut, dialogs) = Open();
+        cut.Find("#addLibrary").Click();
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("form.addLibraryForm")));
+        dialogs.Find("#selectCollectionType").Change("movies");
+
+        dialogs.Find(".btnAddFolder").Click();
+        dialogs.Eventually(() => Assert.Equal(["/media"], dialogs.FindAll(".directoryPicker .lnkDirectory").Select(entry => entry.GetAttribute("data-path"))));
+        dialogs.Find(".lnkDirectory[data-path='/media']").Click();
+        dialogs.Eventually(() => Assert.Equal(["/", "/media/Movies"], dialogs.FindAll(".directoryPicker .lnkDirectory").Select(entry => entry.GetAttribute("data-path"))));
+        Assert.Equal("/media", dialogs.Find("#txtDirectoryPickerPath").Value());
+        dialogs.Find(".lnkDirectory[data-path='/media/Movies']").Click();
+        dialogs.Eventually(() => Assert.Equal("/media/Movies", dialogs.Find("#txtDirectoryPickerPath").Value()));
+        dialogs.Find(".directoryPicker form").Submit();
+        dialogs.Eventually(() => Assert.Equal(["/media/Movies"], dialogs.FindAll(".folderList .listItemBodyText").Select(entry => entry.TextContent)));
+        return (cut, dialogs);
+    }
+
+    [Fact]
+    public void Libraries_are_cards_followed_by_the_add_card()
+    {
+        var (cut, _) = Open(Films, Stuff);
+
+        Assert.True(cut.Find("#wizardLibraryPage #divVirtualFolders").HasClass("itemsContainer"));
+        var cards = cut.FindAll("#divVirtualFolders .card");
+
+        Assert.Equal("f1", cards[0].GetAttribute("data-id"));
+        Assert.Equal(["Films", this.T("Movies"), "/media/Movies"], cards[0].QuerySelectorAll(".cardText").Select(text => text.TextContent));
+        Assert.True(cards[0].QuerySelector(".cardImageIcon")!.HasClass("movie"));
+        Assert.True(cards[0].QuerySelector(".progressring")!.HasClass("hide"));
+        Assert.NotNull(cards[0].QuerySelector(".btnCardMenu"));
+
+        Assert.Equal(["Stuff", this.T("Other"), "2 folders"], cards[1].QuerySelectorAll(".cardText").Select(text => text.TextContent));
+        var image = cards[1].QuerySelector("img")!.GetAttribute("src")!;
+        Assert.StartsWith(TestApp.ServerUrl + "/Items/f2/Images/Primary?maxWidth=", image, StringComparison.Ordinal);
+        Assert.EndsWith("&quality=90", image, StringComparison.Ordinal);
+        Assert.False(cards[1].QuerySelector(".progressring")!.HasClass("hide"));
+        Assert.Equal("40", cards[1].QuerySelector(".progressring")!.GetAttribute("data-progress"));
+
+        Assert.Equal("addLibrary", cards[2].Id);
+        Assert.Equal(this.T("ButtonAddMediaLibrary"), cards[2].QuerySelector(".cardText")!.TextContent);
+        Assert.True(cards[2].QuerySelector(".cardImageIcon")!.HasClass("add_circle"));
+        Assert.Null(cards[2].QuerySelector(".btnCardMenu"));
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public void Next_opens_the_metadata_settings()
+    {
+        var (cut, _) = Open(Films);
+
+        cut.Find(".wizardNavigation .button-submit").Click();
+
+        Assert.Equal("/wizard/settings", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void A_library_is_renamed_from_its_menu()
+    {
+        var (cut, dialogs) = Open(Films);
+        App.Server.OnPost("/Library/VirtualFolders/Name");
+
+        cut.Find(".btnCardMenu").Click();
+        dialogs.Eventually(() => Assert.Equal(
+            ["editimages", "edit", "rename", "refresh", "delete"],
+            dialogs.FindAll(".actionSheetMenuItem").Select(item => item.GetAttribute("data-id"))));
+        dialogs.Find(".actionSheetMenuItem[data-id=rename]").Click();
+        dialogs.Eventually(() => Assert.Equal(this.T("ButtonRename"), dialogs.Find(".submitText").TextContent));
+        dialogs.Find("#txtInput").Input("Cinema");
+        dialogs.Find("form").Submit();
+
+        cut.Eventually(() => Assert.Equal(2, LibraryLoads));
+        var rename = Assert.Single(App.Server.RequestsTo("/Library/VirtualFolders/Name"));
+        Assert.Equal("Films", rename.Query("name"));
+        Assert.Equal("Cinema", rename.Query("newName"));
+        Assert.Equal("false", rename.Query("refreshLibrary"));
+    }
+
+    [Fact]
+    public void Renaming_to_the_same_name_does_nothing()
+    {
+        var (cut, dialogs) = Open(Films);
+        App.Server.OnPost("/Library/VirtualFolders/Name");
+
+        cut.Find(".btnCardMenu").Click();
+        dialogs.Eventually(() => Assert.NotEmpty(dialogs.FindAll(".actionSheetMenuItem")));
+        dialogs.Find(".actionSheetMenuItem[data-id=rename]").Click();
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("#txtInput")));
+        dialogs.Find("#txtInput").Input("Films");
+        dialogs.Find("form").Submit();
+
+        dialogs.Eventually(() => Assert.Empty(dialogs.FindAll(".dialogContainer")));
+        Assert.Empty(App.Server.RequestsTo("/Library/VirtualFolders/Name"));
+        Assert.Equal(1, LibraryLoads);
+    }
+
+    [Fact]
+    public void A_library_is_removed_after_confirmation()
+    {
+        var (cut, dialogs) = Open(Films);
+        App.Server.OnDelete("/Library/VirtualFolders");
+
+        cut.Find(".btnCardMenu").Click();
+        dialogs.Eventually(() => Assert.NotEmpty(dialogs.FindAll(".actionSheetMenuItem")));
+        dialogs.Find(".actionSheetMenuItem[data-id=delete]").Click();
+        dialogs.Eventually(() => Assert.Equal(this.T("HeaderRemoveMediaFolder"), dialogs.Find(".formDialogHeaderTitle").TextContent));
+        var text = dialogs.Find("div.text").TextContent;
+        Assert.Contains(this.T("MessageAreYouSureYouWishToRemoveMediaFolder"), text, StringComparison.Ordinal);
+        Assert.Contains(this.T("MessageTheFollowingLocationWillBeRemovedFromLibrary"), text, StringComparison.Ordinal);
+        Assert.Contains("/media/Movies", text, StringComparison.Ordinal);
+        Assert.Equal(this.T("Delete"), dialogs.Find(".btnOption[data-id=ok]").TextContent);
+        dialogs.Find(".btnOption[data-id=ok]").Click();
+
+        cut.Eventually(() => Assert.Equal(2, LibraryLoads));
+        var delete = Assert.Single(App.Server.Requests, request => request.Method == HttpMethod.Delete);
+        Assert.Equal("Films", delete.Query("name"));
+        Assert.Equal("false", delete.Query("refreshLibrary"));
+    }
+
+    [Fact]
+    public void A_library_stays_when_removing_is_cancelled()
+    {
+        var (cut, dialogs) = Open(Films);
+        App.Server.OnDelete("/Library/VirtualFolders");
+
+        cut.Find(".btnCardMenu").Click();
+        dialogs.Eventually(() => Assert.NotEmpty(dialogs.FindAll(".actionSheetMenuItem")));
+        dialogs.Find(".actionSheetMenuItem[data-id=delete]").Click();
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find(".btnOption[data-id=cancel]")));
+        dialogs.Find(".btnOption[data-id=cancel]").Click();
+
+        dialogs.Eventually(() => Assert.Empty(dialogs.FindAll(".dialogContainer")));
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Delete);
+        Assert.Equal(1, LibraryLoads);
+    }
+
+    [Fact]
+    public void The_add_card_opens_the_library_creator()
+    {
+        ScriptAvailableOptions();
+        var (cut, dialogs) = Open(Films);
+
+        cut.Find("#addLibrary").Click();
+
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("form.addLibraryForm")));
+        Assert.True(dialogs.Find(".dialog").HasClass("dlg-librarycreator"));
+        Assert.True(dialogs.Find(".dialog").HasClass("dialog-small"));
+        Assert.Equal(this.T("ButtonAddMediaLibrary"), dialogs.Find(".formDialogHeaderTitle").TextContent);
+        Assert.Equal(
+            [string.Empty, "movies", "music", "tvshows", "books", "homevideos", "musicvideos", "mixed"],
+            dialogs.FindAll("#selectCollectionType option").Select(option => option.Value()));
+        Assert.True(dialogs.Find(".libraryOptions").HasClass("hide"));
+        Assert.True(dialogs.Find(".folderList").HasClass("hide"));
+
+        // Choosing a type names the library after it, explains it and shows its options.
+        dialogs.Find("#selectCollectionType").Change("movies");
+        dialogs.Eventually(() => Assert.Equal(
+            ["TheMovieDb", "The Open Movie Database"],
+            dialogs.FindAll(".metadataFetcher[data-type=Movie] .metadataFetcherItem").Select(item => item.GetAttribute("data-pluginname"))));
+        Assert.Equal(this.T("Movies"), dialogs.Find("#txtValue").Value());
+        Assert.Equal("https://jellyfin.org/docs/general/server/media/movies", dialogs.Find(".collectionTypeFieldDescription a").GetAttribute("href"));
+        Assert.False(dialogs.Find(".libraryOptions").HasClass("hide"));
+        Assert.Contains(App.Server.RequestsTo("/Libraries/AvailableOptions"), request => request.Query("LibraryContentType") == "movies");
+
+        // "Mixed" keeps the name that was entered.
+        dialogs.Find("#selectCollectionType").Change("mixed");
+        Assert.Equal(this.T("Movies"), dialogs.Find("#txtValue").Value());
+        Assert.Equal(this.T("MessageUnsetContentHelp"), dialogs.Find(".collectionTypeFieldDescription").TextContent);
+
+        // Leaving the dialog without creating anything does not reload the page.
+        dialogs.Find(".btnCancel").Click();
+        dialogs.Eventually(() => Assert.Empty(dialogs.FindAll(".dialogContainer")));
+        Assert.Equal(1, LibraryLoads);
+    }
+
+    [Fact]
+    public void A_library_needs_a_folder()
+    {
+        ScriptAvailableOptions();
+        var (cut, dialogs) = Open();
+        App.Server.OnPost("/Library/VirtualFolders");
+        cut.Find("#addLibrary").Click();
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("form.addLibraryForm")));
+        dialogs.Find("#selectCollectionType").Change("movies");
+
+        dialogs.Find("form.addLibraryForm").Submit();
+
+        dialogs.Eventually(() => Assert.Equal(this.T("PleaseAddAtLeastOneFolder"), dialogs.Find("div.text").TextContent));
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Post);
+    }
+
+    [Fact]
+    public void A_library_is_created_with_the_picked_folder_and_the_chosen_options()
+    {
+        var (cut, dialogs) = OpenCreatorWithFolder();
+        App.Server.OnPost("/Library/VirtualFolders");
+
+        // The picker validated the path, and the creator checked that the server can read it.
+        var validation = Assert.Single(App.Server.RequestsTo("/Environment/ValidatePath")).JsonBody();
+        Assert.Equal("/media/Movies", validation.Text("Path"));
+        Assert.False(validation.Flag("ValidateWriteable"));
+
+        dialogs.Find(".chkMetadataFetcher[data-pluginname='The Open Movie Database']").Change(true);
+        dialogs.Find("form.addLibraryForm").Submit();
+
+        cut.Eventually(() => Assert.Equal(2, LibraryLoads));
+        Assert.Empty(dialogs.FindAll(".dialogContainer"));
+        var create = Assert.Single(App.Server.Requests, request => request.Method == HttpMethod.Post && request.Path.EndsWith("/Library/VirtualFolders", StringComparison.Ordinal));
+        Assert.Equal(this.T("Movies"), create.Query("name"));
+        Assert.Equal("movies", create.Query("collectionType"));
+        Assert.Equal("false", create.Query("refreshLibrary"));
+        var options = create.JsonBody().GetProperty("LibraryOptions");
+        Assert.Equal(["/media/Movies"], options.GetProperty("PathInfos").EnumerateArray().Select(info => info.Text("Path")));
+        Assert.True(options.Flag("Enabled"));
+        var movie = Assert.Single(options.GetProperty("TypeOptions").EnumerateArray());
+        Assert.Equal("Movie", movie.Text("Type"));
+        Assert.Equal(["TheMovieDb", "The Open Movie Database"], movie.GetProperty("MetadataFetchers").EnumerateArray().Select(name => name.GetString()));
+        Assert.Equal(["TheMovieDb"], movie.GetProperty("ImageFetchers").EnumerateArray().Select(name => name.GetString()));
+        Assert.Empty(this.Toasts());
+    }
+
+    [Fact]
+    public void A_mixed_library_is_created_without_a_collection_type()
+    {
+        var (cut, dialogs) = OpenCreatorWithFolder();
+        App.Server.OnPost("/Library/VirtualFolders");
+        dialogs.Find("#selectCollectionType").Change("mixed");
+        dialogs.Find("#txtValue").Input("  Everything ");
+
+        dialogs.Find("form.addLibraryForm").Submit();
+
+        cut.Eventually(() => Assert.Equal(2, LibraryLoads));
+        var create = Assert.Single(App.Server.Requests, request => request.Method == HttpMethod.Post && request.Path.EndsWith("/Library/VirtualFolders", StringComparison.Ordinal));
+        Assert.Equal("Everything", create.Query("name"));
+        Assert.Null(create.Query("collectionType"));
+    }
+
+    [Fact]
+    public void A_removed_folder_leaves_the_library_without_one()
+    {
+        var (_, dialogs) = OpenCreatorWithFolder();
+        App.Server.OnPost("/Library/VirtualFolders");
+
+        dialogs.Find(".btnRemovePath").Click();
+
+        Assert.True(dialogs.Find(".folderList").HasClass("hide"));
+        dialogs.Find("form.addLibraryForm").Submit();
+        dialogs.Eventually(() => Assert.Equal(this.T("PleaseAddAtLeastOneFolder"), dialogs.Find("div.text").TextContent));
+    }
+
+    [Fact]
+    public void A_library_needs_a_name()
+    {
+        var (_, dialogs) = OpenCreatorWithFolder();
+        App.Server.OnPost("/Library/VirtualFolders");
+        dialogs.Find("#txtValue").Input("   ");
+
+        dialogs.Find("form.addLibraryForm").Submit();
+
+        dialogs.Eventually(() => Assert.Equal(this.T("LibraryNameInvalid"), dialogs.Find("div.text").TextContent));
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Post && request.Path.EndsWith("/Library/VirtualFolders", StringComparison.Ordinal));
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public void A_failed_creation_is_reported_and_the_dialog_stays()
+    {
+        var (cut, dialogs) = OpenCreatorWithFolder();
+        App.Server.OnPost("/Library/VirtualFolders", _ => FakeHttp.Status(HttpStatusCode.BadRequest));
+
+        dialogs.Find("form.addLibraryForm").Submit();
+
+        cut.Eventually(() => Assert.Equal([this.T("ErrorAddingMediaPathToVirtualFolder")], this.Toasts()));
+        Assert.NotNull(dialogs.Find("form.addLibraryForm"));
+        Assert.False(this.IsLoading());
+        Assert.Equal(1, LibraryLoads);
+    }
+}

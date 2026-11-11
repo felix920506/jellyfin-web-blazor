@@ -1,0 +1,350 @@
+@* Settings: home screen. Port of controllers/user/home and components/homeScreenSettings. *@
+@attribute [Route("/mypreferenceshome")]
+@attribute [Access(AccessLevel.User)]
+@inject JellyfinApi Api
+@inject UserSettings CurrentSettings
+@inject AppSettings AppSettings
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<Page Id="homeScreenPreferencesPage" Class="libraryPage userPreferencesPage noSecondaryNavPage" Title="@Globalize["Home"]" BackButton="true">
+    <div class="homeScreenSettingsContainer padded-left padded-right padded-bottom-page">
+        <form style="margin:0 auto;" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">@Globalize["Home"]</h2>
+
+                @* The TV home screen is offered in the TV layout only, which the port does not have. *@
+                <PrefSelect ContainerClass="hide selectTVHomeScreenContainer" Class="selectTVHomeScreen" Label="@Globalize["LabelTVHomeScreen"]"
+                            Options="TvHomeOptions()" @bind-Value="_tvHome">
+                    <div class="fieldDescription">@Globalize["LabelPleaseRestart"]</div>
+                </PrefSelect>
+
+                <div class="verticalSection verticalSection-extrabottompadding">
+                    <EmbyCheckbox LabelClass="checkboxContainer" Class="chkHidePlayedFromLatest" Label="@Globalize["HideWatchedContentFromLatestMedia"]" @bind-Value="_hidePlayedInLatest" />
+                </div>
+
+                @for (var i = 0; i < HomeOptions.ConfigurableSections; i++)
+                {
+                    var index = i;
+                    <PrefSelect Id="@("selectHomeSection" + (index + 1))" Label="@Globalize.Translate("LabelHomeScreenSectionValue", index + 1)"
+                                Options="HomeOptions.SectionOptions(index, Globalize)" Value="@_sections[index]" ValueChanged="value => _sections[index] = value ?? string.Empty" />
+                }
+            </div>
+
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">@Globalize["HeaderLibraryOrder"]</h2>
+                <div class="paperList viewOrderList">
+                    @foreach (var view in _viewOrder)
+                    {
+                        <div class="listItem viewItem" data-viewid="@UserPages.IdText(view.Id)" @key="view">
+                            <span class="material-icons listItemIcon folder_open" aria-hidden="true"></span>
+                            <div class="listItemBody">
+                                <div>@view.Name</div>
+                            </div>
+                            <IconButton Icon="keyboard_arrow_up" Class="btnViewItemUp btnViewItemMove autoSize" Title="@Globalize["Up"]" OnClick="() => Move(view, -1)" />
+                            <IconButton Icon="keyboard_arrow_down" Class="btnViewItemDown btnViewItemMove autoSize" Title="@Globalize["Down"]" OnClick="() => Move(view, 1)" />
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="perLibrarySettings">
+                @foreach (var library in _libraries)
+                {
+                    <div class="verticalSection" @key="library">
+                        <h2 class="sectionTitle">@library.Name</h2>
+                        @if (library.ShowMyMedia || library.ShowLatest)
+                        {
+                            <div class="checkboxListContainer">
+                                @if (library.ShowMyMedia)
+                                {
+                                    <div>
+                                        <EmbyCheckbox Class="chkIncludeInMyMedia" data-folderid="@library.IdText" Label="@Globalize["DisplayInMyMedia"]"
+                                                      Value="library.IncludeInMyMedia" ValueChanged="value => OnIncludeInMyMediaChanged(library, value)" />
+                                    </div>
+                                }
+                                @if (library.ShowLatest)
+                                {
+                                    <EmbyCheckbox LabelClass="@("fldIncludeInLatest" + (library.LatestHidden ? " hide" : null))" Class="chkIncludeInLatest" data-folderid="@library.IdText"
+                                                  Label="@Globalize["DisplayInOtherHomeScreenSections"]" @bind-Value="library.IncludeInLatest" />
+                                }
+                            </div>
+                        }
+                        @if (library.LandingOptions is not null)
+                        {
+                            <PrefSelect Class="selectLanding" data-folderid="@library.LandingId" Label="@Globalize["LabelDefaultScreen"]"
+                                        Options="library.LandingOptions" @bind-Value="library.Landing" />
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">@Globalize["HeaderLibraryFolders"]</h2>
+                <div>
+                    <p>@Globalize["LabelSelectFolderGroups"]</p>
+                    <div class="folderGroupList">
+                        @if (_viewsLoaded)
+                        {
+                            <div class="checkboxList">
+                                @foreach (var group in _groups)
+                                {
+                                    <EmbyCheckbox Id="@("chkGroupFolder" + group.Id)" Class="chkGroupFolder" data-folderid="@group.Id" Label="@group.Name" @bind-Value="group.Checked" @key="group" />
+                                }
+                            </div>
+                        }
+                    </div>
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["LabelSelectFolderGroupsHelp"]</div>
+                </div>
+            </div>
+
+            <EmbyButton Type="submit" Class="raised button-submit block btnSave">
+                <span>@Globalize["Save"]</span>
+            </EmbyButton>
+        </form>
+    </div>
+</Page>
+
+@code {
+    private readonly string[] _sections = Enumerable.Repeat(string.Empty, HomeOptions.ConfigurableSections).ToArray();
+    private readonly List<BaseItemDto> _viewOrder = [];
+    private readonly List<LibrarySettings> _libraries = [];
+    private readonly List<FolderGroup> _groups = [];
+    private Guid? _userId;
+    private UserSettings _settings = default!;
+    private string? _tvHome = string.Empty;
+    private bool _hidePlayedInLatest;
+    private bool _viewsLoaded;
+
+    /// <summary>The user whose settings are edited (administrators may edit other users).</summary>
+    [Parameter]
+    public string? UserId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId = UserPages.ResolveUserId(Api, UserId);
+        _settings = _userId is { } id ? UserPages.SettingsFor(id, Api, CurrentSettings, AppSettings) : CurrentSettings;
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        Loading.Show();
+        UserDto? user;
+        try
+        {
+            user = await UserPages.GetUserAsync(Api, userId);
+            await _settings.SetUserAsync(userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The original leaves the loading indicator up when the user cannot be loaded.
+            AppLog.Warn("[HomeScreenSettings] loading the user failed: " + ex.Message);
+            return;
+        }
+
+        if (user is null)
+        {
+            return;
+        }
+
+        _hidePlayedInLatest = user.Configuration?.HidePlayedInLatest ?? false;
+        for (var i = 0; i < HomeOptions.ConfigurableSections; i++)
+        {
+            _sections[i] = HomeOptions.SectionValue(i, _settings.Get("homesection" + i));
+        }
+
+        _tvHome = _settings.Get("tvhome") ?? string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            var viewsTask = Api.Client.UserViews.GetAsync(request =>
+            {
+                request.QueryParameters.UserId = userId;
+                request.QueryParameters.IncludeHidden = true;
+            });
+            var groupsTask = Api.Client.UserViews.GroupingOptions.GetAsync(request => request.QueryParameters.UserId = userId);
+            await Task.WhenAll(viewsTask, groupsTask);
+            var views = (await viewsTask)?.Items ?? [];
+            var groups = await groupsTask ?? [];
+
+            _viewOrder.AddRange(views);
+            foreach (var view in views)
+            {
+                if (LibrarySettings.Create(view, user, _settings, Globalize) is { } library)
+                {
+                    _libraries.Add(library);
+                }
+            }
+
+            var grouped = user.Configuration?.GroupedFolders ?? [];
+            foreach (var group in groups)
+            {
+                var isChecked = Guid.TryParse(group.Id, out var groupId) && grouped.Contains(groupId);
+                _groups.Add(new FolderGroup(group.Id ?? string.Empty, group.Name ?? string.Empty) { Checked = isChecked });
+            }
+
+            _viewsLoaded = true;
+            Loading.Hide();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // As in the original, the loading indicator stays when the libraries cannot be loaded.
+            AppLog.Warn("[HomeScreenSettings] loading the libraries failed: " + ex.Message);
+        }
+    }
+
+    private List<SelectOption> TvHomeOptions() =>
+    [
+        new("horizontal", Globalize["Horizontal"]),
+        new("vertical", Globalize["Vertical"])
+    ];
+
+    private void Move(BaseItemDto view, int offset)
+    {
+        var index = _viewOrder.IndexOf(view);
+        var target = index + offset;
+        if (index < 0 || target < 0 || target >= _viewOrder.Count)
+        {
+            return;
+        }
+
+        _viewOrder.RemoveAt(index);
+        _viewOrder.Insert(target, view);
+    }
+
+    private static void OnIncludeInMyMediaChanged(LibrarySettings library, bool value)
+    {
+        library.IncludeInMyMedia = value;
+
+        // The other home screen sections only apply to a library that is shown in "My Media".
+        library.LatestHidden = !value;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        await _settings.SetUserAsync(userId);
+        Loading.Show();
+
+        UserDto? user;
+        try
+        {
+            user = await UserPages.GetUserAsync(Api, userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[HomeScreenSettings] loading the user failed: " + ex.Message);
+            return;
+        }
+
+        if (user is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var configuration = user.Configuration ??= new UserConfiguration();
+            configuration.HidePlayedInLatest = _hidePlayedInLatest;
+            configuration.LatestItemsExcludes = _libraries.Where(l => l.ShowLatest && !l.IncludeInLatest).Select(l => l.Id).ToList();
+            configuration.MyMediaExcludes = _libraries.Where(l => l.ShowMyMedia && !l.IncludeInMyMedia).Select(l => l.Id).ToList();
+            configuration.GroupedFolders = _groups.Where(g => g.Checked && Guid.TryParse(g.Id, out _)).Select(g => (Guid?)Guid.Parse(g.Id)).ToList();
+            configuration.OrderedViews = _viewOrder.Select(view => view.Id).ToList();
+
+            _settings.Set("tvhome", _tvHome ?? string.Empty);
+            for (var i = 0; i < HomeOptions.ConfigurableSections; i++)
+            {
+                _settings.Set("homesection" + i, _sections[i]);
+            }
+
+            foreach (var library in _libraries.Where(l => l.LandingOptions is not null))
+            {
+                _settings.Set("landing-" + library.LandingId, library.Landing ?? string.Empty);
+            }
+
+            await UserPages.UpdateConfigurationAsync(Api, userId, configuration);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Loading.Hide();
+            return;
+        }
+
+        Loading.Hide();
+        Toasts.Show(Globalize["SettingsSaved"]);
+    }
+
+    private sealed class FolderGroup(string id, string name)
+    {
+        public string Id { get; } = id;
+
+        public string Name { get; } = name;
+
+        public bool Checked { get; set; }
+    }
+
+    /// <summary>The settings of one library (getPerLibrarySettingsHtml).</summary>
+    private sealed class LibrarySettings
+    {
+        public Guid? Id { get; private init; }
+
+        public string IdText => UserPages.IdText(Id);
+
+        public string? Name { get; private init; }
+
+        public bool ShowMyMedia { get; private init; }
+
+        public bool ShowLatest { get; private init; }
+
+        public bool IncludeInMyMedia { get; set; }
+
+        public bool IncludeInLatest { get; set; }
+
+        public bool LatestHidden { get; set; }
+
+        public string LandingId { get; private init; } = string.Empty;
+
+        public List<SelectOption>? LandingOptions { get; private init; }
+
+        public string? Landing { get; set; }
+
+        public static LibrarySettings? Create(BaseItemDto item, UserDto user, UserSettings settings, Globalize globalize)
+        {
+            var type = item.Type.ToApiString();
+            var collectionType = item.CollectionType.ToApiString();
+            if (type == "CollectionFolder" && collectionType is null)
+            {
+                collectionType = "mixed";
+            }
+
+            var showMyMedia = type == "Channel" || collectionType is "boxsets" or "playlists";
+            var showLatest = !HomeOptions.ExcludedFromLatest.Contains(collectionType ?? string.Empty);
+            var hasLanding = collectionType is not null && HomeOptions.LandingScreenTypes.Contains(collectionType);
+            if (!showMyMedia && !showLatest && !hasLanding)
+            {
+                return null;
+            }
+
+            var landingId = collectionType == "livetv" ? collectionType : UserPages.IdText(item.Id);
+            return new LibrarySettings
+            {
+                Id = item.Id,
+                Name = item.Name,
+                ShowMyMedia = showMyMedia,
+                ShowLatest = showLatest,
+                IncludeInMyMedia = !(user.Configuration?.MyMediaExcludes ?? []).Contains(item.Id),
+                IncludeInLatest = !(user.Configuration?.LatestItemsExcludes ?? []).Contains(item.Id),
+                LandingId = landingId,
+                LandingOptions = hasLanding ? HomeOptions.LandingSelectOptions(collectionType, globalize) : null,
+                Landing = hasLanding ? HomeOptions.LandingValue(collectionType, settings.Get("landing-" + landingId)) : null
+            };
+        }
+    }
+}

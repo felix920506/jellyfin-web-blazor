@@ -1,0 +1,515 @@
+@* Settings: subtitles (/mypreferencessubtitles). *@
+@using System.Net
+@using System.Text.Json
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.User
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private const string HideClass = "subtitleappearance-fullpreview-hide";
+
+    private static readonly Guid Other = SettingsTestExtensions.OtherUserId;
+
+    private static object UserJson(Guid id, bool video = true, string mode = "Default", string? language = null) => new
+    {
+        Id = id,
+        Name = id == TestApp.UserId ? "tester" : "guest",
+        Policy = new { EnableVideoPlaybackTranscoding = video },
+        Configuration = new { SubtitleMode = mode, SubtitleLanguagePreference = language, HidePlayedInLatest = true }
+    };
+
+    private void ScriptServer()
+    {
+        App.Server.OnGet("/Localization/Cultures", new[]
+        {
+            new { DisplayName = "English", Name = "English", TwoLetterISOLanguageName = "en", ThreeLetterISOLanguageName = "eng" },
+            new { DisplayName = "German", Name = "German", TwoLetterISOLanguageName = "de", ThreeLetterISOLanguageName = "ger" }
+        });
+        this.ScriptPreferences();
+        App.Server.OnPost("/Users/Configuration");
+    }
+
+    private void ScriptSignedInUser(bool video = true, string mode = "Default", string? language = null)
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, video, mode, language));
+        ScriptServer();
+    }
+
+    /// <summary>Renders the page and waits until the settings are in the form.</summary>
+    private IRenderedComponent<SubtitlePreferences> RenderLoaded(string? userId = null)
+    {
+        var cut = Render<SubtitlePreferences>(parameters => parameters.Add(page => page.UserId, userId));
+        cut.Eventually(() => Assert.False(string.IsNullOrEmpty(PreviewStyle(cut))));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        return cut;
+    }
+
+    private static bool Hidden(IRenderedComponent<SubtitlePreferences> cut, string selector) => cut.Find(selector).HasClass("hide");
+
+    private static IEnumerable<string?> Options(IRenderedComponent<SubtitlePreferences> cut, string select) =>
+        cut.FindAll(select + " option").Select(option => option.Value());
+
+    private static string? PreviewStyle(IRenderedComponent<SubtitlePreferences> cut) =>
+        cut.Find(".subtitleappearance-preview-text").GetAttribute("style");
+
+    private static string FullPreviewStyle(IRenderedComponent<SubtitlePreferences> cut) =>
+        cut.Find(".subtitleappearance-fullpreview-text").GetAttribute("style") ?? string.Empty;
+
+    private static string WindowStyle(IRenderedComponent<SubtitlePreferences> cut) =>
+        cut.Find(".subtitleappearance-fullpreview-window").GetAttribute("style") ?? string.Empty;
+
+    private static bool FullPreviewShown(IRenderedComponent<SubtitlePreferences> cut) =>
+        !cut.Find(".subtitleappearance-fullpreview").HasClass(HideClass);
+
+    private JsonElement StoredAppearance(Guid? userId = null)
+    {
+        var json = this.UserSetting(SubtitleAppearance.SettingsKey, userId);
+        Assert.NotNull(json);
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
+
+    [Fact]
+    public void A_new_user_sees_the_defaults_of_the_original()
+    {
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+
+        // The original gives this page the id of the home screen settings.
+        Assert.Equal("page libraryPage userPreferencesPage noSecondaryNavPage", cut.Find("#homeScreenPreferencesPage").ClassName);
+        Assert.NotNull(cut.Find(".settingsContainer.subtitlesettings form"));
+        Assert.Equal(["", "eng", "ger"], Options(cut, "#selectSubtitleLanguage"));
+        Assert.Equal(
+            [this.T("AnyLanguage"), "English", "German"],
+            cut.FindAll("#selectSubtitleLanguage option").Select(option => option.TextContent));
+        Assert.Equal(string.Empty, cut.Find("#selectSubtitleLanguage").Value());
+        Assert.Equal(["Default", "Smart", "OnlyForced", "Always", "None"], Options(cut, "#selectSubtitlePlaybackMode"));
+        Assert.Equal("Default", cut.Find("#selectSubtitlePlaybackMode").Value());
+        Assert.Equal(["", "onlyimageformats", "allcomplexformats", "all"], Options(cut, "#selectSubtitleBurnIn"));
+        Assert.Equal(string.Empty, cut.Find("#selectSubtitleBurnIn").Value());
+        Assert.False(Hidden(cut, ".fldBurnIn"));
+        Assert.False(Hidden(cut, ".fldRenderPgs"));
+        Assert.False(cut.Find("#chkSubtitleRenderPgs").IsChecked());
+        Assert.True(Hidden(cut, ".fldBitmapSubtitleAspectMode"));
+        Assert.Equal(["stretch", "contain", "cover"], Options(cut, "#selectBitmapSubtitleAspectMode"));
+        Assert.Equal("contain", cut.Find("#selectBitmapSubtitleAspectMode").Value());
+        Assert.False(cut.Find("#chkAlwaysBurnInSubtitleWhenTranscoding").IsChecked());
+
+        Assert.Equal(["Auto", "Custom", "Native"], Options(cut, "#selectSubtitleStyling"));
+        Assert.Equal("Auto", cut.Find("#selectSubtitleStyling").Value());
+        Assert.Equal(["smaller", "small", "", "large", "larger", "extralarge"], Options(cut, "#selectTextSize"));
+        Assert.Equal(string.Empty, cut.Find("#selectTextSize").Value());
+        Assert.Equal(["normal", "bold"], Options(cut, "#selectTextWeight"));
+        Assert.Equal("normal", cut.Find("#selectTextWeight").Value());
+        Assert.Equal(["", "typewriter", "print", "console", "cursive", "casual", "smallcaps"], Options(cut, "#selectFont"));
+        Assert.Equal(string.Empty, cut.Find("#selectFont").Value());
+        Assert.Equal("transparent", cut.Find("#inputTextBackground").Value());
+        Assert.Equal("color", cut.Find("#inputTextColor").GetAttribute("type"));
+        Assert.Equal("#ffffff", cut.Find("#inputTextColor").Value());
+        Assert.Equal(10, cut.FindAll("#selectTextColor option").Count);
+        Assert.Equal(["none", "raised", "depressed", "uniform", ""], Options(cut, "#selectDropShadow"));
+        Assert.Equal(string.Empty, cut.Find("#selectDropShadow").Value());
+
+        var slider = cut.Find("#sliderVerticalPosition");
+        Assert.Equal("range", slider.GetAttribute("type"));
+        Assert.Equal("-16", slider.GetAttribute("min"));
+        Assert.Equal("16", slider.GetAttribute("max"));
+        Assert.Equal("-3", slider.Value());
+        Assert.True(slider.HasClass("mdl-slider-hoverthumb"));
+        Assert.Equal("width:40.625%;", cut.Find(".mdl-slider-background-lower").GetAttribute("style"));
+        Assert.False(cut.Find("input.chkPreview").IsChecked());
+        Assert.Equal(this.T("Save"), cut.Find("button.btnSave").TextContent.Trim());
+
+        // Fields of the TV layout stay hidden.
+        Assert.True(cut.Find("#inputTextBackground").ParentElement!.HasClass("hide"));
+        Assert.True(cut.Find("#selectTextColor").ParentElement!.HasClass("hide"));
+
+        Assert.Single(this.UserLoads(TestApp.UserId));
+        Assert.Single(App.Server.RequestsTo("/Localization/Cultures"));
+        var preferences = Assert.Single(App.Server.RequestsTo("/DisplayPreferences/usersettings"));
+        Assert.True(preferences.QueryIs("userId", TestApp.UserId));
+    }
+
+    [Fact]
+    public void The_previews_show_the_default_appearance()
+    {
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+
+        var preview = PreviewStyle(cut);
+        Assert.NotNull(preview);
+        Assert.Contains("font-size:1.36em;", preview, StringComparison.Ordinal);
+        Assert.Contains("font-weight:normal;", preview, StringComparison.Ordinal);
+        Assert.Contains("text-shadow:#000000 0px 0px 7px;", preview, StringComparison.Ordinal);
+        Assert.Contains("background-color:transparent;", preview, StringComparison.Ordinal);
+        Assert.Contains("color:#ffffff;", preview, StringComparison.Ordinal);
+        Assert.Contains("font-variant:none;", preview, StringComparison.Ordinal);
+        // The preview inside the form ignores the position.
+        Assert.DoesNotContain("margin", preview, StringComparison.Ordinal);
+        Assert.Contains(this.T("TheseSettingsAffectSubtitlesOnThisDevice"), cut.Find(".subtitleappearance-preview-text").TextContent, StringComparison.Ordinal);
+
+        // Three lines from the bottom.
+        Assert.Contains("margin-bottom:2.7em;", FullPreviewStyle(cut), StringComparison.Ordinal);
+        Assert.Equal("bottom:0;", WindowStyle(cut));
+        Assert.False(FullPreviewShown(cut));
+        Assert.Contains(this.T("HeaderSubtitleAppearance"), cut.Find(".subtitleappearance-fullpreview-text").TextContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Stored_settings_are_shown()
+    {
+        this.StoreUserSetting(
+            SubtitleAppearance.SettingsKey,
+            """{"subtitleStyling":"Custom","textSize":"larger","textWeight":"bold","dropShadow":"raised","font":"console","textBackground":"#000000","textColor":"#ffff00","verticalPosition":2,"aspectMode":"cover"}""");
+        this.StoreAppSetting("subtitleburnin", "all");
+        this.StoreAppSetting("subtitlerenderpgs", "true");
+        this.StoreAppSetting("alwaysBurnInSubtitleWhenTranscoding", "true");
+        ScriptSignedInUser(mode: "Always", language: "ger");
+
+        var cut = RenderLoaded();
+
+        Assert.Equal("ger", cut.Find("#selectSubtitleLanguage").Value());
+        Assert.Equal("Always", cut.Find("#selectSubtitlePlaybackMode").Value());
+        Assert.Equal("all", cut.Find("#selectSubtitleBurnIn").Value());
+        Assert.True(cut.Find("#chkSubtitleRenderPgs").IsChecked());
+        // Rendering PGS in the browser is only possible while burning in is automatic.
+        Assert.True(Hidden(cut, ".fldRenderPgs"));
+        Assert.True(Hidden(cut, ".fldBitmapSubtitleAspectMode"));
+        Assert.Equal("cover", cut.Find("#selectBitmapSubtitleAspectMode").Value());
+        Assert.True(cut.Find("#chkAlwaysBurnInSubtitleWhenTranscoding").IsChecked());
+        Assert.Equal("Custom", cut.Find("#selectSubtitleStyling").Value());
+        Assert.Equal("larger", cut.Find("#selectTextSize").Value());
+        Assert.Equal("bold", cut.Find("#selectTextWeight").Value());
+        Assert.Equal("console", cut.Find("#selectFont").Value());
+        Assert.Equal("#000000", cut.Find("#inputTextBackground").Value());
+        Assert.Equal("#ffff00", cut.Find("#inputTextColor").Value());
+        Assert.Equal("raised", cut.Find("#selectDropShadow").Value());
+        Assert.Equal("2", cut.Find("#sliderVerticalPosition").Value());
+        Assert.Equal("width:56.25%;", cut.Find(".mdl-slider-background-lower").GetAttribute("style"));
+
+        var preview = PreviewStyle(cut);
+        Assert.NotNull(preview);
+        Assert.Contains("font-size:2em;", preview, StringComparison.Ordinal);
+        Assert.Contains("font-weight:bold;", preview, StringComparison.Ordinal);
+        Assert.Contains("background-color:#000000;", preview, StringComparison.Ordinal);
+        Assert.Contains("color:#ffff00;", preview, StringComparison.Ordinal);
+        Assert.Contains("font-family:Consolas,", preview, StringComparison.Ordinal);
+        Assert.Contains("text-shadow:-0.04em -0.04em #fff,", preview, StringComparison.Ordinal);
+
+        // Two lines from the top.
+        Assert.Contains("margin-top:2.7em;", FullPreviewStyle(cut), StringComparison.Ordinal);
+        Assert.DoesNotContain("margin-bottom", FullPreviewStyle(cut), StringComparison.Ordinal);
+        Assert.Equal("top:0;", WindowStyle(cut));
+    }
+
+    [Theory]
+    [InlineData("Default", ".subtitlesDefaultHelp")]
+    [InlineData("Smart", ".subtitlesSmartHelp")]
+    [InlineData("Always", ".subtitlesAlwaysHelp")]
+    [InlineData("OnlyForced", ".subtitlesOnlyForcedHelp")]
+    [InlineData("None", ".subtitlesNoneHelp")]
+    public void The_help_text_explains_the_stored_mode(string mode, string help)
+    {
+        ScriptSignedInUser(mode: mode);
+
+        var cut = RenderLoaded();
+
+        Assert.Equal(mode, cut.Find("#selectSubtitlePlaybackMode").Value());
+        Assert.Equal(5, cut.FindAll(".subtitlesHelp").Count);
+        var shown = Assert.Single(cut.FindAll(".subtitlesHelp"), element => !element.HasClass("hide"));
+        Assert.True(shown.Matches(help));
+    }
+
+    [Fact]
+    public void The_help_texts_follow_the_selection()
+    {
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+        Assert.False(Hidden(cut, ".subtitlesDefaultHelp"));
+        Assert.Equal(this.T("DefaultSubtitlesHelp"), cut.Find(".subtitlesDefaultHelp").TextContent);
+        Assert.False(Hidden(cut, ".subtitleStylingAutoHelp"));
+
+        cut.Find("#selectSubtitlePlaybackMode").Change("None");
+        cut.Find("#selectSubtitleStyling").Change("Native");
+
+        Assert.True(Hidden(cut, ".subtitlesDefaultHelp"));
+        Assert.False(Hidden(cut, ".subtitlesNoneHelp"));
+        Assert.Equal(this.T("NoSubtitlesHelp"), cut.Find(".subtitlesNoneHelp").TextContent);
+        Assert.True(Hidden(cut, ".subtitleStylingAutoHelp"));
+        Assert.True(Hidden(cut, ".subtitleStylingCustomHelp"));
+        Assert.False(Hidden(cut, ".subtitleStylingNativeHelp"));
+        Assert.Equal(this.T("NativeSubtitleStylingHelp"), cut.Find(".subtitleStylingNativeHelp").TextContent);
+    }
+
+    [Fact]
+    public void The_bitmap_subtitle_options_depend_on_each_other()
+    {
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+
+        cut.Find("#chkSubtitleRenderPgs").Change(true);
+        Assert.False(Hidden(cut, ".fldBitmapSubtitleAspectMode"));
+
+        cut.Find("#selectSubtitleBurnIn").Change("onlyimageformats");
+        Assert.True(Hidden(cut, ".fldRenderPgs"));
+        Assert.True(Hidden(cut, ".fldBitmapSubtitleAspectMode"));
+
+        cut.Find("#selectSubtitleBurnIn").Change(string.Empty);
+        Assert.False(Hidden(cut, ".fldRenderPgs"));
+        Assert.False(Hidden(cut, ".fldBitmapSubtitleAspectMode"));
+
+        cut.Find("#chkSubtitleRenderPgs").Change(false);
+        Assert.True(Hidden(cut, ".fldBitmapSubtitleAspectMode"));
+    }
+
+    [Fact]
+    public void Burning_in_needs_the_permission_to_transcode_video()
+    {
+        ScriptSignedInUser(video: false);
+
+        var cut = RenderLoaded();
+
+        Assert.True(Hidden(cut, ".fldBurnIn"));
+    }
+
+    [Fact]
+    public void The_slider_has_no_hover_thumb_on_mobile_devices()
+    {
+        App.Browser.Environment = App.Browser.Environment with
+        {
+            UserAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
+        };
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+
+        Assert.Equal("mdl-slider mdl-js-slider", cut.Find("#sliderVerticalPosition").ClassName);
+    }
+
+    [Fact]
+    public void Changing_the_appearance_updates_the_previews()
+    {
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+
+        cut.Find("#selectTextSize").Change("smaller");
+        cut.Find("#selectTextWeight").Change("bold");
+        cut.Find("#selectFont").Change("smallcaps");
+        cut.Find("#inputTextColor").Change("#00ffff");
+        cut.Find("#selectDropShadow").Change("none");
+
+        var preview = PreviewStyle(cut);
+        Assert.NotNull(preview);
+        Assert.Contains("font-size:.8em;", preview, StringComparison.Ordinal);
+        Assert.Contains("font-weight:bold;", preview, StringComparison.Ordinal);
+        Assert.Contains("font-variant:small-caps;", preview, StringComparison.Ordinal);
+        Assert.Contains("font-family:Copperplate Gothic,", preview, StringComparison.Ordinal);
+        Assert.Contains("color:#00ffff;", preview, StringComparison.Ordinal);
+        Assert.Contains("text-shadow:none;", preview, StringComparison.Ordinal);
+        Assert.Contains("font-size:.8em;", FullPreviewStyle(cut), StringComparison.Ordinal);
+        // Only the position brings up the full preview.
+        Assert.False(FullPreviewShown(cut));
+    }
+
+    [Fact]
+    public void Moving_the_slider_shows_the_position_for_a_moment()
+    {
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+
+        cut.Find("#sliderVerticalPosition").Input("4");
+
+        Assert.True(FullPreviewShown(cut));
+        Assert.Equal("4", cut.Find("#sliderVerticalPosition").Value());
+        Assert.Contains("margin-top:5.4em;", FullPreviewStyle(cut), StringComparison.Ordinal);
+        Assert.Equal("top:0;", WindowStyle(cut));
+        Assert.Equal("width:62.5%;", cut.Find(".mdl-slider-background-lower").GetAttribute("style"));
+
+        cut.Find("#sliderVerticalPosition").Input("-1");
+
+        // The last line: no margin, at the bottom.
+        Assert.DoesNotContain("margin-top", FullPreviewStyle(cut), StringComparison.Ordinal);
+        Assert.Contains("margin-bottom:0em;", FullPreviewStyle(cut), StringComparison.Ordinal);
+        Assert.Equal("bottom:0;", WindowStyle(cut));
+
+        cut.Eventually(() => Assert.False(FullPreviewShown(cut)), TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public void The_preview_checkbox_keeps_the_full_preview_up()
+    {
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+
+        cut.Find("input.chkPreview").Change(true);
+        Assert.True(FullPreviewShown(cut));
+
+        // Moving the slider does not start the timer that hides the preview.
+        cut.Find("#sliderVerticalPosition").Input("0");
+        Assert.True(FullPreviewShown(cut));
+
+        cut.Find("input.chkPreview").Change(false);
+        Assert.False(FullPreviewShown(cut));
+    }
+
+    [Fact]
+    public void Pointing_at_the_slider_shows_the_full_preview()
+    {
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+
+        cut.Find("#sliderVerticalPosition").TriggerEvent("onpointerenter", new PointerEventArgs());
+        Assert.True(FullPreviewShown(cut));
+
+        cut.Find("#sliderVerticalPosition").TriggerEvent("onpointerleave", new PointerEventArgs());
+        Assert.False(FullPreviewShown(cut));
+    }
+
+    [Fact]
+    public async Task Saving_stores_every_setting_where_the_original_does()
+    {
+        this.StoreUserSetting(SubtitleAppearance.SettingsKey, """{"textSize":"small","somethingElse":"kept"}""");
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+        Assert.Equal("small", cut.Find("#selectTextSize").Value());
+
+        cut.Find("#selectSubtitleLanguage").Change("ger");
+        cut.Find("#selectSubtitlePlaybackMode").Change("Smart");
+        cut.Find("#chkSubtitleRenderPgs").Change(true);
+        cut.Find("#selectBitmapSubtitleAspectMode").Change("stretch");
+        cut.Find("#chkAlwaysBurnInSubtitleWhenTranscoding").Change(true);
+        cut.Find("#selectSubtitleStyling").Change("Custom");
+        cut.Find("#selectTextSize").Change("large");
+        cut.Find("#selectTextWeight").Change("bold");
+        cut.Find("#selectFont").Change("print");
+        cut.Find("#inputTextColor").Change("#ff0000");
+        cut.Find("#selectDropShadow").Change("uniform");
+        cut.Find("#sliderVerticalPosition").Input("-5");
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal([this.T("SettingsSaved")], this.Toasts()));
+        Assert.False(this.IsLoading());
+
+        // Settings of this device, for every user.
+        Assert.Equal(string.Empty, this.AppSetting("subtitleburnin"));
+        Assert.Equal("true", this.AppSetting("subtitlerenderpgs"));
+        Assert.Equal("true", this.AppSetting("alwaysBurnInSubtitleWhenTranscoding"));
+
+        // The appearance of this device, for this user.
+        var appearance = StoredAppearance();
+        Assert.Equal("Custom", appearance.Text("subtitleStyling"));
+        Assert.Equal("large", appearance.Text("textSize"));
+        Assert.Equal("bold", appearance.Text("textWeight"));
+        Assert.Equal("print", appearance.Text("font"));
+        Assert.Equal("transparent", appearance.Text("textBackground"));
+        Assert.Equal("#ff0000", appearance.Text("textColor"));
+        Assert.Equal("uniform", appearance.Text("dropShadow"));
+        Assert.Equal("-5", appearance.Text("verticalPosition"));
+        Assert.Equal("stretch", appearance.Text("aspectMode"));
+        Assert.Equal("kept", appearance.Text("somethingElse"));
+
+        // The language and mode follow the user.
+        var request = this.PostedConfiguration();
+        Assert.NotNull(request);
+        Assert.True(request.QueryIs("userId", TestApp.UserId));
+        var configuration = request.JsonBody();
+        Assert.Equal("ger", configuration.Text("SubtitleLanguagePreference"));
+        Assert.Equal("Smart", configuration.Text("SubtitleMode"));
+        Assert.True(configuration.Flag("HidePlayedInLatest"));
+        Assert.Equal(2, this.UserLoads(TestApp.UserId).Count);
+        // The appearance is not part of the preferences stored on the server.
+        Assert.Null(this.PostedPreferences());
+    }
+
+    [Fact]
+    public async Task An_administrator_edits_the_settings_of_another_user()
+    {
+        SignIn(admin: true);
+        this.ScriptUser(Other, UserJson(Other, mode: "Smart"));
+        ScriptServer();
+        var cut = RenderLoaded(Other.ToString("N"));
+        Assert.Equal("Smart", cut.Find("#selectSubtitlePlaybackMode").Value());
+        Assert.True(App.Server.RequestsTo("/DisplayPreferences/usersettings")[^1].QueryIs("userId", Other));
+
+        cut.Find("#selectSubtitlePlaybackMode").Change("OnlyForced");
+        cut.Find("#selectTextSize").Change("extralarge");
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal([this.T("SettingsSaved")], this.Toasts()));
+        var request = this.PostedConfiguration();
+        Assert.NotNull(request);
+        Assert.True(request.QueryIs("userId", Other));
+        Assert.Equal("OnlyForced", request.JsonBody().Text("SubtitleMode"));
+        Assert.Equal("extralarge", StoredAppearance(Other).Text("textSize"));
+        Assert.Null(this.UserSetting(SubtitleAppearance.SettingsKey));
+        Assert.Empty(this.UserLoads(TestApp.UserId));
+    }
+
+    [Fact]
+    public async Task A_rejected_configuration_is_not_reported_as_saved()
+    {
+        ScriptSignedInUser();
+        App.Server.OnPost("/Users/Configuration", _ => FakeHttp.Status(HttpStatusCode.Forbidden));
+        var cut = RenderLoaded();
+
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.NotNull(this.PostedConfiguration()));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        Assert.Empty(this.Toasts());
+    }
+
+    [Fact]
+    public async Task Saving_without_the_user_keeps_the_page_busy()
+    {
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+        App.Server.On(HttpMethod.Get, "/Users/" + TestApp.UserId.ToString("N"), _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+        App.Server.On(HttpMethod.Get, "/Users/" + TestApp.UserId.ToString("D"), _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+
+        cut.Find("#selectSubtitleBurnIn").Change("all");
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal(2, this.UserLoads(TestApp.UserId).Count));
+        Assert.True(this.IsLoading());
+        Assert.Empty(this.Toasts());
+        Assert.Null(this.PostedConfiguration());
+        // The device settings are written before the user is read, as in the original.
+        Assert.Equal("all", this.AppSetting("subtitleburnin"));
+    }
+
+    [Fact]
+    public void Without_the_user_the_form_stays_empty_and_busy()
+    {
+        SignIn();
+        ScriptServer();
+
+        // GET Users/{id} is not scripted and fails.
+        var cut = Render<SubtitlePreferences>();
+
+        cut.Eventually(() => Assert.Single(this.UserLoads(TestApp.UserId)));
+        Assert.True(string.IsNullOrEmpty(PreviewStyle(cut)));
+        Assert.True(this.IsLoading());
+    }
+
+    [Fact]
+    public void Without_the_language_list_the_form_stays_empty_and_busy()
+    {
+        ScriptSignedInUser();
+        App.Server.On(HttpMethod.Get, "/Localization/Cultures", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+
+        var cut = Render<SubtitlePreferences>();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Localization/Cultures")));
+        Assert.True(string.IsNullOrEmpty(PreviewStyle(cut)));
+        Assert.True(this.IsLoading());
+    }
+}

@@ -1,0 +1,222 @@
+@* The saved servers page and the add server page. *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.Session
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private const string OtherId = "b29fbb466c0749999a3b9f1af5dc11e7";
+
+    private void StoreServers(bool withToken = false)
+    {
+        var token = withToken ? ",\"UserId\":\"" + TestApp.UserId.ToString("N") + "\",\"AccessToken\":\"stored-token\"" : string.Empty;
+        App.Browser.LocalStorage[CredentialStore.StorageKey] =
+            "{\"Servers\":[" +
+            "{\"Id\":\"" + TestApp.ServerId + "\",\"Name\":\"Living room\",\"ManualAddress\":\"" + TestApp.ServerUrl + "\",\"LastConnectionMode\":2,\"DateLastAccessed\":2" + token + "}," +
+            "{\"Id\":\"" + OtherId + "\",\"Name\":\"Cellar\",\"ManualAddress\":\"http://cellar.test\",\"LastConnectionMode\":2,\"DateLastAccessed\":1}" +
+            "]}";
+    }
+
+    private IRenderedComponent<Jellyfin.Web.Components.DialogHost> OpenMenu(IRenderedComponent<SelectServer> cut, int card = 0)
+    {
+        var dialogs = this.RenderDialogs();
+        cut.FindAll("button.card")[card].Click();
+        dialogs.Eventually(() => Assert.Equal(2, dialogs.FindAll(".actionSheetMenuItem").Count));
+        return dialogs;
+    }
+
+    [Fact]
+    public void Saved_servers_are_shown_as_cards()
+    {
+        StoreServers();
+
+        var cut = Render<SelectServer>();
+
+        var cards = cut.FindAll("#selectServerPage .servers button.card");
+        Assert.Equal(2, cards.Count);
+        Assert.Equal(TestApp.ServerId, cards[0].GetAttribute("data-id"));
+        Assert.Equal("Living room", cards[0].QuerySelector(".cardText")!.TextContent);
+        Assert.Equal("Cellar", cards[1].QuerySelector(".cardText")!.TextContent);
+        Assert.NotNull(cards[0].QuerySelector(".cardImageContainer.defaultCardBackground .material-icons.storage"));
+        Assert.Equal("#/addserver", cut.Find(".btnAddServer").GetAttribute("href"));
+        Assert.True(cut.Find("#selectServerPage").HasClass("standalonePage"));
+        Assert.Empty(cut.FindAll(".servers p"));
+    }
+
+    [Fact]
+    public void Without_saved_servers_a_message_is_shown()
+    {
+        var cut = Render<SelectServer>();
+
+        Assert.Empty(cut.FindAll("button.card"));
+        Assert.Equal("No servers have been found using the automatic server discovery.", cut.Find(".servers p").TextContent);
+    }
+
+    [Fact]
+    public void The_page_is_shown_inside_the_library_chrome_when_asked()
+    {
+        var cut = Render<SelectServer>(p => p.Add(x => x.ShowUser, "1"));
+
+        Assert.True(cut.Find("#selectServerPage").HasClass("libraryPage"));
+        Assert.False(cut.Find("#selectServerPage").HasClass("standalonePage"));
+    }
+
+    [Fact]
+    public void A_card_offers_connect_and_delete()
+    {
+        StoreServers();
+        var cut = Render<SelectServer>();
+
+        var dialogs = OpenMenu(cut);
+
+        Assert.Equal("Living room", dialogs.Find(".actionSheetTitle").TextContent);
+        Assert.Equal(["connect", "delete"], dialogs.FindAll(".actionSheetMenuItem").Select(item => item.GetAttribute("data-id")));
+        Assert.Equal(["Connect", "Delete"], dialogs.FindAll(".actionSheetItemText").Select(item => item.TextContent));
+    }
+
+    [Fact]
+    public void Connecting_to_a_server_without_session_opens_its_login_page()
+    {
+        StoreServers();
+        var cut = Render<SelectServer>();
+        var dialogs = OpenMenu(cut);
+
+        dialogs.Find(".actionSheetMenuItem[data-id=connect]").Click();
+
+        cut.Eventually(() => Assert.Equal("/login?serverid=" + TestApp.ServerId, App.Browser.Hash));
+        Assert.NotEmpty(App.Server.RequestsTo("/System/Info/Public"));
+        Assert.False(Services.GetRequiredService<LoadingService>().IsVisible);
+        Assert.Equal(TestApp.ServerUrl, Services.GetRequiredService<JellyfinApi>().ServerAddress);
+    }
+
+    [Fact]
+    public void Connecting_to_a_server_with_a_valid_session_opens_home()
+    {
+        StoreServers(withToken: true);
+        App.Server.OnGet("/Users/Me", new { Id = TestApp.UserId, Name = "tester", ServerId = TestApp.ServerId, Policy = new { IsAdministrator = false } });
+        var cut = Render<SelectServer>();
+        var dialogs = OpenMenu(cut);
+
+        dialogs.Find(".actionSheetMenuItem[data-id=connect]").Click();
+
+        cut.Eventually(() => Assert.Equal("/home", App.Browser.Hash));
+        Assert.True(Services.GetRequiredService<JellyfinApi>().IsLoggedIn);
+    }
+
+    [Fact]
+    public void A_server_that_does_not_answer_shows_an_alert()
+    {
+        StoreServers();
+        App.Server.On(HttpMethod.Get, "/System/Info/Public", _ => FakeHttp.Status(HttpStatusCode.ServiceUnavailable));
+        var cut = Render<SelectServer>();
+        var dialogs = OpenMenu(cut);
+
+        dialogs.Find(".actionSheetMenuItem[data-id=connect]").Click();
+
+        dialogs.Eventually(() => Assert.Contains("We're unable to connect to the selected server right now.", dialogs.Find(".text").TextContent, StringComparison.Ordinal));
+        Assert.Equal(string.Empty, App.Browser.Hash);
+    }
+
+    [Fact]
+    public void An_outdated_server_shows_the_update_notice()
+    {
+        StoreServers();
+        App.Server.OnGet("/System/Info/Public", new { Id = TestApp.ServerId, ServerName = "Living room", Version = "10.8.13", StartupWizardCompleted = true });
+        var cut = Render<SelectServer>();
+        var dialogs = OpenMenu(cut);
+
+        dialogs.Find(".actionSheetMenuItem[data-id=connect]").Click();
+
+        dialogs.Eventually(() => Assert.Contains("This server needs to be updated.", dialogs.Find(".text").TextContent, StringComparison.Ordinal));
+        Assert.Equal("https://github.com/jellyfin/jellyfin", dialogs.Find(".text a").GetAttribute("href"));
+    }
+
+    [Fact]
+    public void Deleting_a_server_asks_first_and_removes_its_card()
+    {
+        StoreServers();
+        var cut = Render<SelectServer>();
+        var dialogs = OpenMenu(cut, card: 1);
+
+        dialogs.Find(".actionSheetMenuItem[data-id=delete]").Click();
+
+        dialogs.Eventually(() => Assert.Equal("Delete Cellar", dialogs.Find(".formDialogHeaderTitle").TextContent));
+        Assert.Equal("Are you sure you wish to delete this server?", dialogs.Find(".text").TextContent);
+        dialogs.Find(".formDialogFooter button[data-id=ok]").Click();
+
+        cut.Eventually(() => Assert.Single(cut.FindAll("button.card")));
+        Assert.Equal(TestApp.ServerId, cut.Find("button.card").GetAttribute("data-id"));
+        Assert.DoesNotContain(OtherId, App.Browser.LocalStorage[CredentialStore.StorageKey], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Declining_the_confirmation_keeps_the_server()
+    {
+        StoreServers();
+        var cut = Render<SelectServer>();
+        var dialogs = OpenMenu(cut, card: 1);
+
+        dialogs.Find(".actionSheetMenuItem[data-id=delete]").Click();
+        dialogs.Eventually(() => Assert.NotEmpty(dialogs.FindAll(".formDialogFooter button[data-id=cancel]")));
+        dialogs.Find(".formDialogFooter button[data-id=cancel]").Click();
+
+        dialogs.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+        Assert.Equal(2, cut.FindAll("button.card").Count);
+        Assert.Contains(OtherId, App.Browser.LocalStorage[CredentialStore.StorageKey], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Adding_a_server_connects_to_the_address_and_opens_its_login_page()
+    {
+        var cut = Render<AddServer>();
+
+        cut.Find("#txtServerHost").Input(" " + TestApp.ServerUrl + "/ ");
+        await this.Settle(() => cut.Find("form.addServerForm").SubmitAsync());
+
+        Assert.Equal("/login?serverid=" + TestApp.ServerId, App.Browser.Hash);
+        Assert.NotEmpty(App.Server.RequestsTo("/System/Info/Public"));
+        Assert.All(App.Server.RequestsTo("/System/Info/Public"), request => Assert.Equal(TestApp.ServerUrl + "/System/Info/Public", request.Uri.GetLeftPart(UriPartial.Path)));
+        Assert.Contains(TestApp.ServerId, App.Browser.LocalStorage[CredentialStore.StorageKey], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Adding_a_server_that_was_never_set_up_opens_the_wizard()
+    {
+        App.Server.OnGet("/System/Info/Public", new { Id = TestApp.ServerId, ServerName = "New", Version = "10.11.0", StartupWizardCompleted = false });
+        var cut = Render<AddServer>();
+
+        cut.Find("#txtServerHost").Input(TestApp.ServerUrl);
+        await this.Settle(() => cut.Find("form.addServerForm").SubmitAsync());
+
+        Assert.Equal("/wizard/start", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void Adding_an_unreachable_server_shows_the_connection_failure()
+    {
+        App.Server.On(HttpMethod.Get, "/System/Info/Public", _ => FakeHttp.Status(HttpStatusCode.NotFound));
+        var cut = Render<AddServer>();
+        var dialogs = this.RenderDialogs();
+
+        cut.Find("#txtServerHost").Input(TestApp.ServerUrl);
+        cut.Find("form.addServerForm").Submit();
+
+        dialogs.Eventually(() => Assert.Equal("Connection Failure", dialogs.Find(".formDialogHeaderTitle").TextContent));
+        Assert.Equal(string.Empty, App.Browser.Hash);
+    }
+
+    [Fact]
+    public async Task An_empty_address_is_not_submitted()
+    {
+        var cut = Render<AddServer>();
+
+        cut.Find("#txtServerHost").Input("   ");
+        await this.Settle(() => cut.Find("form.addServerForm").SubmitAsync());
+
+        Assert.Empty(App.Server.Requests);
+        Assert.Equal(string.Empty, App.Browser.Hash);
+    }
+}

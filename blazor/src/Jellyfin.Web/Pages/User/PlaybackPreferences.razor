@@ -1,0 +1,473 @@
+@* Settings: playback. Port of controllers/user/playback and components/playbackSettings. *@
+@attribute [Route("/mypreferencesplayback")]
+@attribute [Access(AccessLevel.User)]
+@using System.Globalization
+@inject JellyfinApi Api
+@inject UserSettings CurrentSettings
+@inject AppSettings AppSettings
+@inject AppHost Host
+@inject WebConfig Config
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<Page Id="languagePreferencesPage" Class="libraryPage userPreferencesPage noSecondaryNavPage" Title="@Globalize["TitlePlayback"]" BackButton="true">
+    <div class="settingsContainer padded-left padded-right padded-bottom-page">
+        <form style="margin: 0 auto;" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">@Globalize["HeaderAudioSettings"]</h2>
+
+                <PrefSelect Id="selectAllowedAudioChannels" Label="@Globalize["LabelAllowedAudioChannels"]" Options="AudioChannelOptions()" @bind-Value="_allowedAudioChannels" />
+                <PrefSelect Id="selectAudioLanguage" Label="@Globalize["LabelAudioLanguagePreference"]" Options="_languages" @bind-Value="_audioLanguage" />
+
+                <EmbyCheckbox LabelClass="checkboxContainer" Class="chkPlayDefaultAudioTrack" Label="@Globalize["LabelPlayDefaultAudioTrack"]" @bind-Value="_playDefaultAudioTrack" />
+                <PrefCheckbox Class="chkDisableVbrAudioEncoding" Label="@Globalize["LabelDisableVbrAudioEncoding"]" Description="@Globalize["DisableVbrAudioEncodingHelp"]" @bind-Value="_disableVbrAudio" />
+            </div>
+
+            <div class="@("qualitySections" + Hide(!_showQuality))">
+                <div class="@("verticalSection verticalSection-extrabottompadding videoQualitySection" + Hide(!_showVideoQuality))">
+                    <h2 class="sectionTitle">@Globalize["HeaderVideoQuality"]</h2>
+
+                    <PrefSelect ContainerClass="@("fldVideoInNetworkQuality" + Hide(!_showInNetworkQuality))" Class="selectVideoInNetworkQuality"
+                                Label="@Globalize["LabelHomeNetworkQuality"]" Options="_videoQualities" @bind-Value="_videoInNetworkQuality" />
+                    <PrefSelect ContainerClass="@("fldVideoInternetQuality" + Hide(!_showInternetQuality))" Class="selectVideoInternetQuality"
+                                Label="@Globalize["LabelInternetQuality"]" Options="_videoQualities" @bind-Value="_videoInternetQuality" />
+                    <PrefSelect ContainerClass="@("fldChromecastQuality" + Hide(!_showChromecastQuality))" Class="selectChromecastVideoQuality"
+                                Label="@Globalize["LabelMaxChromecastBitrate"]" Options="_videoQualities" @bind-Value="_chromecastQuality" />
+                    <PrefSelect Class="selectMaxVideoWidth" Label="@Globalize["LabelMaxVideoResolution"]" Options="MaxVideoWidthOptions()" @bind-Value="_maxVideoWidth" />
+
+                    <PrefCheckbox Class="chkLimitSupportedVideoResolution" Label="@Globalize["LimitSupportedVideoResolution"]"
+                                  Description="@Globalize["LimitSupportedVideoResolutionHelp"]" @bind-Value="_limitSupportedVideoResolution" />
+                </div>
+                <div class="@("verticalSection verticalSection-extrabottompadding musicQualitySection" + Hide(!_showMusicQuality))">
+                    <h2>@Globalize["HeaderMusicQuality"]</h2>
+                    <PrefSelect Class="selectMusicInternetQuality" Label="@Globalize["LabelInternetQuality"]" Options="_audioQualities" @bind-Value="_musicInternetQuality" />
+                </div>
+            </div>
+
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">@Globalize["TabAdvanced"]</h2>
+
+                <PrefCheckbox Class="chkPreferFmp4HlsContainer" Label="@Globalize["PreferFmp4HlsContainer"]" Description="@Globalize["PreferFmp4HlsContainerHelp"]" @bind-Value="_preferFmp4HlsContainer" />
+                <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription cinemaModeOptions" Class="chkEnableCinemaMode"
+                              Label="@Globalize["EnableCinemaMode"]" Description="@Globalize["CinemaModeConfigurationHelp"]" @bind-Value="_enableCinemaMode" />
+                <PrefCheckbox ContainerClass="checkboxContainer fldEpisodeAutoPlay" Class="chkEpisodeAutoPlay" Label="@Globalize["PlayNextEpisodeAutomatically"]" @bind-Value="_episodeAutoPlay" />
+
+                <PrefSelect ContainerClass="@("fldStillWatchingOption" + Hide(!_showStillWatching))" Class="selectStillWatchingOption"
+                            Label="@Globalize["StillWatchingPrompt"]" Options="PlaybackOptions.StillWatching(Globalize)" @bind-Value="_stillWatching" />
+
+                <PrefCheckbox Class="chkRememberAudioSelections" Label="@Globalize["RememberAudioSelections"]" Description="@Globalize["RememberAudioSelectionsHelp"]" @bind-Value="_rememberAudioSelections" />
+                <PrefCheckbox Class="chkRememberSubtitleSelections" Label="@Globalize["RememberSubtitleSelections"]" Description="@Globalize["RememberSubtitleSelectionsHelp"]" @bind-Value="_rememberSubtitleSelections" />
+                <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription fldEnableNextVideoOverlay" Class="chkEnableNextVideoOverlay"
+                              Label="@Globalize["EnableNextVideoInfoOverlay"]" Description="@Globalize["EnableNextVideoInfoOverlayHelp"]" @bind-Value="_enableNextVideoOverlay" />
+
+                @* External players are offered by the native apps only (AppFeature.ExternalPlayerIntent). *@
+                <PrefCheckbox ContainerClass="checkboxContainer fldExternalPlayer checkboxContainer-withDescription hide" Class="chkExternalVideoPlayer"
+                              Label="@Globalize["EnableExternalVideoPlayers"]" @bind-Value="_externalVideoPlayer">
+                    <div class="fieldDescription checkboxFieldDescription">
+                        <div class="labelNativeExternalPlayers">@Globalize["EnableExternalVideoPlayersHelp"]</div>
+                    </div>
+                </PrefCheckbox>
+
+                <PrefSelect Class="selectChromecastVersion" Label="@Globalize["LabelChromecastVersion"]" Options="_castReceivers" @bind-Value="_castReceiverId" />
+                <PrefSelect Class="selectSkipForwardLength" Label="@Globalize["LabelSkipForwardLength"]" Options="PlaybackOptions.SkipLengths(Globalize)" @bind-Value="_skipForwardLength" />
+                <PrefSelect Class="selectSkipBackLength" Label="@Globalize["LabelSkipBackLength"]" Options="PlaybackOptions.SkipLengths(Globalize)" @bind-Value="_skipBackLength" />
+
+                <h3 class="sectionTitle">@Globalize["HeaderMediaSegmentActions"]</h3>
+                <div class="mediaSegmentActionContainer">
+                    @if (_loaded)
+                    {
+                        foreach (var segmentType in PlaybackOptions.MediaSegmentTypes)
+                        {
+                            <PrefSelect Id="@PlaybackOptions.SegmentActionId(segmentType)" Class="segmentTypeAction"
+                                        Label="@Globalize.Translate("LabelMediaSegmentsType", Globalize["MediaSegmentType." + segmentType])"
+                                        Options="PlaybackOptions.SegmentActions(Globalize)" Value="@_segmentActions[segmentType]"
+                                        ValueChanged="value => _segmentActions[segmentType] = value ?? string.Empty" @key="segmentType" />
+                        }
+                    }
+                </div>
+            </div>
+
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">@Globalize["HeaderVideoAdvanced"]</h2>
+
+                <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription fldEnableDts" Class="chkEnableDts"
+                              Label="@Globalize["EnableDts"]" Description="@Globalize["EnableDtsHelp"]" @bind-Value="_enableDts" />
+                <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription fldEnableTrueHd" Class="chkEnableTrueHd"
+                              Label="@Globalize["EnableTrueHd"]" Description="@Globalize["EnableTrueHdHelp"]" @bind-Value="_enableTrueHd" />
+                <PrefCheckbox ContainerClass="@("checkboxContainer checkboxContainer-withDescription fldEnableHi10p" + Hide(!Host.Browser.Safari))" Class="chkEnableHi10p"
+                              Label="@Globalize["EnableHi10p"]" Description="@Globalize["EnableHi10pHelp"]" @bind-Value="_enableHi10p" />
+
+                @* The HLS segment length limit works around a webOS problem and is offered there only. *@
+                <PrefCheckbox ContainerClass="checkboxContainer checkboxContainer-withDescription fldLimitSegmentLength hide" Class="chkLimitSegmentLength"
+                              Label="@Globalize["LimitSegmentLength"]" Description="@Globalize["LimitSegmentLengthHelp"]" @bind-Value="_limitSegmentLength" />
+
+                <PrefSelect Id="selectPreferredTranscodeVideoCodec" Label="@Globalize["LabelSelectPreferredTranscodeVideoCodec"]" Options="VideoCodecOptions()" @bind-Value="_preferredVideoCodec">
+                    <div class="fieldDescription">@Globalize["SelectPreferredTranscodeVideoCodecHelp"]</div>
+                </PrefSelect>
+                <PrefSelect Id="selectPreferredTranscodeVideoAudioCodec" Label="@Globalize["LabelSelectPreferredTranscodeVideoAudioCodec"]" Options="VideoAudioCodecOptions()" @bind-Value="_preferredVideoAudioCodec">
+                    <div class="fieldDescription">@Globalize["SelectPreferredTranscodeVideoAudioCodecHelp"]</div>
+                </PrefSelect>
+            </div>
+
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle">@Globalize["HeaderAudioAdvanced"]</h2>
+
+                <PrefSelect ContainerClass="@("fldAudioNormalization" + Hide(Host.Browser.Ios))" Id="selectAudioNormalization"
+                            Label="@Globalize["LabelSelectAudioNormalization"]" Options="AudioNormalizationOptions()" @bind-Value="_audioNormalization">
+                    <div class="fieldDescription">@Globalize["SelectAudioNormalizationHelp"]</div>
+                </PrefSelect>
+
+                <PrefCheckbox Class="chkAlwaysRemuxFlac" Label="@Globalize["LabelAlwaysRemuxFlacAudioFiles"]" Description="@Globalize["AlwaysRemuxFlacAudioFilesHelp"]" @bind-Value="_alwaysRemuxFlac" />
+                <PrefCheckbox Class="chkAlwaysRemuxMp3" Label="@Globalize["LabelAlwaysRemuxMp3AudioFiles"]" Description="@Globalize["AlwaysRemuxMp3AudioFilesHelp"]" @bind-Value="_alwaysRemuxMp3" />
+            </div>
+
+            <EmbyButton Type="submit" Class="raised button-submit block btnSave">
+                <span>@Globalize["Save"]</span>
+            </EmbyButton>
+        </form>
+    </div>
+</Page>
+
+@code {
+    private readonly Dictionary<string, string> _segmentActions = [];
+    private Guid? _userId;
+    private UserSettings _settings = default!;
+    private bool _loaded;
+
+    private List<SelectOption> _languages = [];
+    private List<SelectOption> _videoQualities = [];
+    private List<SelectOption> _audioQualities = [];
+    private List<SelectOption> _castReceivers = [];
+
+    private bool _showQuality;
+    private bool _showVideoQuality;
+    private bool _showInNetworkQuality;
+    private bool _showInternetQuality;
+    private bool _showChromecastQuality;
+    private bool _showMusicQuality;
+    private bool _showStillWatching;
+
+    private string? _allowedAudioChannels = "-1";
+    private string? _audioLanguage = string.Empty;
+    private string? _videoInNetworkQuality = string.Empty;
+    private string? _videoInternetQuality = string.Empty;
+    private string? _chromecastQuality = string.Empty;
+    private string? _musicInternetQuality = string.Empty;
+    private string? _maxVideoWidth = "0";
+    private string? _stillWatching = "disabled";
+    private string? _castReceiverId;
+    private string? _skipForwardLength;
+    private string? _skipBackLength;
+    private string? _preferredVideoCodec = string.Empty;
+    private string? _preferredVideoAudioCodec = string.Empty;
+    private string? _audioNormalization = "TrackGain";
+
+    private bool _playDefaultAudioTrack;
+    private bool _disableVbrAudio;
+    private bool _limitSupportedVideoResolution;
+    private bool _preferFmp4HlsContainer;
+    private bool _enableCinemaMode;
+    private bool _episodeAutoPlay;
+    private bool _rememberAudioSelections;
+    private bool _rememberSubtitleSelections;
+    private bool _enableNextVideoOverlay;
+    private bool _externalVideoPlayer;
+    private bool _enableDts;
+    private bool _enableTrueHd;
+    private bool _enableHi10p;
+    private bool _limitSegmentLength;
+    private bool _alwaysRemuxFlac;
+    private bool _alwaysRemuxMp3;
+
+    /// <summary>The user whose settings are edited (administrators may edit other users).</summary>
+    [Parameter]
+    public string? UserId { get; set; }
+
+    private static string? Hide(bool hidden) => hidden ? " hide" : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId = UserPages.ResolveUserId(Api, UserId);
+        _settings = _userId is { } id ? UserPages.SettingsFor(id, Api, CurrentSettings, AppSettings) : CurrentSettings;
+        _videoQualities = PlaybackOptions.QualityOptions(PlaybackOptions.VideoBitrates, Globalize);
+        _audioQualities = PlaybackOptions.QualityOptions(PlaybackOptions.AudioBitrates, Globalize);
+        _languages = LanguageOptions([]);
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        Loading.Show();
+        UserDto? user;
+        SystemInfo? systemInfo;
+        try
+        {
+            user = await UserPages.GetUserAsync(Api, userId);
+            systemInfo = await Api.Client.System.Info.GetAsync();
+            await _settings.SetUserAsync(userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The original leaves the loading indicator up when its data cannot be loaded.
+            AppLog.Warn("[PlaybackSettings] loading failed: " + ex.Message);
+            return;
+        }
+
+        if (user is null)
+        {
+            return;
+        }
+
+        LoadForm(user, systemInfo);
+        _loaded = true;
+        Loading.Hide();
+        StateHasChanged();
+
+        await Task.WhenAll(ShowHideQualityFieldsAsync(user), LoadCulturesAsync(user));
+    }
+
+    private void LoadForm(UserDto user, SystemInfo? systemInfo)
+    {
+        var policy = user.Policy;
+        var configuration = user.Configuration;
+        var videoTranscoding = policy?.EnableVideoPlaybackTranscoding == true;
+        var audioTranscoding = policy?.EnableAudioPlaybackTranscoding == true;
+        var isCurrentUser = user.Id == Api.UserId;
+
+        _showVideoQuality = videoTranscoding;
+        if (Config.Multiserver)
+        {
+            _showInNetworkQuality = true;
+            _showInternetQuality = true;
+            _showMusicQuality = audioTranscoding;
+        }
+
+        _showQuality = isCurrentUser && (videoTranscoding || audioTranscoding);
+
+        // AppFeature.Chromecast: the browsers that can cast.
+        _showChromecastQuality = _showQuality && (Host.Browser.Chrome || Host.Browser.EdgeChromium) && videoTranscoding;
+
+        // The option is only offered when the still watching plugin is loaded.
+        _showStillWatching = Config.Data.Plugins.Contains(PlaybackOptions.StillWatchingPlugin);
+        _stillWatching = _settings.Get("stillWatchingPrompt", false) is { Length: > 0 } stillWatching ? stillWatching : "disabled";
+
+        _allowedAudioChannels = _settings.Get("allowedAudioChannels", false) is { Length: > 0 } channels ? channels : "-1";
+        _playDefaultAudioTrack = configuration?.PlayDefaultAudioTrack ?? false;
+        var browser = Host.Browser;
+        _preferFmp4HlsContainer = _settings.GetBool("preferFmp4HlsContainer", browser.Safari || browser.Firefox || browser.Chrome || browser.EdgeChromium, false);
+        _limitSegmentLength = _settings.GetBool("limitSegmentLength", false, false);
+        _enableDts = AppSettings.GetBool("enableDts", false);
+        _enableTrueHd = AppSettings.GetBool("enableTrueHd", false);
+        _enableHi10p = AppSettings.GetBool("enableHi10p", false);
+        _enableCinemaMode = _settings.EnableCinemaMode;
+        _audioNormalization = _settings.Get("selectAudioNormalization", false) is { Length: > 0 } normalization ? normalization : "TrackGain";
+        _enableNextVideoOverlay = _settings.EnableNextVideoInfoOverlay;
+        _rememberAudioSelections = configuration?.RememberAudioSelections ?? false;
+        _rememberSubtitleSelections = configuration?.RememberSubtitleSelections ?? false;
+        _externalVideoPlayer = AppSettings.EnableSystemExternalPlayers;
+        _limitSupportedVideoResolution = AppSettings.GetBool("limitSupportedVideoResolution", false);
+        _preferredVideoCodec = AppSettings.Get("preferredTranscodeVideoCodec") ?? string.Empty;
+        _preferredVideoAudioCodec = AppSettings.Get("preferredTranscodeVideoAudioCodec") ?? string.Empty;
+        _disableVbrAudio = AppSettings.GetBool("disableVbrAudio", false);
+        _alwaysRemuxFlac = AppSettings.GetBool("alwaysRemuxFlac", false);
+        _alwaysRemuxMp3 = AppSettings.GetBool("alwaysRemuxMp3", false);
+
+        _videoInNetworkQuality = PlaybackOptions.BitrateFieldValue(AppSettings, true, "Video");
+        _videoInternetQuality = PlaybackOptions.BitrateFieldValue(AppSettings, false, "Video");
+        _musicInternetQuality = PlaybackOptions.BitrateFieldValue(AppSettings, false, "Audio");
+        _chromecastQuality = PlaybackOptions.ChromecastFieldValue(AppSettings);
+
+        _castReceivers = (systemInfo?.CastReceiverApplications ?? [])
+            .Select(app => new SelectOption(app.Id ?? string.Empty, app.Name ?? string.Empty))
+            .ToList();
+        _castReceiverId = configuration?.CastReceiverId;
+
+        _maxVideoWidth = AppSettings.MaxVideoWidth.ToString(CultureInfo.InvariantCulture);
+        _skipForwardLength = _settings.SkipForwardLength.ToString(CultureInfo.InvariantCulture);
+        _skipBackLength = _settings.SkipBackLength.ToString(CultureInfo.InvariantCulture);
+
+        foreach (var segmentType in PlaybackOptions.MediaSegmentTypes)
+        {
+            _segmentActions[segmentType] = PlaybackOptions.SegmentAction(_settings, segmentType);
+        }
+
+        // Shown once the languages are known.
+        _audioLanguage = configuration?.AudioLanguagePreference ?? string.Empty;
+        _episodeAutoPlay = configuration?.EnableNextEpisodeAutoPlay ?? false;
+    }
+
+    // Without multiple servers, only the quality of the network the client is on can be chosen.
+    private async Task ShowHideQualityFieldsAsync(UserDto user)
+    {
+        if (Config.Multiserver)
+        {
+            return;
+        }
+
+        try
+        {
+            var endpoint = await Api.Client.System.Endpoint.GetAsync();
+            if (endpoint?.IsInNetwork == true)
+            {
+                _showInNetworkQuality = true;
+                _showInternetQuality = false;
+                _showMusicQuality = false;
+            }
+            else
+            {
+                _showInNetworkQuality = false;
+                _showInternetQuality = true;
+                _showMusicQuality = user.Policy?.EnableAudioPlaybackTranscoding == true;
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[PlaybackSettings] loading the endpoint info failed: " + ex.Message);
+        }
+    }
+
+    private async Task LoadCulturesAsync(UserDto user)
+    {
+        try
+        {
+            var cultures = await Api.Client.Localization.Cultures.GetAsync() ?? [];
+            _languages = LanguageOptions(cultures);
+            _audioLanguage = user.Configuration?.AudioLanguagePreference ?? string.Empty;
+            StateHasChanged();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[PlaybackSettings] loading the languages failed: " + ex.Message);
+        }
+    }
+
+    private List<SelectOption> LanguageOptions(IEnumerable<CultureDto> cultures) =>
+    [
+        new(string.Empty, Globalize["AnyLanguage"]),
+        new("OriginalLanguage", Globalize["OriginalLanguage"]),
+        .. cultures.Select(culture => new SelectOption(culture.ThreeLetterISOLanguageName ?? string.Empty, culture.DisplayName ?? string.Empty))
+    ];
+
+    private List<SelectOption> AudioChannelOptions() =>
+    [
+        new("-1", Globalize["Auto"]),
+        new("1", Globalize["LabelSelectMono"]),
+        new("2", Globalize["LabelSelectStereo"]),
+        new("6", "5.1 " + Globalize["LabelSelectAudioChannels"]),
+        new("8", "7.1 " + Globalize["LabelSelectAudioChannels"])
+    ];
+
+    private List<SelectOption> MaxVideoWidthOptions() =>
+    [
+        new("0", Globalize["Auto"]),
+        new("-1", Globalize["ScreenResolution"]),
+        new("640", "360p"),
+        new("852", "480p"),
+        new("1280", "720p"),
+        new("1920", "1080p"),
+        new("3840", "4K"),
+        new("7680", "8K")
+    ];
+
+    private List<SelectOption> VideoCodecOptions() =>
+        [new(string.Empty, Globalize["Auto"]), new("h264", "H264"), new("hevc", "HEVC"), new("av1", "AV1")];
+
+    private List<SelectOption> VideoAudioCodecOptions() =>
+    [
+        new(string.Empty, Globalize["Auto"]), new("aac", "AAC"), new("ac3", "AC3"), new("alac", "ALAC"),
+        new("dts", "DTS"), new("flac", "FLAC"), new("opus", "Opus")
+    ];
+
+    private List<SelectOption> AudioNormalizationOptions() =>
+        [new("Off", Globalize["Off"]), new("TrackGain", Globalize["LabelTrackGain"]), new("AlbumGain", Globalize["LabelAlbumGain"])];
+
+    private async Task SaveAsync()
+    {
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        await _settings.SetUserAsync(userId);
+        Loading.Show();
+
+        UserDto? user;
+        try
+        {
+            user = await UserPages.GetUserAsync(Api, userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[PlaybackSettings] loading the user failed: " + ex.Message);
+            return;
+        }
+
+        if (user is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await SaveUserAsync(user, userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Loading.Hide();
+            return;
+        }
+
+        Loading.Hide();
+        Toasts.Show(Globalize["SettingsSaved"]);
+    }
+
+    private Task SaveUserAsync(UserDto user, Guid userId)
+    {
+        AppSettings.EnableSystemExternalPlayers = _externalVideoPlayer;
+
+        AppSettings.Set("chromecastBitrate1", _chromecastQuality ?? string.Empty);
+        AppSettings.Set("maxVideoWidth", _maxVideoWidth ?? string.Empty);
+        AppSettings.Set("limitSupportedVideoResolution", _limitSupportedVideoResolution);
+        AppSettings.Set("preferredTranscodeVideoCodec", _preferredVideoCodec ?? string.Empty);
+        AppSettings.Set("preferredTranscodeVideoAudioCodec", _preferredVideoAudioCodec ?? string.Empty);
+
+        AppSettings.Set("enableDts", _enableDts);
+        AppSettings.Set("enableTrueHd", _enableTrueHd);
+
+        AppSettings.Set("enableHi10p", _enableHi10p);
+        AppSettings.Set("disableVbrAudio", _disableVbrAudio);
+        AppSettings.Set("alwaysRemuxFlac", _alwaysRemuxFlac);
+        AppSettings.Set("alwaysRemuxMp3", _alwaysRemuxMp3);
+
+        PlaybackOptions.SaveBitrateField(AppSettings, _videoInNetworkQuality, true, "Video");
+        PlaybackOptions.SaveBitrateField(AppSettings, _videoInternetQuality, false, "Video");
+        PlaybackOptions.SaveBitrateField(AppSettings, _musicInternetQuality, false, "Audio");
+
+        var configuration = user.Configuration ??= new UserConfiguration();
+        _settings.Set("allowedAudioChannels", _allowedAudioChannels ?? string.Empty, false);
+        configuration.AudioLanguagePreference = _audioLanguage ?? string.Empty;
+        configuration.PlayDefaultAudioTrack = _playDefaultAudioTrack;
+        configuration.EnableNextEpisodeAutoPlay = _episodeAutoPlay;
+        _settings.Set("stillWatchingPrompt", _stillWatching ?? string.Empty, false);
+        _settings.Set("preferFmp4HlsContainer", _preferFmp4HlsContainer, false);
+        _settings.Set("limitSegmentLength", _limitSegmentLength, false);
+        _settings.EnableCinemaMode = _enableCinemaMode;
+        _settings.Set("selectAudioNormalization", _audioNormalization ?? string.Empty, false);
+        _settings.EnableNextVideoInfoOverlay = _enableNextVideoOverlay;
+        configuration.RememberAudioSelections = _rememberAudioSelections;
+        configuration.RememberSubtitleSelections = _rememberSubtitleSelections;
+        configuration.CastReceiverId = _castReceiverId;
+        _settings.Set("skipForwardLength", _skipForwardLength ?? string.Empty);
+        _settings.Set("skipBackLength", _skipBackLength ?? string.Empty);
+
+        foreach (var segmentType in PlaybackOptions.MediaSegmentTypes)
+        {
+            _settings.Set(PlaybackOptions.SegmentActionId(segmentType), _segmentActions[segmentType], false);
+        }
+
+        return UserPages.UpdateConfigurationAsync(Api, userId, configuration);
+    }
+}

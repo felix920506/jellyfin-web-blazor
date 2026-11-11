@@ -1,0 +1,94 @@
+@* Startup wizard, step 4: preferred metadata language and country. Port of apps/wizard/controllers/settings. *@
+@attribute [Route("/wizard/settings")]
+@attribute [Access(AccessLevel.Wizard)]
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject LoadingService Loading
+@inject Globalize Globalize
+
+<Page Id="wizardSettingsPage" Class="standalonePage wizardPage">
+    <div class="padded-left padded-right padded-top">
+        <div class="ui-corner-all ui-shadow wizardContent">
+            <form class="wizardSettingsForm" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                <h1>@Globalize["HeaderPreferredMetadataLanguage"]</h1>
+                <p style="margin:1.5em 0;">@Globalize["DefaultMetadataLangaugeDescription"]</p>
+                <EmbySelect Id="selectLanguage" Required="true" Label="@Globalize["LabelLanguage"]" @bind-Value="_language">
+                    <option value=""></option>
+                    @foreach (var culture in _cultures)
+                    {
+                        <option value="@culture.TwoLetterISOLanguageName">@culture.DisplayName</option>
+                    }
+                </EmbySelect>
+                <EmbySelect Id="selectCountry" Required="true" Label="@Globalize["LabelCountry"]" @bind-Value="_country">
+                    <option value=""></option>
+                    @foreach (var country in _countries)
+                    {
+                        <option value="@country.TwoLetterISORegionName">@country.DisplayName</option>
+                    }
+                </EmbySelect>
+                <br />
+                <div class="wizardNavigation">
+                    <EmbyButton Class="raised button-cancel" OnClick="Router.Back">
+                        <span class="material-icons arrow_back" aria-hidden="true"></span>
+                        <span>@Globalize["Previous"]</span>
+                    </EmbyButton>
+                    <EmbyButton Type="submit" Class="raised button-submit">
+                        <span>@Globalize["Next"]</span>
+                        <span class="material-icons arrow_forward" aria-hidden="true"></span>
+                    </EmbyButton>
+                </div>
+            </form>
+        </div>
+    </div>
+</Page>
+
+@code {
+    // The startup endpoints are marked deprecated in the API description; the wizard still uses them.
+#pragma warning disable CS0618
+    private List<CultureDto> _cultures = [];
+    private List<CountryInfo> _countries = [];
+    private string? _language;
+    private string? _country;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var config = Api.Client.Startup.Configuration.GetAsync();
+            var cultures = Api.Client.Localization.Cultures.GetAsync();
+            var countries = Api.Client.Localization.Countries.GetAsync();
+            await Task.WhenAll(config, cultures, countries);
+
+            _cultures = cultures.Result ?? [];
+            _countries = countries.Result ?? [];
+            _language = config.Result?.PreferredMetadataLanguage ?? string.Empty;
+            _country = config.Result?.MetadataCountryCode ?? string.Empty;
+            Loading.Hide();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The original leaves the loading indicator up when a request fails.
+            AppLog.Warn("Loading the wizard metadata settings failed: " + ex.Message);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var config = await Api.Client.Startup.Configuration.GetAsync() ?? new StartupConfigurationDto();
+            config.PreferredMetadataLanguage = _language;
+            config.MetadataCountryCode = _country;
+            await Api.Client.Startup.Configuration.PostAsync(config);
+            Loading.Hide();
+            Router.Navigate("/wizard/remoteaccess");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("Saving the wizard metadata settings failed: " + ex.Message);
+        }
+    }
+#pragma warning restore CS0618
+}

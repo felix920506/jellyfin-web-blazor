@@ -1,4 +1,4 @@
-@* Sign-in. Port of apps/legacy/controllers/session/login. *@
+@* Sign-in page: public user cards, manual form, Quick Connect, disclaimer. Port of apps/legacy/controllers/session/login. *@
 @attribute [Route("/login")]
 @attribute [Access(AccessLevel.Public)]
 @implements IDisposable
@@ -12,74 +12,286 @@
 @inject ShellState Shell
 @inject WebConfig Config
 @inject Globalize Globalize
+@inject IBrowser Browser
+@inject ISessionInterop Interop
 
 <Page Id="loginPage" Class="mainAnimatedPage standalonePage backdropPage" BackButton="false" data-backdroptype="splashscreen">
     <div class="padded-left padded-right padded-bottom-page margin-auto-y">
-        <form class="manualLoginForm margin-auto-x" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+        <form class="manualLoginForm margin-auto-x @(_manual ? null : "hide")" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
             <div class="padded-left padded-right flex align-items-center justify-content-center">
                 <h1 class="sectionTitle">@Globalize["HeaderPleaseSignIn"]</h1>
             </div>
-            <EmbyInput Id="txtManualName" Required="true" Label="@Globalize["LabelUser"]" Autocomplete="username" autocapitalize="off"
-                       @bind-Value="_name" />
-            <EmbyInput Id="txtManualPassword" Type="password" Label="@Globalize["LabelPassword"]" Autocomplete="current-password"
-                       @bind-Value="_password" />
-            <EmbyCheckbox Class="chkRememberLogin" Label="@Globalize["RememberMe"]" @bind-Value="_remember" />
-            <EmbyButton Type="submit" Class="raised button-submit block" Disabled="_busy"><span>@Globalize["ButtonSignIn"]</span></EmbyButton>
+            <EmbyInput @ref="_nameInput" Id="txtManualName" Required="true" Label="@Globalize["LabelUser"]" Autocomplete="username"
+                       autocapitalize="off" @bind-Value="_username" />
+            <EmbyInput @ref="_passwordInput" Id="txtManualPassword" Type="password" Label="@Globalize["LabelPassword"]"
+                       Autocomplete="current-password" @bind-Value="_password" />
+
+            <EmbyCheckbox LabelClass="checkboxContainer" Class="chkRememberLogin" Label="@Globalize["RememberMe"]" @bind-Value="_remember" />
+
+            <EmbyButton Type="submit" Class="raised button-submit block" Disabled="_busy">
+                <span>@Globalize["ButtonSignIn"]</span>
+            </EmbyButton>
+
+            <div style="margin-top:.5em;">
+                <EmbyButton Class="@("raised cancel block btnCancel" + (_showCancel ? null : " hide"))" OnClick="ShowVisualForm">
+                    <span>@Globalize["ButtonCancel"]</span>
+                </EmbyButton>
+            </div>
         </form>
 
+        <div class="visualLoginForm @(_manual ? "hide" : null)" style="text-align: center;">
+            <h1 style="margin-top:1em;">@Globalize["HeaderPleaseSignIn"]</h1>
+            <div id="divUsers" class="itemsContainer vertical-wrap centered">
+                @foreach (var user in _users)
+                {
+                    var card = user;
+                    <button type="button" class="card squareCard scalableCard squareCard-scalable" @key="card.User.Id" @onclick="() => OnUserClickAsync(card.User)">
+                        <div class="cardBox cardBox-bottompadded">
+                            <div class="cardScalable">
+                                <div class="cardPadder cardPadder-square"></div>
+                                <div class="cardContent" data-haspw="@(HasPassword(card.User) switch { true => "true", false => "false", _ => "undefined" })"
+                                     data-username="@card.User.Name" data-userid="@card.User.Id?.ToString("N")">
+                                    @if (card.ImageUrl is not null)
+                                    {
+                                        <div class="cardImageContainer coveredImage" style="background-image:url('@card.ImageUrl');"></div>
+                                    }
+                                    else
+                                    {
+                                        <div class="cardImage flex align-items-center justify-content-center @card.BackgroundClass">
+                                            <span class="material-icons cardImageIcon person" aria-hidden="true"></span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                            <div class="cardFooter visualCardBox-cardFooter">
+                                <div class="cardText singleCardText cardTextCentered">@card.User.Name</div>
+                            </div>
+                        </div>
+                    </button>
+                }
+            </div>
+        </div>
+
         <div class="readOnlyContent" style="margin: .5em auto 1em;">
-            @if (Config.Multiserver)
-            {
-                <EmbyButton Class="raised block btnSelectServer" OnClick="Router.ShowSelectServer"><span>@Globalize["ButtonChangeServer"]</span></EmbyButton>
-            }
+            <EmbyButton Class="@("raised cancel block btnManual" + (_manual ? " hide" : null))" OnClick="OnManualClick">
+                <span>@Globalize["ButtonManualLogin"]</span>
+            </EmbyButton>
+
+            <EmbyButton Class="@("raised cancel block btnQuick" + (_quickConnectEnabled ? null : " hide"))" OnClick="AuthenticateQuickConnectAsync">
+                <span>@Globalize["ButtonUseQuickConnect"]</span>
+            </EmbyButton>
+
+            <EmbyButton Class="raised cancel block btnForgotPassword" OnClick="@(() => Router.Navigate("/forgotpassword"))">
+                <span>@Globalize["ButtonForgotPassword"]</span>
+            </EmbyButton>
+
+            <EmbyButton Class="@("raised block btnSelectServer" + (Config.Multiserver ? null : " hide"))" OnClick="Router.ShowSelectServer">
+                <span>@Globalize["ButtonChangeServer"]</span>
+            </EmbyButton>
+
+            <div class="loginDisclaimerContainer">
+                <div class="loginDisclaimer">@((MarkupString)_disclaimerHtml)</div>
+            </div>
         </div>
     </div>
 </Page>
 
 @code {
-    private string? _name;
+    private const int QuickConnectPollMilliseconds = 5000;
+
+    private readonly CancellationTokenSource _disposed = new();
+    private List<UserCard> _users = [];
+    private EmbyInput? _nameInput;
+    private EmbyInput? _passwordInput;
+    private string? _username;
     private string? _password;
+    private string _disclaimerHtml = string.Empty;
     private bool _remember = true;
     private bool _busy;
+    private bool _manual;
+    private bool _showCancel;
+    private bool _quickConnectEnabled;
+    private bool _focusName;
+    private bool _focusPassword;
 
-    /// <summary>Where to go after signing in (an app URL such as "/details?id=...").</summary>
+    /// <summary>Where to go after signing in (set by the route guard).</summary>
     [Parameter]
     public string? Url { get; set; }
 
+    /// <summary>The server to sign in to. The port has one active server, which is always the one shown.</summary>
     [Parameter]
     public string? ServerId { get; set; }
 
-    protected override void OnInitialized()
+    /// <summary>Delay between two Quick Connect state requests; tests shorten it.</summary>
+    public static TimeSpan QuickConnectPollInterval { get; set; } = TimeSpan.FromMilliseconds(QuickConnectPollMilliseconds);
+
+    private string TargetUrl => string.IsNullOrEmpty(Url) ? "/home" : Url;
+
+    protected override Task OnInitializedAsync()
     {
         _remember = Settings.EnableAutoLogin;
         Shell.SetTransparentHeader(true);
+        Loading.Show();
+        return Task.WhenAll(LoadQuickConnectAsync(), LoadUsersAsync(), LoadDisclaimerAsync());
     }
 
-    public void Dispose() => Shell.SetTransparentHeader(false);
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var input = _focusPassword ? _passwordInput : _focusName ? _nameInput : null;
+        _focusName = _focusPassword = false;
+        if (input is not null)
+        {
+            try
+            {
+                await input.Element.FocusAsync();
+            }
+            catch (Exception)
+            {
+                // The element is gone (navigated away); nothing to focus.
+            }
+        }
+    }
 
-    private async Task SubmitAsync()
+    public void Dispose()
+    {
+        _disposed.Cancel();
+        Shell.SetTransparentHeader(false);
+    }
+
+    private async Task LoadQuickConnectAsync()
+    {
+        try
+        {
+            if (await Api.Client.QuickConnect.Enabled.GetAsync() == true)
+            {
+                _quickConnectEnabled = true;
+                StateHasChanged();
+            }
+        }
+        catch (Exception)
+        {
+            // Failed to get the Quick Connect status: the button stays hidden.
+        }
+    }
+
+    private async Task LoadUsersAsync()
+    {
+        try
+        {
+            var users = await Api.Client.Users.Public.GetAsync() ?? [];
+            if (users.Count > 0)
+            {
+                var dpr = Browser.Environment.DevicePixelRatio;
+                var width = (int)Math.Round(300 * (dpr > 0 ? dpr : 1), MidpointRounding.AwayFromZero);
+                _users = users.Select(user => new UserCard(
+                    user,
+                    user is { Id: { } id, PrimaryImageTag: { Length: > 0 } tag }
+                        ? Api.GetUrl($"Users/{id:N}/Images/Primary", ("tag", tag), ("width", width))
+                        : null,
+                    SessionUi.DefaultBackgroundClass())).ToList();
+                ShowVisualForm();
+            }
+            else
+            {
+                _username = string.Empty;
+                ShowManualForm(showCancel: false, focusPassword: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"[LoginPage] loading public users failed: {ex.Message}");
+        }
+        finally
+        {
+            Loading.Hide();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadDisclaimerAsync()
+    {
+        try
+        {
+            var options = await Api.Client.Branding.Configuration.GetAsync();
+            var disclaimer = options?.LoginDisclaimer;
+            if (!string.IsNullOrEmpty(disclaimer))
+            {
+                _disclaimerHtml = await Interop.RenderDisclaimerAsync(disclaimer);
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"[LoginPage] loading the login disclaimer failed: {ex.Message}");
+        }
+    }
+
+    private void ShowManualForm(bool showCancel, bool focusPassword)
+    {
+        _remember = Settings.EnableAutoLogin;
+        _manual = true;
+        _showCancel = showCancel;
+        _focusPassword = focusPassword;
+        _focusName = !focusPassword;
+    }
+
+    private void ShowVisualForm()
+    {
+        _manual = false;
+    }
+
+    private void OnManualClick()
+    {
+        _username = string.Empty;
+        ShowManualForm(showCancel: true, focusPassword: false);
+    }
+
+#pragma warning disable CS0618 // HasPassword is deprecated in the API but the original still reads it.
+    private static bool? HasPassword(UserDto user) => user.HasPassword;
+#pragma warning restore CS0618
+
+    private Task OnUserClickAsync(UserDto user)
+    {
+        if (HasPassword(user) == false)
+        {
+            return AuthenticateUserByNameAsync(user.Name, string.Empty);
+        }
+
+        _username = user.Name;
+        _password = string.Empty;
+        ShowManualForm(showCancel: true, focusPassword: true);
+        return Task.CompletedTask;
+    }
+
+    private Task SubmitAsync()
     {
         if (_busy)
         {
-            return;
+            return Task.CompletedTask;
         }
 
+        Settings.EnableAutoLogin = _remember;
+        return AuthenticateUserByNameAsync(_username, _password);
+    }
+
+    private async Task AuthenticateUserByNameAsync(string? username, string? password)
+    {
         _busy = true;
         Loading.Show();
-        Settings.EnableAutoLogin = _remember;
         try
         {
             var result = await Api.Client.Users.AuthenticateByName.PostAsync(new AuthenticateUserByName
             {
-                Username = _name ?? string.Empty,
-                Pw = _password ?? string.Empty
+                Username = username ?? string.Empty,
+                Pw = password ?? string.Empty
             });
-            await Connections.OnAuthenticatedAsync(result!);
-            Router.Navigate(string.IsNullOrEmpty(Url) ? "/home" : Url);
+            Loading.Hide();
+            await OnLoginSuccessfulAsync(result!);
         }
         catch (Exception ex)
         {
             _password = string.Empty;
+            Loading.Hide();
             switch (ApiErrors.StatusOf(ex))
             {
                 case System.Net.HttpStatusCode.Unauthorized:
@@ -95,8 +307,73 @@
         }
         finally
         {
-            Loading.Hide();
             _busy = false;
         }
     }
+
+    private async Task AuthenticateQuickConnectAsync()
+    {
+        QuickConnectResult? data;
+        try
+        {
+            data = await Api.Client.QuickConnect.Initiate.PostAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"[LoginPage] Quick Connect error: {ex.Message}");
+            await Dialogs.AlertAsync(Globalize["QuickConnectNotActive"], Globalize["HeaderError"]);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(data?.Secret) || string.IsNullOrEmpty(data.Code))
+        {
+            AppLog.Warn("[LoginPage] malformed Quick Connect response");
+            return;
+        }
+
+        _ = Dialogs.AlertAsync(Globalize.Translate("QuickConnectAuthorizeCode", data.Code), Globalize["QuickConnect"]);
+        var dialog = Dialogs.Dialogs[^1];
+        _ = PollQuickConnectAsync(data.Secret, dialog);
+    }
+
+    // The original keeps polling after the code dialog was closed, until the page goes away.
+    private async Task PollQuickConnectAsync(string secret, DialogInstance dialog)
+    {
+        var cancellation = _disposed.Token;
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(QuickConnectPollInterval, cancellation);
+                var state = await Api.Client.QuickConnect.Connect.GetAsync(request => request.QueryParameters.Secret = secret, cancellation);
+                if (state?.Authenticated != true)
+                {
+                    continue;
+                }
+
+                dialog.Cancel();
+                var result = await Api.Client.Users.AuthenticateWithQuickConnect.PostAsync(new QuickConnectDto { Secret = secret }, cancellationToken: cancellation);
+                await InvokeAsync(() => OnLoginSuccessfulAsync(result!));
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // Left the page.
+        }
+        catch (Exception ex)
+        {
+            dialog.Cancel();
+            AppLog.Warn($"[LoginPage] unable to login with Quick Connect: {ex.Message}");
+            await InvokeAsync(() => Dialogs.AlertAsync(Globalize["QuickConnectDeactivated"], Globalize["HeaderError"]));
+        }
+    }
+
+    private async Task OnLoginSuccessfulAsync(AuthenticationResult result)
+    {
+        await Connections.OnAuthenticatedAsync(result);
+        Router.Navigate(TargetUrl);
+    }
+
+    private sealed record UserCard(UserDto User, string? ImageUrl, string BackgroundClass);
 }

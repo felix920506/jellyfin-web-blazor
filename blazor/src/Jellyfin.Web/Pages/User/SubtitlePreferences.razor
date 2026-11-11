@@ -1,0 +1,440 @@
+@* Settings: subtitles. Port of controllers/user/subtitles and components/subtitlesettings. *@
+@attribute [Route("/mypreferencessubtitles")]
+@attribute [Access(AccessLevel.User)]
+@implements IDisposable
+@using System.Globalization
+@inject JellyfinApi Api
+@inject UserSettings CurrentSettings
+@inject AppSettings AppSettings
+@inject AppHost Host
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<Page Id="homeScreenPreferencesPage" Class="libraryPage userPreferencesPage noSecondaryNavPage" Title="@Globalize["Subtitles"]" BackButton="true">
+    <div class="settingsContainer padded-left padded-right padded-bottom-page subtitlesettings">
+        <form style="margin:0 auto;" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+            <div class="verticalSection">
+                <h2 class="sectionTitle">@Globalize["Subtitles"]</h2>
+
+                <PrefSelect Id="selectSubtitleLanguage" Label="@Globalize["LabelPreferredSubtitleLanguage"]" Options="_languages" @bind-Value="_subtitleLanguage" />
+
+                <PrefSelect Id="selectSubtitlePlaybackMode" Label="@Globalize["LabelSubtitlePlaybackMode"]" Options="PlaybackModeOptions()" @bind-Value="_subtitleMode">
+                    <div class="@("fieldDescription subtitlesDefaultHelp subtitlesHelp" + Hide(_subtitleMode != "Default"))">@Globalize["DefaultSubtitlesHelp"]</div>
+                    <div class="@("fieldDescription subtitlesSmartHelp subtitlesHelp" + Hide(_subtitleMode != "Smart"))">@Globalize["SmartSubtitlesHelp"]</div>
+                    <div class="@("fieldDescription subtitlesAlwaysHelp subtitlesHelp" + Hide(_subtitleMode != "Always"))">@Globalize["AlwaysPlaySubtitlesHelp"]</div>
+                    <div class="@("fieldDescription subtitlesOnlyForcedHelp subtitlesHelp" + Hide(_subtitleMode != "OnlyForced"))">@Globalize["OnlyForcedSubtitlesHelp"]</div>
+                    <div class="@("fieldDescription subtitlesNoneHelp subtitlesHelp" + Hide(_subtitleMode != "None"))">@Globalize["NoSubtitlesHelp"]</div>
+                </PrefSelect>
+
+                <PrefSelect ContainerClass="@("fldBurnIn" + Hide(!_showBurnIn))" Id="selectSubtitleBurnIn" Label="@Globalize["LabelBurnSubtitles"]" Options="BurnInOptions()" @bind-Value="_burnIn">
+                    <div class="fieldDescription">@Globalize["BurnSubtitlesHelp"]</div>
+                </PrefSelect>
+
+                @* The PGS option is only available while the burn-in mode is "Auto" (empty). *@
+                <PrefCheckbox ContainerClass="@("checkboxContainer checkboxContainer-withDescription fldRenderPgs" + Hide(!RenderPgsVisible))" Id="chkSubtitleRenderPgs"
+                              Label="@Globalize["RenderPgsSubtitle"]" Description="@Globalize["RenderPgsSubtitleHelp"]" @bind-Value="_renderPgs" />
+
+                <PrefSelect ContainerClass="@("fldBitmapSubtitleAspectMode" + Hide(!RenderPgsVisible || !_renderPgs))" Id="selectBitmapSubtitleAspectMode"
+                            Label="@Globalize["LabelBitmapSubtitleAspectMode"]" Options="AspectModeOptions()" @bind-Value="_aspectMode">
+                    <div class="fieldDescription">@Globalize["BitmapSubtitleAspectModeHelp"]</div>
+                </PrefSelect>
+            </div>
+
+            <PrefCheckbox Id="chkAlwaysBurnInSubtitleWhenTranscoding" Label="@Globalize["AlwaysBurnInSubtitleWhenTranscoding"]"
+                          Description="@Globalize["AlwaysBurnInSubtitleWhenTranscodingHelp"]" @bind-Value="_alwaysBurnIn" />
+
+            <div class="verticalSection subtitleAppearanceSection">
+                <h2 class="sectionTitle">@Globalize["HeaderSubtitleAppearance"]</h2>
+
+                <div class="@("subtitleappearance-fullpreview" + (_fullPreviewVisible ? null : " subtitleappearance-fullpreview-hide"))">
+                    <div class="subtitleappearance-fullpreview-window" style="@WindowStyle(false)">
+                        <div class="subtitleappearance-fullpreview-text" style="@TextStyle(false)">
+                            @Globalize["HeaderSubtitleAppearance"]
+                            <br />
+                            @Globalize["TheseSettingsAffectSubtitlesOnThisDevice"]
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin: 2em 0 2em;">
+                    <div class="subtitleappearance-preview flex align-items-center justify-content-center" style="margin:2em 0;padding:1.6em;color:black;background:linear-gradient(140deg,#aa5cc3,#00a4dc);">
+                        <div class="subtitleappearance-preview-window flex align-items-center justify-content-center" style="width: 90%; padding: .25em;">
+                            <div class="subtitleappearance-preview-text flex align-items-center justify-content-center" style="@TextStyle(true)">
+                                @Globalize["TheseSettingsAffectSubtitlesOnThisDevice"]
+                            </div>
+                        </div>
+                    </div>
+                    <div class="fieldDescription">@Globalize["SubtitleAppearanceSettingsDisclaimer"]</div>
+                    <div class="fieldDescription">@Globalize["SubtitleAppearanceSettingsAlsoPassedToCastDevices"]</div>
+                </div>
+
+                <PrefSelect Id="selectSubtitleStyling" Label="@Globalize["LabelSubtitleStyling"]" Options="StylingOptions()" @bind-Value="_styling">
+                    <div class="@("fieldDescription subtitleStylingAutoHelp subtitleStylingHelp" + Hide(_styling != "Auto"))">@Globalize["AutoSubtitleStylingHelp"]</div>
+                    <div class="@("fieldDescription subtitleStylingCustomHelp subtitleStylingHelp" + Hide(_styling != "Custom"))">@Globalize["CustomSubtitleStylingHelp"]</div>
+                    <div class="@("fieldDescription subtitleStylingNativeHelp subtitleStylingHelp" + Hide(_styling != "Native"))">@Globalize["NativeSubtitleStylingHelp"]</div>
+                </PrefSelect>
+
+                <PrefSelect Id="selectTextSize" Label="@Globalize["LabelTextSize"]" Options="TextSizeOptions()" @bind-Value="_textSize" />
+                <PrefSelect Id="selectTextWeight" Label="@Globalize["LabelTextWeight"]" Options="TextWeightOptions()" @bind-Value="_textWeight" />
+                <PrefSelect Id="selectFont" Label="@Globalize["LabelFont"]" Options="FontOptions()" @bind-Value="_font" />
+
+                <EmbyInput ContainerClass="hide" Id="inputTextBackground" Label="@Globalize["LabelTextBackgroundColor"]" @bind-Value="_textBackground" />
+
+                <div class="selectContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="inputTextColor">@Globalize["LabelTextColor"]</label>
+                    <input id="inputTextColor" class="emby-input" type="color" value="@_textColor" @onchange="args => _textColor = args.Value?.ToString()" />
+                </div>
+
+                @* The colour list replaces the colour picker in the TV layout only. *@
+                <PrefSelect ContainerClass="hide" Id="selectTextColor" Label="@Globalize["LabelTextColor"]" Options="TextColorOptions()" @bind-Value="_textColor" />
+
+                <PrefSelect Id="selectDropShadow" Label="@Globalize["LabelDropShadow"]" Options="DropShadowOptions()" @bind-Value="_dropShadow" />
+
+                <div class="sliderContainer-settings">
+                    <label class="sliderLabel" for="sliderVerticalPosition">@Globalize["LabelSubtitleVerticalPosition"]</label>
+                    <div class="sliderContainer mdl-slider-container">
+                        <input id="sliderVerticalPosition" type="range" min="@MinPosition" max="@MaxPosition" value="@_verticalPosition" data-embyslider="true"
+                               class="@("mdl-slider mdl-js-slider" + (Host.Browser.Mobile ? null : " mdl-slider-hoverthumb"))"
+                               @oninput="OnPositionInput" @onpointerenter="() => ShowFullPreview(true)" @onpointerleave="() => HideFullPreview(true)" />
+                        <div class="mdl-slider-background-flex-container">
+                            <div class="mdl-slider-background-flex">
+                                <div class="mdl-slider-background-flex-inner">
+                                    <div class="mdl-slider-background-upper"></div>
+                                    <div class="mdl-slider-background-lower" style="@("width:" + PositionPercent + "%;")"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="sliderBubbleTrack"><div class="sliderBubble hide"></div></div>
+                    </div>
+                    <div class="fieldDescription">@Globalize["SubtitleVerticalPositionHelp"]</div>
+                </div>
+
+                <div class="checkboxContainer">
+                    <EmbyCheckbox Class="chkPreview" Label="@Globalize["Preview"]" Value="_previewChecked" ValueChanged="OnPreviewChanged" />
+                </div>
+            </div>
+
+            <EmbyButton Type="submit" Class="raised button-submit block btnSave">
+                <span>@Globalize["Save"]</span>
+            </EmbyButton>
+        </form>
+    </div>
+</Page>
+
+@code {
+    private const int MinPosition = -16;
+    private const int MaxPosition = 16;
+    private static readonly TimeSpan PreviewDelay = TimeSpan.FromMilliseconds(1000);
+
+    private Guid? _userId;
+    private UserSettings _settings = default!;
+    private bool _loaded;
+    private bool _showBurnIn;
+    private List<SelectOption> _languages = [];
+
+    private string? _subtitleLanguage = string.Empty;
+    private string? _subtitleMode = "Default";
+    private string? _burnIn = string.Empty;
+    private bool _renderPgs;
+    private string? _aspectMode = "stretch";
+    private bool _alwaysBurnIn;
+    private string? _styling = "Auto";
+    private string? _textSize = string.Empty;
+    private string? _textWeight = "normal";
+    private string? _font = string.Empty;
+    private string? _textBackground = "transparent";
+    private string? _textColor = "#ffffff";
+    private string? _dropShadow = string.Empty;
+    private string _verticalPosition = "0";
+
+    // The full screen preview: shown while something holds it (the preview checkbox, the pointer
+    // over the slider), and for a moment after the slider moved.
+    private bool _fullPreviewVisible;
+    private bool _previewChecked;
+    private int _fullPreviewHolders;
+    private CancellationTokenSource? _previewTimer;
+
+    /// <summary>The user whose settings are edited (administrators may edit other users).</summary>
+    [Parameter]
+    public string? UserId { get; set; }
+
+    private bool RenderPgsVisible => string.IsNullOrEmpty(_burnIn);
+
+    private string PositionPercent
+    {
+        get
+        {
+            var value = double.TryParse(_verticalPosition, NumberStyles.Float, CultureInfo.InvariantCulture, out var position) ? position : 0;
+            var fraction = Math.Clamp((value - MinPosition) / (MaxPosition - MinPosition), 0, 1);
+            return (fraction * 100).ToString("0.###", CultureInfo.InvariantCulture);
+        }
+    }
+
+    private static string? Hide(bool hidden) => hidden ? " hide" : null;
+
+    public void Dispose()
+    {
+        _previewTimer?.Cancel();
+        _previewTimer?.Dispose();
+        _previewTimer = null;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId = UserPages.ResolveUserId(Api, UserId);
+        _settings = _userId is { } id ? UserPages.SettingsFor(id, Api, CurrentSettings, AppSettings) : CurrentSettings;
+        _languages = LanguageOptions([]);
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            var user = await UserPages.GetUserAsync(Api, userId);
+            await _settings.SetUserAsync(userId);
+            if (user is null)
+            {
+                return;
+            }
+
+            var appearance = SubtitleAppearance.Load(_settings);
+            var cultures = await Api.Client.Localization.Cultures.GetAsync() ?? [];
+            LoadForm(user, appearance, cultures);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The original leaves the loading indicator up when its data cannot be loaded.
+            AppLog.Warn("[SubtitleSettings] loading failed: " + ex.Message);
+            return;
+        }
+
+        _loaded = true;
+        Loading.Hide();
+    }
+
+    private void LoadForm(UserDto user, SubtitleAppearance appearance, IEnumerable<CultureDto> cultures)
+    {
+        // AppFeature.SubtitleBurnIn is supported by every browser.
+        _showBurnIn = user.Policy?.EnableVideoPlaybackTranscoding == true;
+
+        _languages = LanguageOptions(cultures);
+        _subtitleLanguage = user.Configuration?.SubtitleLanguagePreference ?? string.Empty;
+        _subtitleMode = user.Configuration?.SubtitleMode.ToApiString() ?? string.Empty;
+
+        _styling = OrDefault(appearance.SubtitleStyling, "Auto");
+        _textSize = appearance.TextSize ?? string.Empty;
+        _textWeight = OrDefault(appearance.TextWeight, "normal");
+        _dropShadow = appearance.DropShadow ?? string.Empty;
+        _textBackground = OrDefault(appearance.TextBackground, "transparent");
+        _textColor = OrDefault(appearance.TextColor, "#ffffff");
+        _font = appearance.Font ?? string.Empty;
+        _verticalPosition = (appearance.VerticalPositionValue ?? 0).ToString(CultureInfo.InvariantCulture);
+        _aspectMode = OrDefault(appearance.AspectMode, "stretch");
+
+        _burnIn = AppSettings.Get("subtitleburnin") ?? string.Empty;
+        _renderPgs = AppSettings.Get("subtitlerenderpgs") == "true";
+        _alwaysBurnIn = AppSettings.GetBool("alwaysBurnInSubtitleWhenTranscoding", false);
+    }
+
+    private static string OrDefault(string? value, string fallback) => string.IsNullOrEmpty(value) ? fallback : value;
+
+    /// <summary>The appearance the form describes (getSubtitleAppearanceObject), over the stored one.</summary>
+    private SubtitleAppearance ReadAppearance(SubtitleAppearance appearance)
+    {
+        appearance.AspectMode = _aspectMode ?? string.Empty;
+        appearance.SubtitleStyling = _styling ?? string.Empty;
+        appearance.TextSize = _textSize ?? string.Empty;
+        appearance.TextWeight = _textWeight ?? string.Empty;
+        appearance.DropShadow = _dropShadow ?? string.Empty;
+        appearance.Font = _font ?? string.Empty;
+        appearance.TextBackground = _textBackground ?? string.Empty;
+        appearance.TextColor = _textColor ?? string.Empty;
+        appearance.VerticalPosition = _verticalPosition;
+        return appearance;
+    }
+
+    private string? TextStyle(bool preview) =>
+        _loaded ? SubtitleAppearance.ToCss(ReadAppearance(SubtitleAppearance.Parse(null)).TextStyles(preview)) : null;
+
+    private string? WindowStyle(bool preview) =>
+        _loaded ? SubtitleAppearance.ToCss(ReadAppearance(SubtitleAppearance.Parse(null)).WindowStyles(preview)) : null;
+
+    private void OnPositionInput(ChangeEventArgs args)
+    {
+        _verticalPosition = args.Value?.ToString() ?? "0";
+        ShowFullPreview(false);
+    }
+
+    private void OnPreviewChanged(bool value)
+    {
+        _previewChecked = value;
+        if (value)
+        {
+            ShowFullPreview(true);
+        }
+        else
+        {
+            HideFullPreview(true);
+        }
+    }
+
+    private void ShowFullPreview(bool persistent)
+    {
+        CancelPreviewTimer();
+        _fullPreviewVisible = true;
+        if (persistent)
+        {
+            _fullPreviewHolders++;
+        }
+
+        if (_fullPreviewHolders == 0)
+        {
+            var timer = _previewTimer = new CancellationTokenSource();
+            _ = HideAfterDelayAsync(timer.Token);
+        }
+    }
+
+    private void HideFullPreview(bool persistent)
+    {
+        CancelPreviewTimer();
+        if (persistent)
+        {
+            _fullPreviewHolders--;
+        }
+
+        if (_fullPreviewHolders == 0)
+        {
+            _fullPreviewVisible = false;
+        }
+    }
+
+    private async Task HideAfterDelayAsync(CancellationToken cancellation)
+    {
+        try
+        {
+            await Task.Delay(PreviewDelay, cancellation);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        HideFullPreview(false);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void CancelPreviewTimer()
+    {
+        _previewTimer?.Cancel();
+        _previewTimer?.Dispose();
+        _previewTimer = null;
+    }
+
+    private List<SelectOption> LanguageOptions(IEnumerable<CultureDto> cultures) =>
+    [
+        new(string.Empty, Globalize["AnyLanguage"]),
+        .. cultures.Select(culture => new SelectOption(culture.ThreeLetterISOLanguageName ?? string.Empty, culture.DisplayName ?? string.Empty))
+    ];
+
+    private List<SelectOption> PlaybackModeOptions() =>
+    [
+        new("Default", Globalize["Default"]), new("Smart", Globalize["Smart"]), new("OnlyForced", Globalize["OnlyForcedSubtitles"]),
+        new("Always", Globalize["AlwaysPlaySubtitles"]), new("None", Globalize["None"])
+    ];
+
+    private List<SelectOption> BurnInOptions() =>
+    [
+        new(string.Empty, Globalize["Auto"]), new("onlyimageformats", Globalize["OnlyImageFormats"]),
+        new("allcomplexformats", Globalize["AllComplexFormats"]), new("all", Globalize["All"])
+    ];
+
+    private List<SelectOption> AspectModeOptions() =>
+    [
+        new("stretch", Globalize["BitmapSubtitleAspectModeStretch"]), new("contain", Globalize["BitmapSubtitleAspectModeContain"]),
+        new("cover", Globalize["BitmapSubtitleAspectModeCover"])
+    ];
+
+    private List<SelectOption> StylingOptions() =>
+        [new("Auto", Globalize["Auto"]), new("Custom", Globalize["Custom"]), new("Native", Globalize["Native"])];
+
+    private List<SelectOption> TextSizeOptions() =>
+    [
+        new("smaller", Globalize["Smaller"]), new("small", Globalize["Small"]), new(string.Empty, Globalize["Normal"]),
+        new("large", Globalize["Large"]), new("larger", Globalize["Larger"]), new("extralarge", Globalize["ExtraLarge"])
+    ];
+
+    private List<SelectOption> TextWeightOptions() => [new("normal", Globalize["Normal"]), new("bold", Globalize["Bold"])];
+
+    private List<SelectOption> FontOptions() =>
+    [
+        new(string.Empty, Globalize["Default"]), new("typewriter", Globalize["Typewriter"]), new("print", Globalize["Print"]),
+        new("console", Globalize["Console"]), new("cursive", Globalize["Cursive"]), new("casual", Globalize["Casual"]),
+        new("smallcaps", Globalize["SmallCaps"])
+    ];
+
+    private List<SelectOption> TextColorOptions() =>
+    [
+        new("#ffffff", Globalize["SubtitleWhite"]), new("#d3d3d3", Globalize["SubtitleLightGray"]), new("#808080", Globalize["SubtitleGray"]),
+        new("#ffff00", Globalize["SubtitleYellow"]), new("#008000", Globalize["SubtitleGreen"]), new("#00ffff", Globalize["SubtitleCyan"]),
+        new("#0000ff", Globalize["SubtitleBlue"]), new("#ff00ff", Globalize["SubtitleMagenta"]), new("#ff0000", Globalize["SubtitleRed"]),
+        new("#000000", Globalize["SubtitleBlack"])
+    ];
+
+    private List<SelectOption> DropShadowOptions() =>
+    [
+        new("none", Globalize["None"]), new("raised", Globalize["Raised"]), new("depressed", Globalize["Depressed"]),
+        new("uniform", Globalize["Uniform"]), new(string.Empty, Globalize["DropShadow"])
+    ];
+
+    private async Task SaveAsync()
+    {
+        if (_userId is not { } userId)
+        {
+            return;
+        }
+
+        await _settings.SetUserAsync(userId);
+        Loading.Show();
+
+        AppSettings.Set("subtitleburnin", _burnIn ?? string.Empty);
+        AppSettings.Set("subtitlerenderpgs", _renderPgs);
+        AppSettings.Set("alwaysBurnInSubtitleWhenTranscoding", _alwaysBurnIn);
+
+        UserDto? user;
+        try
+        {
+            user = await UserPages.GetUserAsync(Api, userId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[SubtitleSettings] loading the user failed: " + ex.Message);
+            return;
+        }
+
+        if (user is null)
+        {
+            return;
+        }
+
+        try
+        {
+            ReadAppearance(SubtitleAppearance.Load(_settings)).Save(_settings);
+
+            var configuration = user.Configuration ??= new UserConfiguration();
+            configuration.SubtitleLanguagePreference = _subtitleLanguage ?? string.Empty;
+            configuration.SubtitleMode = EnumText.Parse<UserConfiguration_SubtitleMode>(_subtitleMode);
+            await UserPages.UpdateConfigurationAsync(Api, userId, configuration);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Loading.Hide();
+            return;
+        }
+
+        Loading.Hide();
+        Toasts.Show(Globalize["SettingsSaved"]);
+    }
+}

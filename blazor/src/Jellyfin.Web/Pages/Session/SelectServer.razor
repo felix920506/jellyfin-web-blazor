@@ -1,0 +1,158 @@
+@* The saved servers: connect to one, delete one, add another. Port of apps/legacy/controllers/session/selectServer. *@
+@attribute [Route("/selectserver")]
+@attribute [Access(AccessLevel.Public)]
+@implements IDisposable
+@inject ServerConnections Connections
+@inject AppSettings Settings
+@inject AppRouter Router
+@inject AppDialogs Dialogs
+@inject LoadingService Loading
+@inject ShellState Shell
+@inject Globalize Globalize
+
+<Page Id="selectServerPage" Class="@PageClass">
+    <div class="margin-auto-y padded-bottom-page">
+        <div class="verticalSection flex-shrink-zero w-100 flex flex-direction-column">
+            <div class="padded-left padded-right flex align-items-center justify-content-center">
+                <h1 class="sectionTitle sectionTitle-cards">@Globalize["SelectServer"]</h1>
+            </div>
+            <div class="padded-top padded-bottom-focusscale flex-grow flex" data-horizontal="true" data-centerfocus="card">
+                <div class="itemsContainer scrollSlider focuscontainer-x servers flex-grow" style="display: block; text-align: center;"
+                     data-hovermenu="false" data-multiselect="false">
+                    @foreach (var card in _servers)
+                    {
+                        var server = card.Server;
+                        <button raised class="card overflowSquareCard loginSquareCard scalableCard overflowSquareCard-scalable" style="display:inline-block;"
+                                data-id="@server.Id" data-url="" data-cardtype="" @key="server.Id" @onclick="() => OnServerClickAsync(server)">
+                            <div class="cardBox">
+                                <div class="cardScalable">
+                                    <div class="cardPadder cardPadder-square"></div>
+                                    <div class="cardContent">
+                                        <div class="cardImageContainer coveredImage @card.BackgroundClass">
+                                            <span class="cardImageIcon material-icons storage" aria-hidden="true"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="cardFooter">
+                                    <div class="cardText cardTextCentered">@server.Name</div>
+                                </div>
+                            </div>
+                        </button>
+                    }
+                    @if (_loaded && _servers.Count == 0)
+                    {
+                        <p>@Globalize["MessageNoServersAvailable"]</p>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="padded-top padded-left padded-right flex flex-shrink-zero justify-content-center verticalSection flex-wrap-wrap margin-auto-x">
+            <LinkButton Href="#/addserver" Class="raised cancel btnAddServer flex-shrink-zero" Style="margin: .25em;">
+                <span>@Globalize["ButtonAddServer"]</span>
+            </LinkButton>
+        </div>
+    </div>
+</Page>
+
+@code {
+    private List<ServerCard> _servers = [];
+    private bool _loaded;
+
+    /// <summary>"1" shows the page inside the library chrome instead of standalone.</summary>
+    [Parameter]
+    public string? ShowUser { get; set; }
+
+    // Port of updatePageStyle.
+    private string PageClass => ShowUser == "1"
+        ? "mainAnimatedPage pageContainer libraryPage noSecondaryNavPage"
+        : "mainAnimatedPage pageContainer standalonePage";
+
+    protected override void OnInitialized()
+    {
+        Shell.SetTransparentHeader(true);
+        LoadServers();
+    }
+
+    public void Dispose() => Shell.SetTransparentHeader(false);
+
+    private void LoadServers()
+    {
+        _servers = Connections.GetAvailableServers()
+            .Select(server => new ServerCard(server, SessionUi.DefaultBackgroundClass()))
+            .ToList();
+        _loaded = true;
+    }
+
+    private async Task OnServerClickAsync(ServerInfo server)
+    {
+        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        {
+            Title = server.Name,
+            Items =
+            [
+                new ActionSheetItem { Id = "connect", Name = Globalize["Connect"] },
+                new ActionSheetItem { Id = "delete", Name = Globalize["Delete"] }
+            ]
+        });
+
+        switch (id)
+        {
+            case "connect":
+                await ConnectToServerAsync(server);
+                break;
+            case "delete":
+                await DeleteServerAsync(server);
+                break;
+        }
+    }
+
+    private async Task ConnectToServerAsync(ServerInfo server)
+    {
+        Loading.Show();
+        ConnectResult result;
+        try
+        {
+            result = await Connections.ConnectToServerAsync(server, Settings.EnableAutoLogin);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+
+        switch (result.State)
+        {
+            case ConnectionState.SignedIn:
+                Router.GoHome();
+                break;
+            case ConnectionState.ServerSignIn:
+                Router.Navigate("/login?serverid=" + (result.Server?.Id ?? server.Id));
+                break;
+            case ConnectionState.ServerUpdateNeeded:
+                await Dialogs.AlertHtmlAsync(
+                    Globalize,
+                    Globalize.Translate("ServerUpdateNeeded", "<a href=\"https://github.com/jellyfin/jellyfin\">https://github.com/jellyfin/jellyfin</a>"));
+                break;
+            default:
+                await Dialogs.AlertAsync(Globalize["MessageUnableToConnectToServer"]);
+                break;
+        }
+    }
+
+    private async Task DeleteServerAsync(ServerInfo server)
+    {
+        var confirmed = await Dialogs.ConfirmAsync(
+            Globalize["DeleteServerConfirmation"],
+            Globalize.Translate("DeleteName", server.Name),
+            Globalize["Delete"],
+            destructive: true);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        Connections.DeleteServer(server.Id);
+        LoadServers();
+    }
+
+    private sealed record ServerCard(ServerInfo Server, string BackgroundClass);
+}
