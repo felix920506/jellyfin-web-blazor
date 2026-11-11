@@ -1,0 +1,17 @@
+@*
+    The Favorites tab: one row per kind of item, each hidden until it has favorites.
+    Port of apps/legacy/controllers/favorites.js.
+*@
+@inject ItemQueries Queries
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject Globalize Globalize
+
+<div class="sections">
+    @foreach (var section in HomeSections.FavoriteSections)
+    {
+        <ItemsSection @key="section.Types" Class="@(section.ShowsTitle ? null : "verticalSection-extrabottompadding")"
+                      Title="@Globalize[section.NameKey]" Href="@Router.GetListUrl(new ListRouteOptions { ItemTypes = section.Types, IsFavorite = true })"
+                      Monitor="markfavorite" Fetch="() => HomeSections.GetFavoritesAsync(Queries, Api, section)" CardOptions="section.Options" />
+    }
+</div>

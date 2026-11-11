@@ -1,0 +1,87 @@
+@*
+    A titled section with a horizontal row of cards (the home screen's sections; also "More like
+    this" and similar rows). Hidden until it has items, as the original's sections are.
+
+        <ItemsSection Title="@Globalize["NextUp"]" Href="@Router.GetNextUpUrl()" Monitor="videoplayback,markplayed"
+                      Fetch="LoadNextUpAsync" CardOptions="options" />
+*@
+<div class="@CssClass" @attributes="Attributes">
+    @if (Header is not null)
+    {
+        @Header
+    }
+    else if (Title is not null)
+    {
+        <SectionHeader Title="@Title" Href="@Href" More="More" />
+    }
+    <Scroller Class="padded-top-focusscale padded-bottom-focusscale" ScrollButtons="ScrollButtons" data-centerfocus="true">
+        <ItemsContainer @ref="_container" Class="scrollSlider focuscontainer-x" Monitor="@Monitor" ParentId="@ParentId" Context="@Context"
+                        Items="Items" Fetch="Fetch" CardOptions="CardOptions" OnItemsChanged="OnItemsChanged" />
+    </Scroller>
+</div>
+
+@code {
+    /// <summary>The title, already translated.</summary>
+    [Parameter]
+    public string? Title { get; set; }
+
+    /// <summary>Where the title links to; null for a plain title.</summary>
+    [Parameter]
+    public string? Href { get; set; }
+
+    /// <summary>The "more" class of the title link.</summary>
+    [Parameter]
+    public bool More { get; set; } = true;
+
+    /// <summary>A header of your own instead of <see cref="Title"/>.</summary>
+    [Parameter]
+    public RenderFragment? Header { get; set; }
+
+    /// <summary>The items, when they are already at hand. Use this or <see cref="Fetch"/>.</summary>
+    [Parameter]
+    public IReadOnlyList<BaseItemDto>? Items { get; set; }
+
+    [Parameter]
+    public Func<Task<IReadOnlyList<BaseItemDto>>>? Fetch { get; set; }
+
+    [Parameter, EditorRequired]
+    public CardOptions CardOptions { get; set; } = new();
+
+    /// <summary>See <c>ItemsContainer.Monitor</c>.</summary>
+    [Parameter]
+    public string? Monitor { get; set; }
+
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    [Parameter]
+    public string? Context { get; set; }
+
+    /// <summary>Classes besides "verticalSection".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public bool ScrollButtons { get; set; } = true;
+
+    /// <summary>Raised after the items changed; an empty list hides the section.</summary>
+    [Parameter]
+    public EventCallback<IReadOnlyList<BaseItemDto>> ItemsChanged { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private ItemsContainer? _container;
+    private bool _hasItems;
+
+    private string CssClass => $"verticalSection emby-scroller-container {Class}".TrimEnd() + (_hasItems ? string.Empty : " hide");
+
+    /// <summary>Reloads the items now.</summary>
+    public Task RefreshAsync() => _container?.RefreshAsync() ?? Task.CompletedTask;
+
+    private Task OnItemsChanged(IReadOnlyList<BaseItemDto> items)
+    {
+        _hasItems = items.Count > 0;
+        return ItemsChanged.InvokeAsync(items);
+    }
+}

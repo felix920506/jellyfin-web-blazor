@@ -1,0 +1,92 @@
+@*
+    A horizontal scroller with the scroll buttons of the desktop layout. Port of elements/emby-scroller
+    and emby-scrollbuttons. The content is the scroll slider (class "scrollSlider"), usually an
+    ItemsContainer. The element around the scroller must have the class "emby-scroller-container"
+    (ItemsSection does that): the buttons are positioned against it.
+    Unlike the original, which moves the slider with transforms on desktop, this always scrolls natively.
+*@
+@implements IAsyncDisposable
+@inject IItemsInterop Interop
+@inject AppHost Host
+@inject IBrowser Browser
+@inject Globalize Globalize
+
+@if (ShowButtons)
+{
+    <div is="emby-scrollbuttons" class="emby-scrollbuttons padded-right">
+        <button type="button" is="paper-icon-button-light" data-ripple="false" data-direction="left" title="@Globalize["Previous"]" class="@ButtonClass" disabled="@(!_state.CanScrollBack)" @onclick="() => ScrollAsync(false)">
+            <span class="material-icons chevron_left" aria-hidden="true"></span>
+        </button>
+        <button type="button" is="paper-icon-button-light" data-ripple="false" data-direction="right" title="@Globalize["Next"]" class="@ButtonClass" disabled="@(!_state.CanScrollForward)" @onclick="() => ScrollAsync(true)">
+            <span class="material-icons chevron_right" aria-hidden="true"></span>
+        </button>
+    </div>
+}
+<div is="emby-scroller" @ref="_element" class="@CssClass" data-scrollbuttons="@(ScrollButtons ? null : "false")" @attributes="Attributes">
+    @ChildContent
+</div>
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Classes besides the scroller's own, e.g. "padded-top-focusscale padded-bottom-focusscale".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>False leaves out the scroll buttons (the original's data-scrollbuttons="false").</summary>
+    [Parameter]
+    public bool ScrollButtons { get; set; } = true;
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private ElementReference _element;
+    private IAsyncDisposable? _watch;
+    private ScrollButtonState _state;
+    private bool _disposed;
+
+    // The original shows the buttons in the desktop layout on devices with a fine pointer.
+    private bool ShowButtons => ScrollButtons && !Host.IsMobileLayout && !Browser.Environment.Touch;
+
+    private string ButtonClass => _state.Visible
+        ? "emby-scrollbuttons-button paper-icon-button-light"
+        : "emby-scrollbuttons-button paper-icon-button-light hide";
+
+    // With buttons there is no scrollbar; touch devices scroll by swiping and hide it as well.
+    private string CssClass => $"emby-scroller scrollX hiddenScrollX {Class}".TrimEnd();
+
+    protected override void OnInitialized() => Host.LayoutChanged += OnLayoutChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_disposed)
+        {
+            _watch = await Interop.WatchScrollerAsync(_element, OnScrollState);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        Host.LayoutChanged -= OnLayoutChanged;
+        if (_watch is { } watch)
+        {
+            _watch = null;
+            await watch.DisposeAsync();
+        }
+    }
+
+    private void OnLayoutChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnScrollState(ScrollButtonState state)
+    {
+        if (state != _state)
+        {
+            _state = state;
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private Task ScrollAsync(bool forward) => Interop.ScrollPageAsync(_element, forward).AsTask();
+}

@@ -1,0 +1,28 @@
+@* The primary or secondary media info line of an item (components/mediainfo/mediainfo.js). *@
+@inject MediaInfo Info
+
+<div class="@CssClass" @attributes="Attributes">@((MarkupString)Html)</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    /// <summary>What to include; the defaults are the original's.</summary>
+    [Parameter]
+    public MediaInfoOptions? Options { get; set; }
+
+    /// <summary>True for the secondary line (channel, programme time) instead of the primary one.</summary>
+    [Parameter]
+    public bool Secondary { get; set; }
+
+    /// <summary>Classes of the line, e.g. "itemMiscInfo itemMiscInfo-primary".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private string CssClass => Class ?? (Secondary ? "itemMiscInfo itemMiscInfo-secondary" : "itemMiscInfo itemMiscInfo-primary");
+
+    private string Html => Secondary ? Info.GetSecondaryHtml(Item, Options) : Info.GetPrimaryHtml(Item, Options);
+}

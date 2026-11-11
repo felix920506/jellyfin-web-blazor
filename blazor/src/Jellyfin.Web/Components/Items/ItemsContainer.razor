@@ -1,0 +1,497 @@
+@*
+    The container of a list of items. Port of elements/emby-itemscontainer: it owns the items, reloads
+    them when the server or the player says they changed (see Monitor), and tells the item actions
+    which list a clicked item belongs to. Content: CardOptions (cards), ListOptions (list rows),
+    ItemsTemplate (anything drawn from the items) or ChildContent (static content).
+*@
+@implements IAsyncDisposable
+@inject ItemUserData UserData
+@inject ServerEvents Events
+@inject IPlaybackManager Playback
+@inject IItemsInterop Interop
+
+<div is="emby-itemscontainer" @ref="_element" class="itemsContainer @Class" data-monitor="@Monitor" data-parentid="@ParentId" @attributes="Attributes">
+    <CascadingValue Value="_context" IsFixed="false">
+        @if (ItemsTemplate is not null)
+        {
+            @ItemsTemplate(_items)
+        }
+        else if (CardOptions is not null)
+        {
+            <Cards Items="_items" Options="CardOptions" />
+        }
+        else if (ListOptions is not null)
+        {
+            <ListView Items="_items" Options="ListOptions" />
+        }
+        @ChildContent
+    </CascadingValue>
+</div>
+
+@code {
+    /// <summary>How long a background refresh waits for further changes (the original's 10 seconds).</summary>
+    internal static TimeSpan RefreshDelay { get; set; } = TimeSpan.FromSeconds(10);
+
+    private static readonly string[] ServerMessages =
+        ["LibraryChanged", "TimerCreated", "SeriesTimerCreated", "TimerCancelled", "SeriesTimerCancelled"];
+
+    /// <summary>The items to show. Use this or <see cref="Fetch"/>.</summary>
+    [Parameter]
+    public IReadOnlyList<BaseItemDto>? Items { get; set; }
+
+    /// <summary>Loads the items; called on first display and on every refresh.</summary>
+    [Parameter]
+    public Func<Task<IReadOnlyList<BaseItemDto>>>? Fetch { get; set; }
+
+    /// <summary>Draws the items as cards.</summary>
+    [Parameter]
+    public CardOptions? CardOptions { get; set; }
+
+    /// <summary>Draws the items as list rows.</summary>
+    [Parameter]
+    public ListViewOptions? ListOptions { get; set; }
+
+    /// <summary>Draws the items in any other way.</summary>
+    [Parameter]
+    public RenderFragment<IReadOnlyList<BaseItemDto>>? ItemsTemplate { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Classes besides "itemsContainer", e.g. "vertical-wrap" or "scrollSlider focuscontainer-x".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>
+    /// The original's data-monitor: a comma separated list of what makes the list reload:
+    /// "videoplayback", "audioplayback", "markplayed", "markfavorite", "timers", "seriestimers".
+    /// Library changes always reload it (limited to <see cref="ParentId"/> when that is set).
+    /// </summary>
+    [Parameter]
+    public string? Monitor { get; set; }
+
+    /// <summary>The folder the items come from (data-parentid).</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    /// <summary>The context for item links, e.g. "tvshows".</summary>
+    [Parameter]
+    public string? Context { get; set; }
+
+    [Parameter]
+    public string? CollectionId { get; set; }
+
+    [Parameter]
+    public string? PlaylistId { get; set; }
+
+    /// <summary>True while the list is not shown: it then neither loads nor refreshes until resumed.</summary>
+    [Parameter]
+    public bool Paused { get; set; }
+
+    /// <summary>Set by <c>TabContent</c> for the lists of a tab that is not selected.</summary>
+    [CascadingParameter(Name = "ItemsPaused")]
+    public bool TabPaused { get; set; }
+
+    /// <summary>Raised after the items changed (loaded, refreshed).</summary>
+    [Parameter]
+    public EventCallback<IReadOnlyList<BaseItemDto>> OnItemsChanged { get; set; }
+
+    /// <summary>Handles the "custom" action of an element (data-customaction) for an item.</summary>
+    [Parameter]
+    public Func<string, BaseItemDto, Task>? OnCustomAction { get; set; }
+
+    /// <summary>Adjusts the context menu of the items (the options of itemContextMenu).</summary>
+    [Parameter]
+    public Func<ItemMenuOptions, ItemMenuOptions>? ConfigureMenu { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private ElementReference _element;
+    private IReadOnlyList<BaseItemDto> _items = [];
+    private IReadOnlyList<BaseItemDto>? _appliedItems;
+    private ItemActionContext _context = new();
+    private IDisposable? _subscription;
+    private CancellationTokenSource? _pendingRefresh;
+    private HashSet<string> _monitor = new(StringComparer.Ordinal);
+    private string? _appliedMonitor = "\0";
+    private bool _loaded;
+    private bool _needsRefresh;
+    private bool _wasPaused;
+    private bool _wasPlaying;
+    private string? _playingMediaType;
+    private int _version;
+    private bool _disposed;
+
+    /// <summary>The items currently shown.</summary>
+    public IReadOnlyList<BaseItemDto> CurrentItems => _items;
+
+    private bool IsPaused => Paused || TabPaused;
+
+    protected override void OnInitialized()
+    {
+        UserData.Changed += OnUserDataChanged;
+        Playback.StateChanged += OnPlaybackStateChanged;
+        _subscription = Events.Subscribe(ServerMessages, OnServerMessage);
+        _wasPlaying = Playback.IsPlaying;
+        _playingMediaType = Playback.CurrentItem?.MediaTypeName();
+        _wasPaused = IsPaused;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_appliedMonitor != Monitor)
+        {
+            _appliedMonitor = Monitor;
+            _monitor = new HashSet<string>(
+                (Monitor ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                StringComparer.Ordinal);
+        }
+
+        if (_context.ParentId != ParentId || _context.Context != Context || _context.CollectionId != CollectionId
+            || _context.PlaylistId != PlaylistId || _context.FetchItems != Fetch || _context.OnCustomAction != OnCustomAction
+            || _context.ConfigureMenu != ConfigureMenu || _context.Items is null)
+        {
+            _context = new ItemActionContext
+            {
+                ParentId = ParentId,
+                Context = Context,
+                CollectionId = CollectionId,
+                PlaylistId = PlaylistId,
+                Items = () => _items,
+                FetchItems = Fetch,
+                NotifyRefreshNeeded = () => NotifyRefreshNeeded(true),
+                OnCustomAction = OnCustomAction,
+                ConfigureMenu = ConfigureMenu
+            };
+        }
+
+        if (Fetch is null && !ReferenceEquals(_appliedItems, Items))
+        {
+            _appliedItems = Items;
+            _items = Items ?? [];
+            await OnItemsChanged.InvokeAsync(_items);
+        }
+
+        var paused = IsPaused;
+        var resumed = _wasPaused && !paused;
+        _wasPaused = paused;
+        if (paused)
+        {
+            return;
+        }
+
+        if (!_loaded)
+        {
+            _loaded = true;
+            _needsRefresh = false;
+            await RefreshAsync();
+        }
+        else if (resumed && _needsRefresh)
+        {
+            await RefreshAsync();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_disposed)
+        {
+            await Interop.LoadImagesAsync(_element);
+        }
+    }
+
+    /// <summary>Reloads the items now (no-op without <see cref="Fetch"/>).</summary>
+    public async Task RefreshAsync()
+    {
+        CancelPendingRefresh();
+        _needsRefresh = false;
+        if (Fetch is not { } fetch)
+        {
+            return;
+        }
+
+        var version = ++_version;
+        IReadOnlyList<BaseItemDto> items;
+        try
+        {
+            items = await fetch();
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Loading items failed: " + exception.Message);
+            return;
+        }
+
+        if (version != _version || _disposed)
+        {
+            return;
+        }
+
+        _items = items;
+        await OnItemsChanged.InvokeAsync(_items);
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Says that the items are out of date (<c>notifyRefreshNeeded</c>): reloads now when
+    /// <paramref name="foreground"/>, otherwise after a short wait; a paused list reloads when it resumes.
+    /// </summary>
+    public void NotifyRefreshNeeded(bool foreground = false)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (IsPaused)
+        {
+            _needsRefresh = true;
+            return;
+        }
+
+        CancelPendingRefresh();
+        if (foreground)
+        {
+            _ = InvokeAsync(RefreshAsync);
+            return;
+        }
+
+        var pending = _pendingRefresh = new CancellationTokenSource();
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await Task.Delay(RefreshDelay, pending.Token);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
+            if (!pending.IsCancellationRequested)
+            {
+                await RefreshAsync();
+            }
+        });
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        UserData.Changed -= OnUserDataChanged;
+        Playback.StateChanged -= OnPlaybackStateChanged;
+        _subscription?.Dispose();
+        CancelPendingRefresh();
+        return ValueTask.CompletedTask;
+    }
+
+    private void CancelPendingRefresh()
+    {
+        if (_pendingRefresh is { } pending)
+        {
+            _pendingRefresh = null;
+            pending.Cancel();
+            pending.Dispose();
+        }
+    }
+
+    private bool Monitors(string what) => _monitor.Contains(what);
+
+    // onUserDataChanged: update the item in place; lists of favourites or unplayed items reload.
+    private void OnUserDataChanged(UserItemDataDto data)
+    {
+        var changed = false;
+        foreach (var item in _items)
+        {
+            changed |= ItemUserData.Apply(item, data);
+        }
+
+        if (changed)
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+
+        if (Monitors("markfavorite") || Monitors("markplayed"))
+        {
+            NotifyRefreshNeeded();
+        }
+    }
+
+    private void OnPlaybackStateChanged()
+    {
+        var playing = Playback.IsPlaying;
+        if (playing)
+        {
+            _playingMediaType = Playback.CurrentItem?.MediaTypeName() ?? _playingMediaType;
+        }
+        else if (_wasPlaying)
+        {
+            // onPlaybackStopped
+            if ((_playingMediaType == "Video" && Monitors("videoplayback")) || (_playingMediaType == "Audio" && Monitors("audioplayback")))
+            {
+                NotifyRefreshNeeded(true);
+            }
+        }
+
+        _wasPlaying = playing;
+    }
+
+    private void OnServerMessage(string type, System.Text.Json.JsonElement data)
+    {
+        switch (type)
+        {
+            case "TimerCreated":
+                if (Monitors("timers"))
+                {
+                    NotifyRefreshNeeded();
+                }
+                else
+                {
+                    SetTimer(Text(data, "ProgramId"), Text(data, "Id"));
+                }
+
+                break;
+            case "SeriesTimerCreated":
+                if (Monitors("seriestimers"))
+                {
+                    NotifyRefreshNeeded();
+                }
+
+                break;
+            case "TimerCancelled":
+                if (Monitors("timers"))
+                {
+                    NotifyRefreshNeeded();
+                }
+                else
+                {
+                    ClearTimer(Text(data, "Id"), series: false);
+                }
+
+                break;
+            case "SeriesTimerCancelled":
+                if (Monitors("seriestimers"))
+                {
+                    NotifyRefreshNeeded();
+                }
+                else
+                {
+                    ClearTimer(Text(data, "Id"), series: true);
+                }
+
+                break;
+            case "LibraryChanged":
+                OnLibraryChanged(data);
+                break;
+        }
+    }
+
+    private void OnLibraryChanged(System.Text.Json.JsonElement data)
+    {
+        if (Monitors("seriestimers") || Monitors("timers"))
+        {
+            return;
+        }
+
+        if (Count(data, "ItemsAdded") == 0 && Count(data, "ItemsRemoved") == 0)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(ParentId)
+            && !Contains(data, "FoldersAddedTo", ParentId) && !Contains(data, "FoldersRemovedFrom", ParentId)
+            && !Contains(data, "CollectionFolders", ParentId))
+        {
+            return;
+        }
+
+        NotifyRefreshNeeded();
+    }
+
+    private void SetTimer(string? programId, string? timerId)
+    {
+        if (string.IsNullOrEmpty(programId) || string.IsNullOrEmpty(timerId))
+        {
+            return;
+        }
+
+        var changed = false;
+        foreach (var item in _items)
+        {
+            if (SameId(item.IdText(), programId))
+            {
+                item.TimerId = timerId;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void ClearTimer(string? timerId, bool series)
+    {
+        if (string.IsNullOrEmpty(timerId))
+        {
+            return;
+        }
+
+        var changed = false;
+        foreach (var item in _items)
+        {
+            if (series && SameId(item.SeriesTimerId, timerId))
+            {
+                item.SeriesTimerId = null;
+                changed = true;
+            }
+            else if (!series && SameId(item.TimerId, timerId))
+            {
+                item.TimerId = null;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static bool SameId(string? left, string? right) =>
+        !string.IsNullOrEmpty(left) && !string.IsNullOrEmpty(right)
+        && string.Equals(left.Replace("-", string.Empty, StringComparison.Ordinal), right.Replace("-", string.Empty, StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+
+    private static string? Text(System.Text.Json.JsonElement data, string name) =>
+        data.ValueKind == System.Text.Json.JsonValueKind.Object && data.TryGetProperty(name, out var value)
+        && value.ValueKind == System.Text.Json.JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static int Count(System.Text.Json.JsonElement data, string name) =>
+        data.ValueKind == System.Text.Json.JsonValueKind.Object && data.TryGetProperty(name, out var value)
+        && value.ValueKind == System.Text.Json.JsonValueKind.Array
+            ? value.GetArrayLength()
+            : 0;
+
+    private static bool Contains(System.Text.Json.JsonElement data, string name, string id)
+    {
+        if (data.ValueKind != System.Text.Json.JsonValueKind.Object || !data.TryGetProperty(name, out var value)
+            || value.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var entry in value.EnumerateArray())
+        {
+            if (entry.ValueKind == System.Text.Json.JsonValueKind.String && SameId(entry.GetString(), id))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}

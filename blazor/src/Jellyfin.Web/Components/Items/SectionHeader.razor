@@ -1,0 +1,55 @@
+@*
+    The header of a section of cards, with the original markup: a plain title, or with Href a title
+    that links to "more" (title plus chevron).
+*@
+@if (Href is not null)
+{
+    <div class="sectionTitleContainer sectionTitleContainer-cards padded-left">
+        <a is="emby-linkbutton" href="@Href" class="@LinkClass">
+            <h2 class="sectionTitle sectionTitle-cards">@Title</h2>
+            <span class="material-icons chevron_right" aria-hidden="true"></span>
+        </a>
+        @ChildContent
+    </div>
+}
+else if (Container)
+{
+    <div class="@(PadTitle ? "sectionTitleContainer sectionTitleContainer-cards" : "sectionTitleContainer sectionTitleContainer-cards padded-left")">
+        <h2 class="@(PadTitle ? "sectionTitle sectionTitle-cards padded-left" : "sectionTitle sectionTitle-cards")">@Title</h2>
+        @ChildContent
+    </div>
+}
+else
+{
+    <h2 class="sectionTitle sectionTitle-cards padded-left">@Title</h2>
+}
+
+@code {
+    /// <summary>The title, already translated.</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Where the title links to ("#/…"); null for a plain title.</summary>
+    [Parameter]
+    public string? Href { get; set; }
+
+    /// <summary>The "more" class of the link, which most of the original's section links carry.</summary>
+    [Parameter]
+    public bool More { get; set; } = true;
+
+    /// <summary>Wraps a plain title in a "sectionTitleContainer" (room for buttons in ChildContent).</summary>
+    [Parameter]
+    public bool Container { get; set; }
+
+    /// <summary>With <see cref="Container"/>: the padding sits on the title instead of the container.</summary>
+    [Parameter]
+    public bool PadTitle { get; set; }
+
+    /// <summary>Extra content of the title container (buttons).</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private string LinkClass => More
+        ? "more button-flat button-flat-mini sectionTitleTextButton emby-button"
+        : "button-flat button-flat-mini sectionTitleTextButton emby-button";
+}

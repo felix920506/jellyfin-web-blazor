@@ -1,0 +1,71 @@
+@*
+    Declares the tabs of a page. The selected tab is the "tab" query parameter (AppLocation.Tab);
+    selecting one navigates to the same route with another "tab". With Visible (the default) the tabs
+    are shown in the app bar by AppBarTabs, as the original's header tabs. Put the content of each tab
+    in a TabContent with the same index:
+
+        <PageTabs Tabs="@(["Movies", "Favorites"])" />
+        <TabContent Index="0">…</TabContent>
+        <TabContent Index="1">…</TabContent>
+*@
+@implements IDisposable
+@inject PageTabsState State
+@inject AppRouter Router
+@inject Globalize Globalize
+
+<CascadingValue Value="(int?)SelectedIndex" Name="SelectedTab">
+    @ChildContent
+</CascadingValue>
+
+@code {
+    /// <summary>The translation keys of the tab names, in order.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<string> Tabs { get; set; } = [];
+
+    /// <summary>False keeps the tab state but shows no tab bar (the home screen, as in the original's modern layout).</summary>
+    [Parameter]
+    public bool Visible { get; set; } = true;
+
+    /// <summary>The tab shown when the address has no "tab" parameter.</summary>
+    [Parameter]
+    public int DefaultIndex { get; set; }
+
+    /// <summary>Optional wrapper for the tab contents; they then need no explicit Active parameter.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [CascadingParameter]
+    public AppLocation? Location { get; set; }
+
+    private readonly object _owner = new();
+
+    /// <summary>The selected tab: the "tab" parameter, limited to the declared tabs.</summary>
+    public int SelectedIndex => GetSelectedIndex(Location, Tabs.Count, DefaultIndex);
+
+    /// <summary>The index a page should treat as selected for <paramref name="location"/>.</summary>
+    public static int GetSelectedIndex(AppLocation? location, int count, int defaultIndex = 0)
+    {
+        var index = location is not null && !string.IsNullOrEmpty(location["tab"]) ? location.Tab : defaultIndex;
+        return count > 0 ? Math.Clamp(index, 0, count - 1) : 0;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (Visible && Tabs.Count > 0)
+        {
+            State.Set(_owner, Tabs.Select(key => Globalize.Translate(key)).ToArray(), SelectedIndex, Select);
+        }
+        else
+        {
+            State.Clear(_owner);
+        }
+    }
+
+    public void Dispose() => State.Clear(_owner);
+
+    private void Select(int index)
+    {
+        var location = Location ?? Router.Location;
+        Router.Navigate(location.With(("tab", index.ToString(System.Globalization.CultureInfo.InvariantCulture))).Url);
+    }
+}

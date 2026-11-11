@@ -1,0 +1,124 @@
+@*
+    The Home tab: the sections the user chose in the home screen settings ("homesection0".."homesection9").
+    Port of apps/legacy/controllers/hometab.js and components/homesections/homesections.js (loadSections).
+*@
+@implements IDisposable
+@inject UserViews Views
+@inject HomeSections Sections
+@inject UserSettings Settings
+@inject JellyfinApi Api
+@inject Globalize Globalize
+@inject LoadingService Loading
+
+<div class="@(_views is { Count: > 0 } ? "sections homeSectionsContainer" : "sections")">
+    @if (_views is { Count: > 0 } views)
+    {
+        for (var i = 0; i < _sections.Count; i++)
+        {
+            var index = i;
+            <HomeSection @key="(index, _sections[index], _generation)" Index="index" Type="@_sections[index]" Views="views" />
+        }
+    }
+    else if (_views is not null)
+    {
+        <div class="centerMessage padded-left padded-right">
+            <h2>@Globalize["MessageNothingHere"]</h2>
+            @if (Api.IsAdmin)
+            {
+                var text = Globalize.Translate("NoCreatedLibraries", LinkStart, LinkEnd);
+                var start = text.IndexOf(LinkStart, StringComparison.Ordinal);
+                var end = text.IndexOf(LinkEnd, StringComparison.Ordinal);
+                if (start >= 0 && end > start)
+                {
+                    <p>@(text[..start])<br /><a id="button-createLibrary" class="button-link" href="#/dashboard/libraries">@(text[(start + 1)..end])</a>@(text[(end + 1)..])</p>
+                }
+                else
+                {
+                    <p>@text</p>
+                }
+            }
+            else
+            {
+                <p>@Globalize["AskAdminToCreateLibrary"]</p>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    // Stand-ins for the link markup the original passes into the "NoCreatedLibraries" text.
+    private const string LinkStart = "\u0001";
+    private const string LinkEnd = "\u0002";
+
+    private IReadOnlyList<BaseItemDto>? _views;
+    private IReadOnlyList<string> _sections = [];
+    private int _generation;
+    private bool _disposed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Views.Changed += OnViewsChanged;
+        Settings.Changed += OnSettingsChanged;
+        _sections = Sections.GetSections();
+        await LoadAsync(refresh: false);
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        Views.Changed -= OnViewsChanged;
+        Settings.Changed -= OnSettingsChanged;
+    }
+
+    private async Task LoadAsync(bool refresh)
+    {
+        Loading.Show();
+        try
+        {
+            _views = await Views.GetAsync(refresh);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            AppLog.Warn("Loading the libraries failed: " + exception.Message);
+            _views ??= [];
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    // The libraries changed: draw the sections again, as they depend on them.
+    private void OnViewsChanged() => _ = InvokeAsync(async () =>
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        await LoadAsync(refresh: false);
+        _generation++;
+        StateHasChanged();
+    });
+
+    // The original's "settingschange": the home screen settings were saved.
+    private void OnSettingsChanged(string name)
+    {
+        if (!name.StartsWith("homesection", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _ = InvokeAsync(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _sections = Sections.GetSections();
+            _generation++;
+            StateHasChanged();
+        });
+    }
+}

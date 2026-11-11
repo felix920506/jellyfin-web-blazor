@@ -1,0 +1,52 @@
+@*
+    The content of one tab of a page (the original's ".tabContent.pageTabContent"). It stays in the
+    page while another tab is selected, hidden by the original stylesheet, and tells the ItemsContainers
+    inside to pause; with Lazy (the default) the content is first rendered when the tab is selected.
+*@
+<div id="@Id" class="@CssClass" data-index="@Index" @attributes="Attributes">
+    @if (_activated)
+    {
+        <CascadingValue Value="!IsActive" Name="ItemsPaused">
+            @ChildContent
+        </CascadingValue>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public int Index { get; set; }
+
+    /// <summary>Whether this tab is selected; defaults to the surrounding PageTabs' selection, else the address' "tab".</summary>
+    [Parameter]
+    public bool? Active { get; set; }
+
+    [Parameter]
+    public string? Id { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>False renders the content right away, even while the tab is not selected.</summary>
+    [Parameter]
+    public bool Lazy { get; set; } = true;
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    [CascadingParameter(Name = "SelectedTab")]
+    public int? SelectedTab { get; set; }
+
+    [CascadingParameter]
+    public AppLocation? Location { get; set; }
+
+    private bool _activated;
+
+    private bool IsActive => Active ?? ((SelectedTab ?? Location?.Tab ?? 0) == Index);
+
+    private string CssClass => $"tabContent pageTabContent{(IsActive ? " is-active" : string.Empty)} {Class}".TrimEnd();
+
+    protected override void OnParametersSet() => _activated |= IsActive || !Lazy;
+}

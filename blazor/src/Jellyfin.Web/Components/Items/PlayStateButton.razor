@@ -1,0 +1,68 @@
+@* The played toggle of an item. Port of elements/emby-playstatebutton. *@
+@implements IDisposable
+@inject ItemUserData UserData
+@inject Globalize Globalize
+
+<button is="emby-playstatebutton" type="button" class="@CssClass" data-action="none" data-id="@Item.IdText()" data-serverid="@Item.ServerId" data-itemtype="@Item.TypeName()" data-played="@(Played ? "true" : "false")" title="@Title" @onclick="ToggleAsync" @onclick:stopPropagation @attributes="Attributes">
+    <span class="material-icons @IconClass check @(Played ? "playstatebutton-icon-played" : "playstatebutton-icon-unplayed")" aria-hidden="true"></span>
+</button>
+
+@code {
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    /// <summary>Classes of the button, e.g. "listItemButton paper-icon-button-light".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>Extra classes of the icon.</summary>
+    [Parameter]
+    public string? IconClass { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private bool _busy;
+
+    private bool Played => Item.UserData?.Played == true;
+
+    private string CssClass => Played ? $"{Class} playstatebutton-played" : Class ?? string.Empty;
+
+    private string Title => Played
+        ? Globalize.Translate(Item.TypeName() == "AudioBook" ? "Played" : "Watched")
+        : Globalize.Translate("MarkPlayed");
+
+    protected override void OnInitialized() => UserData.Changed += OnUserDataChanged;
+
+    public void Dispose() => UserData.Changed -= OnUserDataChanged;
+
+    private void OnUserDataChanged(UserItemDataDto data)
+    {
+        if (ItemUserData.Apply(Item, data))
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ToggleAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await UserData.SetPlayedAsync(Item, !Played);
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Changing the played state failed: " + exception.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

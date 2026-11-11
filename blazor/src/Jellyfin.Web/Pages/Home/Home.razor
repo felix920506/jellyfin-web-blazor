@@ -1,0 +1,19 @@
+@* The home screen: the Home tab (the user's home sections) and the Favorites tab. Port of apps/legacy/controllers/home.js. *@
+@attribute [Route("/home")]
+@attribute [Access(AccessLevel.User)]
+
+<Page Id="indexPage" Class="mainAnimatedPage homePage libraryPage allLibraryPage backdropPage pageWithAbsoluteTabs withTabs" BackButton="false">
+    @* As in the original's modern layout the two tabs have no tab bar: Favorites is reached from the navigation ("#/home?tab=1"). *@
+    <PageTabs Tabs="@TabNames" Visible="false">
+        <TabContent Index="0" Id="homeTab">
+            <HomeTab />
+        </TabContent>
+        <TabContent Index="1" Id="favoritesTab">
+            <FavoritesTab />
+        </TabContent>
+    </PageTabs>
+</Page>
+
+@code {
+    private static readonly string[] TabNames = ["Home", "Favorites"];
+}

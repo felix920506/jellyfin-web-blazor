@@ -1,0 +1,57 @@
+// Item components (Components/Items): the pieces the original builds in script rather than in CSS.
+
+// --- Page tabs in the app bar (PageTabs / AppBarTabs) -------------------------------------------
+// The tabs form a second row of the fixed app bar and follow its see-through/solid switch.
+$jf-tabs-height: 40px;
+
+.jf-appbar-tabs {
+    position: absolute;
+    top: 48px;
+    left: 0;
+    right: 0;
+    height: $jf-tabs-height;
+    overflow: hidden;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+
+    .jf-scrolled & {
+        background-color: var(--mud-palette-appbar-background);
+        box-shadow: var(--mud-elevation-1);
+    }
+
+    .emby-tabs {
+        height: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        white-space: nowrap;
+
+        &::-webkit-scrollbar {
+            display: none;
+        }
+    }
+
+    .emby-tabs-slider {
+        display: inline-block;
+        height: 100%;
+    }
+
+    .emby-tab-button {
+        height: 100%;
+        padding: 0 1.5em;
+        color: inherit;
+        opacity: 0.7;
+    }
+
+    .emby-tab-button-active {
+        opacity: 1;
+    }
+}
+
+// With tabs the solid part of the app bar ends at the tab row: the toolbar row casts no shadow of its own.
+.jf-with-tabs.jf-scrolled .mud-appbar.jf-appbar {
+    box-shadow: none;
+}
+
+.jf-with-tabs .jf-appbar-offset {
+    height: 48px + $jf-tabs-height;
+}
