@@ -253,8 +253,7 @@ public sealed class PlayQueue
         {
             if (string.IsNullOrEmpty(item.PlaylistItemId))
             {
-                item.PlaylistItemId = "playlistItem" + _currentId;
-                _currentId++;
+                item.PlaylistItemId = "playlistItem" + (Interlocked.Increment(ref _currentId) - 1);
             }
         }
     }

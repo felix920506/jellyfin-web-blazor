@@ -105,6 +105,8 @@ public sealed partial class PlaybackManager
     private const int VolumeChangeRateLimitMs = 3000;
 
     private readonly HashSet<IMediaPlayer> _stoppedUnbound = [];
+    private readonly Lock _reportGate = new();
+    private Task _reportQueue = Task.CompletedTask;
     private long _lastProgressReport;
     private long? _lastProgressReportTicks;
     private JsonObject? _lastProgressOptions;
@@ -312,8 +314,24 @@ public sealed partial class PlaybackManager
         _progressPendingLimit = null;
     }
 
-    private async Task PostReportAsync(string path, JsonObject body)
+    /// <summary>
+    /// Posts a report after the ones before it have been answered. The end of an item raises "pause"
+    /// and "stopped" back to back; a progress report that reached the server after the stop report
+    /// would make the session play again, so the reports are kept in order. (The original sends them
+    /// independently; with an idle queue this sends at once, exactly like it.)
+    /// </summary>
+    private Task PostReportAsync(string path, JsonObject body)
     {
+        lock (_reportGate)
+        {
+            return _reportQueue = PostReportAfterAsync(_reportQueue, path, body);
+        }
+    }
+
+    private async Task PostReportAfterAsync(Task previous, string path, JsonObject body)
+    {
+        // Never faults: every failure of a report is caught below.
+        await previous;
         try
         {
             using var response = await _api.SendAsync(HttpMethod.Post, path, body);

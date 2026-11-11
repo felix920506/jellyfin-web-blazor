@@ -656,10 +656,10 @@ public sealed partial class PlaybackManager
                 message = "PlaybackError." + MediaErrors.NoMediaError;
             }
         }
-        else if (exception is not PlaybackRejectedException)
-        {
-            AppLog.Warn($"[playback] starting playback failed: {exception}");
-        }
+
+        AppLog.Warn(exception is PlaybackRejectedException or HttpRequestException
+            ? $"[playback] starting playback failed: {exception.Message}"
+            : $"[playback] starting playback failed: {exception}");
 
         ShowPlaybackInfoErrorMessage(message);
     }
@@ -728,7 +728,7 @@ public sealed partial class PlaybackManager
         {
             // PORT-TODO(playback): items that are plain URLs (createStreamInfoFromUrlItem()) and books
             // are played without the server in the original; nothing in the port produces such items.
-            throw new PlaybackRejectedException(reported: false);
+            throw new PlaybackRejectedException(reported: false, $"'{item.Name}' is not an item of the server");
         }
 
         var mediaSourceId = playOptions.MediaSourceId;
@@ -964,7 +964,7 @@ public sealed partial class PlaybackManager
         using var response = await _api.SendAsync(HttpMethod.Post, url, body);
         response.EnsureSuccessStatusCode();
         var result = KiotaJson.Parse(await response.Content.ReadAsStringAsync(), LiveStreamResponse.CreateFromDiscriminatorValue);
-        return result?.MediaSource ?? throw new PlaybackRejectedException(reported: false);
+        return result?.MediaSource ?? throw new PlaybackRejectedException(reported: false, "the server opened no live stream");
     }
 
     /// <summary>Port of supportsDirectPlay(): may the player be given the source's own (http) path?</summary>
@@ -1261,7 +1261,7 @@ public sealed partial class PlaybackManager
     private static partial Regex PlaySessionIdRegex();
 
     /// <summary>Playback could not start; <see cref="Reported"/> when the user has been told why.</summary>
-    private sealed class PlaybackRejectedException(bool reported) : Exception("playback rejected")
+    private sealed class PlaybackRejectedException(bool reported, string reason = "playback rejected") : Exception(reason)
     {
         public bool Reported { get; } = reported;
     }
