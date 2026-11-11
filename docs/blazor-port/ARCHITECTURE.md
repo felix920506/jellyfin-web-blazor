@@ -62,8 +62,9 @@ Rules for this machine (ARM64 board, 8 cores, ~6 GB free RAM, shared by several 
 `scripts/test-server.sh up` starts (or reuses) one shared Jellyfin server at
 `http://localhost:18096` (admin user `admin`, password `jellyfin`, startup wizard completed) with
 synthetic media: library Movies (`Big Test Movie (2019)` 90 s, `Second Feature (2021)` mkv with
-English and French audio and an external English subtitle, `Third Film (2008)`; posters and
-backdrops), Shows (`Test Show`, 4 episodes in 2 seasons) and Music (`Test Artist` / `First Album`
+English and French audio and an external English subtitle, `Third Film (2008)`, all H.264/AAC,
+and `Open Codec Movie (2015)` in VP9/Opus webm, which Playwright's Chromium can decode (it has
+no H.264/AAC decoders); posters and backdrops), Shows (`Test Show`, 4 episodes in 2 seasons) and Music (`Test Artist` / `First Album`
 with 3 songs, `Other Band` / `Second Album` with 1 song). Tests may change user data (played,
 favorites, playback position) but must not delete media, libraries or the admin user.
 `e2e/lib.py` has the helpers (`new_page`, `sign_in`, `go`, `shot`, `finish`); `e2e/smoke.py` is

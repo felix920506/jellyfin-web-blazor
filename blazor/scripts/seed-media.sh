@@ -4,7 +4,7 @@
 # Uses the ffmpeg that ships in the Jellyfin image; skipped when the collection already exists.
 set -euo pipefail
 MEDIA="$1"; IMAGE="$2"
-STAMP="$MEDIA/.seeded-v1"
+STAMP="$MEDIA/.seeded-v2"
 [ -f "$STAMP" ] && exit 0
 mkdir -p "$MEDIA"
 
@@ -16,6 +16,7 @@ ff() {
 # video <file> <seconds> <lavfi source> <tone hz> [extra args...]
 video() {
     local file="$1" seconds="$2" source="$3" tone="$4"; shift 4
+    [ -f "$MEDIA/$file" ] && return 0
     mkdir -p "$MEDIA/$(dirname "$file")"
     ff -f lavfi -i "$source=size=640x360:rate=24" -f lavfi -i "sine=frequency=$tone:sample_rate=44100" \
         -t "$seconds" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 48 -c:a aac -b:a 96k -ac 2 \
@@ -24,12 +25,14 @@ video() {
 
 # image <file> <WxH> <color>
 image() {
+    [ -f "$MEDIA/$1" ] && return 0
     mkdir -p "$MEDIA/$(dirname "$1")"
     ff -f lavfi -i "gradients=size=$2:c0=$3:c1=black:x0=0:y0=0:x1=${2%x*}:y1=${2#*x}" -frames:v 1 -update 1 "$1"
 }
 
 # song <file> <seconds> <tone hz> <title> <artist> <album> <track>
 song() {
+    [ -f "$MEDIA/$1" ] && return 0
     mkdir -p "$MEDIA/$(dirname "$1")"
     ff -f lavfi -i "sine=frequency=$3:sample_rate=44100" -t "$2" -c:a libmp3lame -b:a 128k \
         -metadata title="$4" -metadata artist="$5" -metadata album_artist="$5" -metadata album="$6" \
@@ -44,7 +47,7 @@ image "movies/Big Test Movie (2019)/backdrop.jpg" 1280x720 0x00a4dc
 
 # Two audio tracks plus an external subtitle file.
 mkdir -p "$MEDIA/movies/Second Feature (2021)"
-ff -f lavfi -i "smptebars=size=640x360:rate=24" -f lavfi -i "sine=frequency=330:sample_rate=44100" \
+[ -f "$MEDIA/movies/Second Feature (2021)/Second Feature (2021).mkv" ] || ff -f lavfi -i "smptebars=size=640x360:rate=24" -f lavfi -i "sine=frequency=330:sample_rate=44100" \
     -f lavfi -i "sine=frequency=660:sample_rate=44100" -t 60 -map 0:v -map 1:a -map 2:a \
     -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 48 -c:a aac -b:a 96k -ac 2 \
     -metadata:s:a:0 language=eng -metadata:s:a:0 title=English \
@@ -60,6 +63,15 @@ image "movies/Second Feature (2021)/backdrop.jpg" 1280x720 0xaa5cc3
 
 video "movies/Third Film (2008)/Third Film (2008).mp4" 45 rgbtestsrc 550
 image "movies/Third Film (2008)/poster.jpg" 400x600 0xcc7a00
+
+# VP9 + Opus: plays directly in browsers without H.264/AAC decoders (Playwright's Chromium).
+mkdir -p "$MEDIA/movies/Open Codec Movie (2015)"
+[ -f "$MEDIA/movies/Open Codec Movie (2015)/Open Codec Movie (2015).webm" ] || ff -f lavfi -i "testsrc2=size=640x360:rate=24" \
+    -f lavfi -i "sine=frequency=587:sample_rate=48000" -t 60 -c:v libvpx-vp9 -deadline realtime -cpu-used 8 \
+    -b:v 400k -g 48 -pix_fmt yuv420p -c:a libopus -b:a 64k -ac 2 \
+    "movies/Open Codec Movie (2015)/Open Codec Movie (2015).webm"
+image "movies/Open Codec Movie (2015)/poster.jpg" 400x600 0x00897b
+image "movies/Open Codec Movie (2015)/backdrop.jpg" 1280x720 0x00897b
 
 for episode in "Season 01/Test Show S01E01" "Season 01/Test Show S01E02" "Season 01/Test Show S01E03" "Season 02/Test Show S02E01"; do
     video "shows/Test Show/$episode.mp4" 40 testsrc 500
