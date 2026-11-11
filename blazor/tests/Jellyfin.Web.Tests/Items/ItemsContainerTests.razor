@@ -1,0 +1,340 @@
+@* ItemsContainer: loading, pausing and the live refresh of elements/emby-itemscontainer. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Support
+@inherits ItemsTestContext
+
+@code {
+    private static readonly CardOptions PortraitCards = new() { Shape = CardShape.OverflowPortrait, ShowTitle = true };
+
+    private static readonly string UserIdText = TestApp.UserId.ToString("N");
+
+    private IReadOnlyList<BaseItemDto> _served = [];
+    private Func<Task<IReadOnlyList<BaseItemDto>>> _fetch = default!;
+    private int _fetches;
+    private bool _paused;
+    private string? _monitor;
+    private string? _parentId;
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        SignIn();
+        _fetch = () =>
+        {
+            _fetches++;
+            return Task.FromResult(_served);
+        };
+    }
+
+    private static BaseItemDto Movie(int number, string name) => TestItems.Item(TestItems.Movie(number, name));
+
+    private static BaseItemDto Programme(int number, string? timerId = null, string? seriesTimerId = null) => TestItems.Item(new
+    {
+        Id = TestItems.Id(number),
+        Name = "Programme " + number,
+        ServerId = TestApp.ServerId,
+        Type = "Program",
+        ChannelId = TestItems.Id(50),
+        TimerId = timerId,
+        SeriesTimerId = seriesTimerId
+    });
+
+    private IRenderedComponent<ContainerFragment> RenderContainer() =>
+        Render(@<ItemsContainer Class="scrollSlider" Fetch="_fetch" CardOptions="PortraitCards" Monitor="@_monitor" ParentId="@_parentId" Paused="_paused" />);
+
+    private static string?[] CardIds(IRenderedComponent<ContainerFragment> cut) =>
+        cut.FindAll(".card").Select(card => card.GetAttribute("data-id")).ToArray();
+
+    /// <summary>Lets a delayed refresh that would be wrong happen before the test asserts that it did not.</summary>
+    private static Task SettleAsync() => Task.Delay(150);
+
+    [Fact]
+    public void Fetched_items_are_drawn_as_cards()
+    {
+        _served = [Movie(1, "One"), Movie(2, "Two")];
+        _monitor = "markplayed";
+        _parentId = "p1";
+
+        var cut = RenderContainer();
+
+        cut.WaitForAssertion(() => Assert.Equal(new string?[] { TestItems.Id(1), TestItems.Id(2) }, CardIds(cut)));
+        var container = cut.Find("div.itemsContainer");
+        Assert.Equal("emby-itemscontainer", container.GetAttribute("is"));
+        Assert.Equal("itemsContainer scrollSlider", container.ClassName);
+        Assert.Equal("markplayed", container.GetAttribute("data-monitor"));
+        Assert.Equal("p1", container.GetAttribute("data-parentid"));
+        Assert.Equal(1, _fetches);
+        Assert.True(Interop.ImageLoads > 0);
+    }
+
+    [Fact]
+    public void Items_given_directly_are_drawn_and_reported()
+    {
+        IReadOnlyList<BaseItemDto> items = [Movie(1, "One")];
+        var reported = new List<int>();
+
+        var cut = Render(@<ItemsContainer Items="items" CardOptions="PortraitCards" OnItemsChanged="@((IReadOnlyList<BaseItemDto> list) => reported.Add(list.Count))" />);
+
+        Assert.Equal(new string?[] { TestItems.Id(1) }, CardIds(cut));
+        Assert.Equal(new[] { 1 }, reported);
+        Assert.Null(cut.Find("div.itemsContainer").GetAttribute("data-monitor"));
+    }
+
+    [Fact]
+    public void List_options_draw_rows_and_a_template_draws_anything()
+    {
+        IReadOnlyList<BaseItemDto> items = [Movie(1, "One"), Movie(2, "Two")];
+
+        var list = Render(@<ItemsContainer Items="items" ListOptions="@(new ListViewOptions())" />);
+        var template = Render(
+            @<ItemsContainer Items="items">
+                <ItemsTemplate Context="all">
+                    <p class="count">@all.Count</p>
+                </ItemsTemplate>
+                <ChildContent>
+                    <span class="static">fixed</span>
+                </ChildContent>
+            </ItemsContainer>);
+
+        Assert.Equal(2, list.FindAll(".listItem").Count);
+        Assert.Empty(list.FindAll(".card"));
+        Assert.Equal("2", template.Find("p.count").TextContent);
+        Assert.Equal("fixed", template.Find("span.static").TextContent);
+    }
+
+    [Fact]
+    public async Task A_paused_container_loads_when_it_is_resumed()
+    {
+        _served = [Movie(1, "One")];
+        _paused = true;
+
+        var cut = RenderContainer();
+
+        Assert.Equal(0, _fetches);
+        Assert.Empty(cut.FindAll(".card"));
+
+        _paused = false;
+        Rerender(cut);
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".card")));
+        Assert.Equal(1, _fetches);
+
+        // A change that arrives while the tab is hidden is applied on return.
+        _paused = true;
+        Rerender(cut);
+        _served = [Movie(1, "One"), Movie(2, "Two")];
+        ServerMessage("LibraryChanged", new { ItemsAdded = new[] { TestItems.Id(2) }, ItemsRemoved = Array.Empty<string>() });
+        await SettleAsync();
+        Assert.Equal(1, _fetches);
+
+        _paused = false;
+        Rerender(cut);
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".card").Count));
+        Assert.Equal(2, _fetches);
+
+        // Returning without a change does not reload.
+        _paused = true;
+        Rerender(cut);
+        _paused = false;
+        Rerender(cut);
+        await SettleAsync();
+        Assert.Equal(2, _fetches);
+    }
+
+    [Fact]
+    public async Task User_data_changes_update_the_cards_in_place()
+    {
+        _served = [Movie(1, "One"), Movie(2, "Two")];
+        var cut = RenderContainer();
+        Assert.Empty(cut.FindAll(".playedIndicator"));
+
+        ServerMessage("UserDataChanged", new
+        {
+            UserId = UserIdText,
+            UserDataList = new object[] { new { ItemId = TestItems.Id(2), Played = true, IsFavorite = true, PlaybackPositionTicks = 0 } }
+        });
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".playedIndicator")));
+        var second = cut.Find($".card[data-id='{TestItems.Id(2)}']");
+        Assert.NotNull(second.QuerySelector(".playedIndicator"));
+        Assert.Equal("true", second.QuerySelector("button[is=emby-playstatebutton]")!.GetAttribute("data-played"));
+        Assert.Equal("true", second.QuerySelector("button[is=emby-ratingbutton]")!.GetAttribute("data-isfavorite"));
+        await SettleAsync();
+        Assert.Equal(1, _fetches);
+    }
+
+    [Theory]
+    [InlineData("markplayed")]
+    [InlineData("videoplayback,markfavorite")]
+    public void Lists_that_depend_on_user_data_reload_after_a_change(string monitor)
+    {
+        _served = [Movie(1, "One"), Movie(2, "Two")];
+        _monitor = monitor;
+        var cut = RenderContainer();
+        _served = [Movie(2, "Two")];
+
+        ServerMessage("UserDataChanged", new
+        {
+            UserId = UserIdText,
+            UserDataList = new object[] { new { ItemId = TestItems.Id(1), Played = true, IsFavorite = false } }
+        });
+
+        cut.WaitForAssertion(() => Assert.Equal(new string?[] { TestItems.Id(2) }, CardIds(cut)));
+        Assert.Equal(2, _fetches);
+    }
+
+    [Fact]
+    public async Task Library_changes_reload_the_lists_they_concern()
+    {
+        _served = [Movie(1, "One")];
+        _parentId = TestItems.Id(70);
+        var cut = RenderContainer();
+
+        // Nothing added or removed, or another library: not this list's business.
+        ServerMessage("LibraryChanged", new { ItemsAdded = Array.Empty<string>(), ItemsRemoved = Array.Empty<string>(), ItemsUpdated = new[] { TestItems.Id(1) } });
+        ServerMessage("LibraryChanged", new
+        {
+            ItemsAdded = new[] { TestItems.Id(2) },
+            ItemsRemoved = Array.Empty<string>(),
+            FoldersAddedTo = new[] { TestItems.Id(71) },
+            CollectionFolders = new[] { TestItems.Id(72) }
+        });
+        await SettleAsync();
+        Assert.Equal(1, _fetches);
+
+        _served = [Movie(1, "One"), Movie(2, "Two")];
+        ServerMessage("LibraryChanged", new
+        {
+            ItemsAdded = new[] { TestItems.Id(2) },
+            ItemsRemoved = Array.Empty<string>(),
+            FoldersAddedTo = new[] { Guid.Parse(TestItems.Id(70)).ToString("D") }
+        });
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".card").Count));
+        Assert.Equal(2, _fetches);
+
+        _served = [Movie(2, "Two")];
+        ServerMessage("LibraryChanged", new
+        {
+            ItemsAdded = Array.Empty<string>(),
+            ItemsRemoved = new[] { TestItems.Id(1) },
+            CollectionFolders = new[] { TestItems.Id(70) }
+        });
+
+        cut.WaitForAssertion(() => Assert.Equal(new string?[] { TestItems.Id(2) }, CardIds(cut)));
+        Assert.Equal(3, _fetches);
+    }
+
+    [Fact]
+    public void A_list_without_parent_reloads_on_any_library_change()
+    {
+        _served = [Movie(1, "One")];
+        var cut = RenderContainer();
+        _served = [];
+
+        ServerMessage("LibraryChanged", new { ItemsAdded = Array.Empty<string>(), ItemsRemoved = new[] { TestItems.Id(1) } });
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".card")));
+        Assert.Equal(2, _fetches);
+    }
+
+    [Fact]
+    public async Task Timer_messages_mark_the_programmes_in_place()
+    {
+        var programme = Programme(1);
+        var recorded = Programme(2, timerId: "t2");
+        var series = Programme(3, seriesTimerId: "s3");
+        _served = [programme, recorded, series];
+        var cut = RenderContainer();
+
+        ServerMessage("TimerCreated", new { Id = "t1", ProgramId = TestItems.Id(1) });
+        ServerMessage("TimerCancelled", new { Id = "t2" });
+        ServerMessage("SeriesTimerCancelled", new { Id = "s3" });
+        await SettleAsync();
+
+        Assert.Equal("t1", programme.TimerId);
+        Assert.Null(recorded.TimerId);
+        Assert.Null(series.SeriesTimerId);
+        Assert.Equal(1, _fetches);
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".timerIndicator")));
+    }
+
+    [Theory]
+    [InlineData("timers", "TimerCreated", true)]
+    [InlineData("timers", "TimerCancelled", true)]
+    [InlineData("timers", "SeriesTimerCreated", false)]
+    [InlineData("seriestimers", "SeriesTimerCreated", true)]
+    [InlineData("seriestimers", "SeriesTimerCancelled", true)]
+    [InlineData("seriestimers", "LibraryChanged", false)]
+    [InlineData("timers", "LibraryChanged", false)]
+    public async Task Timer_lists_reload_on_their_messages(string monitor, string message, bool reloads)
+    {
+        _served = [Programme(1, timerId: "t1")];
+        _monitor = monitor;
+        var cut = RenderContainer();
+
+        ServerMessage(message, new { Id = "t9", ProgramId = TestItems.Id(9), ItemsAdded = new[] { TestItems.Id(9) } });
+
+        if (reloads)
+        {
+            cut.WaitForAssertion(() => Assert.Equal(2, _fetches));
+        }
+        else
+        {
+            await SettleAsync();
+            Assert.Equal(1, _fetches);
+        }
+    }
+
+    [Theory]
+    [InlineData("videoplayback", "Video", true)]
+    [InlineData("audioplayback", "Video", false)]
+    [InlineData("audioplayback", "Audio", true)]
+    [InlineData("markplayed", "Video", false)]
+    public async Task Playback_lists_reload_when_playback_stops(string monitor, string mediaType, bool reloads)
+    {
+        _served = [Movie(1, "One")];
+        _monitor = monitor;
+        var cut = RenderContainer();
+
+        Playback.Start(TestItems.Item(new { Id = TestItems.Id(5), Name = "Playing", Type = mediaType == "Audio" ? "Audio" : "Movie", MediaType = mediaType }));
+        await SettleAsync();
+        Assert.Equal(1, _fetches);
+
+        Playback.Stop();
+
+        if (reloads)
+        {
+            cut.WaitForAssertion(() => Assert.Equal(2, _fetches));
+        }
+        else
+        {
+            await SettleAsync();
+            Assert.Equal(1, _fetches);
+        }
+    }
+
+    [Fact]
+    public async Task Refresh_can_be_asked_for_and_a_disposed_container_stays_quiet()
+    {
+        _served = [Movie(1, "One")];
+        var cut = RenderContainer();
+        var container = cut.FindComponent<ItemsContainer>();
+        _served = [Movie(1, "One"), Movie(2, "Two")];
+
+        await cut.InvokeAsync(() => container.Instance.RefreshAsync());
+
+        Assert.Equal(2, container.Instance.CurrentItems.Count);
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".card").Count));
+
+        await container.Instance.DisposeAsync();
+        ServerMessage("LibraryChanged", new { ItemsAdded = new[] { TestItems.Id(3) } });
+        container.Instance.NotifyRefreshNeeded(foreground: true);
+        await SettleAsync();
+        Assert.Equal(2, _fetches);
+    }
+}

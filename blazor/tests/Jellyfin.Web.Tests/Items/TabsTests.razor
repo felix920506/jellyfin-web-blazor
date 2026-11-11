@@ -1,0 +1,268 @@
+@* Page tabs: PageTabs, TabContent, the app bar's AppBarTabs and the "tab" query parameter. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Routing
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Support
+@inherits ItemsTestContext
+
+@code {
+    private static readonly string[] Names = ["Movies", "Favorites", "Shows"];
+
+    private AppLocation _location = AppLocation.Parse("/movies?topParentId=p1");
+    private IReadOnlyList<string> _tabs = Names;
+    private bool _visible = true;
+    private int _defaultIndex;
+    private Func<Task<IReadOnlyList<BaseItemDto>>> _first = default!;
+    private Func<Task<IReadOnlyList<BaseItemDto>>> _second = default!;
+    private int _firstFetches;
+    private int _secondFetches;
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        SignIn();
+        _first = () =>
+        {
+            _firstFetches++;
+            return Task.FromResult<IReadOnlyList<BaseItemDto>>([]);
+        };
+        _second = () =>
+        {
+            _secondFetches++;
+            return Task.FromResult<IReadOnlyList<BaseItemDto>>([]);
+        };
+    }
+
+    private PageTabsState State => Get<PageTabsState>();
+
+    private IRenderedComponent<ContainerFragment> RenderPage() => Render(
+        @<CascadingValue Value="_location">
+            <AppBarTabs />
+            <PageTabs Tabs="_tabs" Visible="_visible" DefaultIndex="_defaultIndex">
+                <TabContent Index="0" Id="firstTab" Class="extra">
+                    <ItemsContainer Class="first" Fetch="_first" />
+                </TabContent>
+                <TabContent Index="1" Id="secondTab">
+                    <ItemsContainer Class="second" Fetch="_second" />
+                </TabContent>
+                <TabContent Index="2" Id="thirdTab" Lazy="false">
+                    <p class="third">always there</p>
+                </TabContent>
+            </PageTabs>
+        </CascadingValue>);
+
+    /// <summary>What the router does after a navigation: cascade the new location.</summary>
+    private void FollowNavigation(IRenderedComponent<ContainerFragment> cut)
+    {
+        _location = AppLocation.Parse(App.Browser.Hash);
+        Rerender(cut);
+    }
+
+    [Fact]
+    public void The_tabs_of_the_page_appear_in_the_app_bar()
+    {
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll(".jf-appbar-tabs button.emby-tab-button").Count));
+        var bar = cut.Find(".jf-appbar-tabs.headerTabs.sectionTabs > div.emby-tabs");
+        Assert.Equal("emby-tabs", bar.GetAttribute("is"));
+        Assert.Equal("0", bar.GetAttribute("data-index"));
+        var buttons = cut.FindAll(".emby-tabs > .emby-tabs-slider > button");
+        Assert.Equal(new[] { "Movies", "Favorites", "Shows" }, buttons.Select(button => button.TextContent.Trim()));
+        Assert.Equal("emby-tab-button emby-button emby-tab-button-active", buttons[0].ClassName);
+        Assert.Equal("emby-tab-button emby-button", buttons[1].ClassName);
+        Assert.Equal(new string?[] { "true", "false", "false" }, buttons.Select(button => button.GetAttribute("aria-selected")));
+        Assert.Equal(new string?[] { "0", "1", "2" }, buttons.Select(button => button.GetAttribute("data-index")));
+        Assert.NotNull(buttons[0].QuerySelector(".emby-button-foreground"));
+        Assert.Contains("body:jf-with-tabs", App.Browser.Classes);
+    }
+
+    [Fact]
+    public void Only_the_selected_tab_is_active_and_lazy_tabs_wait_for_their_turn()
+    {
+        var cut = RenderPage();
+
+        Assert.Equal("tabContent pageTabContent is-active extra", cut.Find("#firstTab").ClassName);
+        Assert.Equal("tabContent pageTabContent", cut.Find("#secondTab").ClassName);
+        Assert.Equal("1", cut.Find("#secondTab").GetAttribute("data-index"));
+        Assert.NotEmpty(cut.FindAll("#firstTab .itemsContainer.first"));
+        Assert.Empty(cut.FindAll("#secondTab .itemsContainer"));
+        Assert.Equal("always there", cut.Find("#thirdTab .third").TextContent);
+        Assert.Equal(1, _firstFetches);
+        Assert.Equal(0, _secondFetches);
+    }
+
+    [Fact]
+    public async Task Selecting_a_tab_changes_the_address_and_pauses_the_other_tabs()
+    {
+        var cut = RenderPage();
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll("button.emby-tab-button").Count));
+
+        cut.FindAll("button.emby-tab-button")[1].Click();
+
+        var location = AppLocation.Parse(App.Browser.Hash);
+        Assert.Equal("/movies", location.Path);
+        Assert.Equal("p1", location["topParentId"]);
+        Assert.Equal(1, location.Tab);
+
+        FollowNavigation(cut);
+
+        cut.WaitForAssertion(() => Assert.Equal("emby-tab-button emby-button emby-tab-button-active", cut.FindAll("button.emby-tab-button")[1].ClassName));
+        Assert.Equal("tabContent pageTabContent extra", cut.Find("#firstTab").ClassName);
+        Assert.Equal("tabContent pageTabContent is-active", cut.Find("#secondTab").ClassName);
+        Assert.NotEmpty(cut.FindAll("#firstTab .itemsContainer.first"));
+        Assert.NotEmpty(cut.FindAll("#secondTab .itemsContainer.second"));
+        Assert.Equal(1, _secondFetches);
+
+        // Only the visible tab reloads now; the hidden one catches up when it is shown again.
+        ServerMessage("LibraryChanged", new { ItemsAdded = new[] { TestItems.Id(1) } });
+        cut.WaitForAssertion(() => Assert.Equal(2, _secondFetches));
+        await Task.Delay(100);
+        Assert.Equal(1, _firstFetches);
+
+        cut.FindAll("button.emby-tab-button")[0].Click();
+        Assert.Equal(0, AppLocation.Parse(App.Browser.Hash).Tab);
+        FollowNavigation(cut);
+
+        cut.WaitForAssertion(() => Assert.Equal(2, _firstFetches));
+        Assert.Equal(2, _secondFetches);
+    }
+
+    [Fact]
+    public void The_address_selects_the_tab()
+    {
+        _location = AppLocation.Parse("/movies?tab=1");
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Equal("1", cut.Find("div.emby-tabs").GetAttribute("data-index")));
+        Assert.Equal("tabContent pageTabContent is-active", cut.Find("#secondTab").ClassName);
+        Assert.Empty(cut.FindAll("#firstTab .itemsContainer"));
+        Assert.Equal(0, _firstFetches);
+        Assert.Equal(1, _secondFetches);
+    }
+
+    [Fact]
+    public void Clicking_the_selected_tab_does_nothing()
+    {
+        App.Browser.Navigate("/movies?topParentId=p1");
+        var cut = RenderPage();
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll("button.emby-tab-button").Count));
+
+        cut.FindAll("button.emby-tab-button")[0].Click();
+
+        Assert.Equal("/movies?topParentId=p1", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void Hidden_tabs_keep_their_state_but_show_no_bar()
+    {
+        _visible = false;
+        _location = AppLocation.Parse("/home?tab=1");
+
+        var cut = RenderPage();
+
+        Assert.Empty(cut.FindAll(".jf-appbar-tabs"));
+        Assert.False(State.Visible);
+        Assert.DoesNotContain("body:jf-with-tabs", App.Browser.Classes);
+        Assert.Equal("tabContent pageTabContent is-active", cut.Find("#secondTab").ClassName);
+    }
+
+    [Fact]
+    public async Task Leaving_the_page_removes_the_tabs()
+    {
+        var cut = RenderPage();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".jf-appbar-tabs")));
+        Assert.True(State.Visible);
+
+        await DisposeComponentsAsync();
+
+        Assert.False(State.Visible);
+        Assert.Empty(State.Tabs);
+        Assert.DoesNotContain("body:jf-with-tabs", App.Browser.Classes);
+    }
+
+    [Theory]
+    [InlineData("/movies", 3, 0, 0)]
+    [InlineData("/movies", 3, 2, 2)]
+    [InlineData("/movies?tab=1", 3, 2, 1)]
+    [InlineData("/movies?tab=7", 3, 0, 2)]
+    [InlineData("/movies?tab=-1", 3, 1, 0)]
+    [InlineData("/movies?tab=x", 3, 1, 0)]
+    [InlineData("/movies?tab=1", 0, 0, 0)]
+    public void The_selected_index_comes_from_the_address(string hash, int count, int defaultIndex, int expected)
+    {
+        Assert.Equal(expected, PageTabs.GetSelectedIndex(AppLocation.Parse(hash), count, defaultIndex));
+        Assert.Equal(count > 0 ? Math.Clamp(defaultIndex, 0, count - 1) : 0, PageTabs.GetSelectedIndex(null, count, defaultIndex));
+    }
+
+    [Fact]
+    public void A_default_tab_is_used_when_the_address_names_none()
+    {
+        _defaultIndex = 1;
+
+        var cut = RenderPage();
+
+        Assert.Equal("tabContent pageTabContent is-active", cut.Find("#secondTab").ClassName);
+        Assert.Equal(1, State.SelectedIndex);
+    }
+
+    [Fact]
+    public void Tab_content_works_without_page_tabs()
+    {
+        var cut = Render(
+            @<CascadingValue Value="@AppLocation.Parse("/list?tab=1")">
+                <TabContent Index="0"><p class="zero">0</p></TabContent>
+                <TabContent Index="1"><p class="one">1</p></TabContent>
+                <TabContent Index="2" Active="true"><p class="two">2</p></TabContent>
+                <TabContent Index="3" Active="false"><p class="three">3</p></TabContent>
+            </CascadingValue>);
+
+        Assert.Equal(
+            new string?[] { "tabContent pageTabContent", "tabContent pageTabContent is-active", "tabContent pageTabContent is-active", "tabContent pageTabContent" },
+            cut.FindAll(".tabContent").Select(tab => tab.ClassName));
+        Assert.Empty(cut.FindAll(".zero"));
+        Assert.NotEmpty(cut.FindAll(".one"));
+        Assert.NotEmpty(cut.FindAll(".two"));
+        Assert.Empty(cut.FindAll(".three"));
+    }
+
+    [Fact]
+    public void The_tab_state_belongs_to_the_page_that_set_it_last()
+    {
+        var first = new object();
+        var second = new object();
+        var selected = new List<int>();
+        var changes = 0;
+        State.Changed += () => changes++;
+
+        State.Set(first, ["One", "Two"], 1, selected.Add);
+        State.Set(first, ["One", "Two"], 1, selected.Add);
+
+        Assert.Equal(1, changes);
+        Assert.Equal(new[] { "One", "Two" }, State.Tabs);
+        Assert.Equal(1, State.SelectedIndex);
+        Assert.Contains("body:jf-with-tabs", App.Browser.Classes);
+
+        State.Select(1);
+        State.Select(2);
+        State.Select(-1);
+        State.Select(0);
+
+        Assert.Equal(new[] { 0 }, selected);
+
+        State.Set(second, ["Three"], 0, _ => { });
+        State.Clear(first);
+
+        Assert.Equal(new[] { "Three" }, State.Tabs);
+        Assert.True(State.Visible);
+
+        State.Clear(second);
+
+        Assert.False(State.Visible);
+        Assert.Equal(0, State.SelectedIndex);
+        Assert.DoesNotContain("body:jf-with-tabs", App.Browser.Classes);
+    }
+}

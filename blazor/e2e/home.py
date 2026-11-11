@@ -57,6 +57,24 @@ def section_titles(page, tab):
     )
 
 
+def finish_home(page) -> int:
+    """finish(), without the failure of the optional config.json.
+
+    wwwroot/config.json is not in the repository (the root .gitignore excludes it), so the app's request for it
+    answers 404 and WebConfig falls back to its defaults. The browser reports that as a failed response and as a
+    console error without a URL; one such console error is dropped per missing config.json.
+    """
+    missing = [e for e in page.errors if e.startswith("HTTP 404 ") and e.endswith("/config.json")]
+    generic = "Failed to load resource: the server responded with a status of 404"
+    for entry in missing:
+        page.errors.remove(entry)
+        for error in page.errors:
+            if error.startswith(generic):
+                page.errors.remove(error)
+                break
+    return finish(page, "home")
+
+
 def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -166,7 +184,7 @@ def main() -> int:
             page.wait_for_selector("#favoritesTab .card", timeout=30_000)
             page.wait_for_timeout(2000)
             shot(page, "home-favorites-mobile")
-            code = finish(page, "home")
+            code = finish_home(page)
         finally:
             api.set_favorite(other["Id"], False)
             api.set_played(other["Id"], False)

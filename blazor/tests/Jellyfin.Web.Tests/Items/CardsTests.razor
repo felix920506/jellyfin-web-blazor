@@ -1,0 +1,258 @@
+@* Cards and Card: the markup of cardBuilder.js and what the elements of a card do when clicked. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Support
+@inherits ItemsTestContext
+
+@code {
+    private static readonly CardOptions PortraitCards = new()
+    {
+        Shape = CardShape.OverflowPortrait,
+        ShowTitle = true,
+        ShowYear = true,
+        CenterText = true,
+        Context = "movies",
+        ParentId = "p1"
+    };
+
+    private IReadOnlyList<BaseItemDto> _items = [];
+    private CardOptions _options = PortraitCards;
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        SignIn();
+    }
+
+    private static BaseItemDto Movie(int number, string name) => TestItems.Item(TestItems.Movie(number, name));
+
+    private IRenderedComponent<ContainerFragment> RenderCards() => Render(@<Cards Items="_items" Options="_options" />);
+
+    [Fact]
+    public void A_card_has_the_original_markup()
+    {
+        var movie = Movie(1, "One");
+        _items = [movie];
+
+        var cut = RenderCards();
+
+        var card = cut.Find(".card");
+        Assert.Equal("card overflowPortraitCard card-hoverable card-withuserdata", card.ClassName);
+        Assert.Equal(TestItems.Id(1), card.GetAttribute("data-id"));
+        Assert.Equal("Movie", card.GetAttribute("data-type"));
+        Assert.Equal("movies", card.GetAttribute("data-context"));
+        Assert.Equal("p1", card.GetAttribute("data-parentid"));
+        Assert.NotNull(cut.Find(".card > .cardBox > .cardScalable > .cardPadder.cardPadder-overflowPortrait"));
+
+        var image = cut.Find(".cardScalable > a.cardImageContainer");
+        Assert.Equal("cardImageContainer coveredImage cardContent itemAction lazy", image.ClassName);
+        Assert.Equal("link", image.GetAttribute("data-action"));
+        Assert.Equal("One", image.GetAttribute("aria-label"));
+        Assert.Equal(Get<AppRouter>().GetRouteUrl(movie), image.GetAttribute("href"));
+        Assert.StartsWith($"{TestApp.ServerUrl}/Items/{TestItems.Id(1)}/Images/Primary?", image.GetAttribute("data-src"), StringComparison.Ordinal);
+        Assert.Contains("tag=tag1", image.GetAttribute("data-src"), StringComparison.Ordinal);
+        Assert.Null(image.GetAttribute("style"));
+
+        Assert.Equal(new[] { "One", "2001" }, cut.FindAll(".cardBox > .cardText").Select(line => line.TextContent.Trim()));
+        Assert.Equal("cardText cardTextCentered cardText-first", cut.FindAll(".cardBox > .cardText")[0].ClassName);
+
+        // The hover menu of the desktop layout: play, played, favourite, more.
+        var hover = cut.Find(".cardScalable > .cardOverlayContainer.itemAction");
+        Assert.Equal("link", hover.GetAttribute("data-action"));
+        Assert.Equal(
+            new string?[] { "resume", "none", "none", "menu" },
+            hover.QuerySelectorAll("button").Select(button => button.GetAttribute("data-action")));
+        Assert.Equal("Play", hover.QuerySelector("button.cardOverlayFab-primary")!.GetAttribute("title"));
+        Assert.NotNull(hover.QuerySelector(".cardOverlayButton-br button[is=emby-playstatebutton] .cardOverlayButtonIcon-hover.check"));
+        Assert.NotNull(hover.QuerySelector(".cardOverlayButton-br button[is=emby-ratingbutton] .cardOverlayButtonIcon-hover.favorite"));
+    }
+
+    [Fact]
+    public void An_item_without_image_shows_its_icon_or_name()
+    {
+        _items = [TestItems.Item(new { Id = TestItems.Id(1), Name = "Plain", ServerId = TestApp.ServerId, Type = "Movie", MediaType = "Video" })];
+
+        var cut = RenderCards();
+
+        var image = cut.Find("a.cardImageContainer");
+        Assert.DoesNotContain("lazy", image.ClassList);
+        Assert.Null(image.GetAttribute("data-src"));
+        Assert.NotEmpty(image.QuerySelectorAll(".cardImageIcon, .cardDefaultText"));
+        Assert.Empty(cut.FindAll("canvas"));
+    }
+
+    [Fact]
+    public void A_blurhash_gets_a_canvas_unless_the_user_turned_it_off()
+    {
+        var item = new
+        {
+            Id = TestItems.Id(1),
+            Name = "One",
+            ServerId = TestApp.ServerId,
+            Type = "Movie",
+            MediaType = "Video",
+            ImageTags = new { Primary = "tag1" },
+            ImageBlurHashes = new { Primary = new Dictionary<string, string> { ["tag1"] = "LEHV6nWB2yk8pyo0adR*.7kCMdnj" } }
+        };
+        _items = [TestItems.Item(item)];
+
+        var cut = RenderCards();
+
+        var canvas = cut.Find(".cardScalable > canvas.blurhash-canvas");
+        Assert.Equal("20", canvas.GetAttribute("width"));
+        Assert.Equal("LEHV6nWB2yk8pyo0adR*.7kCMdnj", cut.Find("a.cardImageContainer").GetAttribute("data-blurhash"));
+
+        Get<UserSettings>().EnableBlurhash = false;
+        Rerender(cut);
+
+        Assert.Empty(cut.FindAll("canvas"));
+        Assert.Null(cut.Find("a.cardImageContainer").GetAttribute("data-blurhash"));
+    }
+
+    [Fact]
+    public void Clicking_the_image_opens_the_item()
+    {
+        var movie = Movie(1, "One");
+        _items = [movie];
+        var cut = RenderCards();
+
+        cut.Find("a.cardImageContainer").Click();
+
+        var expected = Get<AppRouter>().GetRouteUrl(movie, new RouteOptions { Context = "movies", ParentId = "p1" });
+        cut.WaitForAssertion(() => Assert.Equal(expected.TrimStart('#'), App.Browser.Hash));
+        Assert.Empty(Playback.Calls);
+    }
+
+    [Fact]
+    public void The_play_button_plays_without_opening_the_item()
+    {
+        _items = [Movie(1, "One"), Movie(2, "Two")];
+        App.Browser.Navigate("/home");
+        var cut = RenderCards();
+
+        cut.FindAll("button[data-action=resume]")[1].Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Play" }, Playback.Calls));
+        Assert.Equal(new[] { TestItems.Id(2) }, Assert.Single(Playback.PlayRequests).Ids);
+        Assert.Equal("/home", App.Browser.Hash);
+    }
+
+    [Fact]
+    public async Task The_more_button_opens_the_context_menu()
+    {
+        App.Server.OnGet("/Items/" + TestItems.Id(1), TestItems.Movie(1, "One"));
+        _items = [Movie(1, "One")];
+        App.Browser.Navigate("/home");
+        var cut = RenderCards();
+
+        cut.Find(".cardOverlayContainer button[data-action=menu]").Click();
+        var dialog = await NextDialogAsync();
+
+        Assert.Contains("actionSheet", dialog.Options.Class, StringComparison.Ordinal);
+        dialog.Close("queue");
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Queue" }, Playback.Calls));
+        Assert.Equal("/home", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void The_played_and_favourite_buttons_change_the_item()
+    {
+        var movie = Movie(1, "One");
+        App.Server.OnPost("/UserPlayedItems/" + TestItems.Id(1), new { Played = true, IsFavorite = false, PlaybackPositionTicks = 0 });
+        App.Server.OnPost("/UserFavoriteItems/" + TestItems.Id(1), new { Played = true, IsFavorite = true, PlaybackPositionTicks = 0 });
+        _items = [movie];
+        App.Browser.Navigate("/home");
+        var cut = RenderCards();
+
+        cut.Find("button[is=emby-playstatebutton]").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("true", cut.Find("button[is=emby-playstatebutton]").GetAttribute("data-played")));
+        Assert.True(movie.UserData!.Played);
+
+        cut.Find("button[is=emby-ratingbutton]").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("true", cut.Find("button[is=emby-ratingbutton]").GetAttribute("data-isfavorite")));
+        Assert.True(movie.UserData!.IsFavorite);
+        Assert.Equal("/home", App.Browser.Hash);
+        Assert.Empty(Playback.Calls);
+    }
+
+    [Fact]
+    public void The_mobile_layout_has_no_hover_menu()
+    {
+        _items = [Movie(1, "One")];
+        _options = PortraitCards with { OverlayPlayButton = true, OverlayMoreButton = true };
+        var cut = RenderCards();
+        Assert.NotEmpty(cut.FindAll(".cardOverlayContainer"));
+        Assert.Empty(cut.FindAll("button.cardOverlayButton-br"));
+
+        Get<AppHost>().SetLayout("mobile");
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".cardOverlayContainer")));
+        Assert.Equal("card overflowPortraitCard card-withuserdata", cut.Find(".card").ClassName);
+        Assert.Equal(
+            new string?[] { "play", "menu" },
+            cut.FindAll("button.cardOverlayButton-br").Select(button => button.GetAttribute("data-action")));
+
+        cut.Find("button.cardOverlayButton-br[data-action=play]").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Play" }, Playback.Calls));
+    }
+
+    [Fact]
+    public void Indexed_cards_are_grouped_under_titles()
+    {
+        _items = [Movie(1, "One"), Movie(1, "One again"), Movie(2, "Two")];
+        _options = PortraitCards with { IndexBy = "ProductionYear" };
+
+        var cut = RenderCards();
+
+        Assert.Equal(new[] { "2001", "2002" }, cut.FindAll(".horizontalSection > .sectionTitle").Select(title => title.TextContent));
+        Assert.Equal(new[] { 2, 1 }, cut.FindAll(".horizontalSection").Select(section => section.QuerySelectorAll(".card").Length));
+    }
+
+    [Fact]
+    public void Rows_stack_the_cards_in_columns()
+    {
+        _items = [Movie(1, "One"), Movie(2, "Two"), Movie(3, "Three")];
+        _options = PortraitCards with { Rows = 2 };
+
+        var cut = RenderCards();
+
+        Assert.Equal(new[] { 2, 1 }, cut.FindAll(".cardColumn").Select(column => column.QuerySelectorAll(".card").Length));
+    }
+
+    [Fact]
+    public void A_title_that_names_another_item_links_to_it()
+    {
+        var episode = TestItems.Item(new
+        {
+            Id = TestItems.Id(1),
+            Name = "Pilot",
+            ServerId = TestApp.ServerId,
+            Type = "Episode",
+            MediaType = "Video",
+            SeriesName = "Series",
+            SeriesId = TestItems.Id(90),
+            IndexNumber = 1,
+            ParentIndexNumber = 1
+        });
+        _items = [episode];
+        _options = new CardOptions { Shape = CardShape.OverflowBackdrop, ShowTitle = true, ShowParentTitle = true };
+        App.Browser.Navigate("/home");
+
+        var cut = RenderCards();
+
+        var link = cut.Find(".cardText a.textActionButton");
+        Assert.Equal("Series", link.TextContent);
+        Assert.Equal("link", link.GetAttribute("data-action"));
+        Assert.Equal(TestItems.Id(90), link.GetAttribute("data-id"));
+        Assert.Equal("Series", link.GetAttribute("data-type"));
+
+        link.Click();
+
+        cut.WaitForAssertion(() => Assert.StartsWith("/details?id=" + TestItems.Id(90), App.Browser.Hash, StringComparison.Ordinal));
+    }
+}
