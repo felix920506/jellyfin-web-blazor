@@ -370,3 +370,15 @@ to build items from server-style JSON.
 - The "not available yet" toast is an English literal: the original has no such text.
 - Multi-select, drag-and-drop reordering of lists and the alphabet picker are not part of these
   components.
+- The item menu opens in the middle of the window, not at the button: `ActionSheetOptions` has no
+  anchor (`PORT-TODO(items)` in `ItemContextMenu.cs`).
+- Play buttons on cards and the Play / Queue entries of the menu follow `IPlaybackManager.CanPlay` /
+  `CanQueue`. The foundation's placeholder answers false, so they only appear once the playback
+  workstream's manager is registered (the tests cover them with a fake manager).
+- The home page has no tab bar (`Visible="false"`): the shell's navigation links to Favorites
+  (`#/home?tab=1`), as in the original's modern layout.
+- Stylesheet order: the port's bundle emits `components/**` before `elements/**`, the reverse of the
+  original's load order, so `.paper-icon-button-light` (and `.emby-button`) override single-class
+  rules of component stylesheets. For the card and list-row buttons `Styles/port/_items.scss`
+  repeats the original values with higher specificity. If an icon button of your page sits in the
+  wrong place or has the wrong padding, this is the likely cause; do the same in your own partial.

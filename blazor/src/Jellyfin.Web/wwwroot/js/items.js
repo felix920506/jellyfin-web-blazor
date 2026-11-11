@@ -147,6 +147,8 @@ function fillImage(elem) {
     preloader.src = url;
 }
 
+// PORT-TODO(items): the original unloads images again when they leave the viewport (lazyLoader unveil/unload);
+// here an image stays loaded once it was shown.
 const imageObserver = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver((entries) => {
     for (const entry of entries) {
         if (entry.isIntersecting) {

@@ -57,6 +57,22 @@ def section_titles(page, tab):
     )
 
 
+PHONE = ("Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) "
+         "Chrome/120.0.0.0 Mobile Safari/537.36")
+
+
+def new_phone_page(browser):
+    """lib.new_page for a phone: the app picks its layout from the user agent, not from the window width."""
+    context = browser.new_context(viewport={"width": 400, "height": 800}, user_agent=PHONE, has_touch=True,
+                                  is_mobile=True, device_scale_factor=2)
+    page = context.new_page()
+    page.errors = []
+    page.on("console", lambda m: page.errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: page.errors.append(str(e)))
+    page.on("response", lambda r: page.errors.append(f"HTTP {r.status} {r.url}") if r.status >= 400 else None)
+    return page
+
+
 def finish_home(page) -> int:
     """finish(), without the failure of the optional config.json.
 
@@ -169,21 +185,34 @@ def main() -> int:
             go(page, "/home")
             page.wait_for_selector(f"#homeTab .card[data-id='{other['Id']}'] .playedIndicator", timeout=30_000)
 
-            # Mobile layout.
+            # A narrow desktop window keeps the desktop layout (the layout follows the user agent, as in the original).
             api.set_favorite(other["Id"], True)
             page.set_viewport_size({"width": 400, "height": 800})
             page.reload()
             page.wait_for_selector("#homeTab .section0 .card", timeout=120_000)
             page.wait_for_timeout(3000)
-            shot(page, "home-mobile")
-            check(page, page.locator("#homeTab .emby-scrollbuttons-button").count() == 0, "no scroll buttons on mobile")
-            page.mouse.wheel(0, 500)
-            page.wait_for_timeout(1500)
-            shot(page, "home-mobile-scrolled")
-            go(page, "/home?tab=1")
-            page.wait_for_selector("#favoritesTab .card", timeout=30_000)
-            page.wait_for_timeout(2000)
-            shot(page, "home-favorites-mobile")
+            shot(page, "home-narrow")
+            check(page, page.locator("#homeTab .emby-scrollbuttons-button").count() > 0, "a narrow desktop window keeps its scroll buttons")
+
+            # Mobile layout: a phone, signed in separately.
+            phone = new_phone_page(browser)
+            sign_in(phone)
+            phone.wait_for_selector("#homeTab .section0 .card", timeout=120_000)
+            phone.wait_for_timeout(3000)
+            shot(phone, "home-mobile")
+            check(phone, phone.locator("html.layout-mobile").count() == 1, "the phone uses the mobile layout")
+            check(phone, phone.locator("#homeTab .emby-scrollbuttons-button").count() == 0, "no scroll buttons on mobile")
+            check(phone, phone.locator("#homeTab .card .cardOverlayContainer").count() == 0, "no hover overlay on mobile")
+            phone.locator("#homeTab .verticalSection:not(.hide)").last.scroll_into_view_if_needed()
+            phone.wait_for_timeout(1500)
+            shot(phone, "home-mobile-scrolled")
+            go(phone, "/home?tab=1")
+            phone.wait_for_selector("#favoritesTab .card", timeout=30_000)
+            phone.wait_for_timeout(2000)
+            shot(phone, "home-favorites-mobile")
+            if phone.locator("#blazor-error-ui").is_visible():
+                phone.errors.append("the unhandled-error banner is visible on the phone")
+            page.errors.extend(phone.errors)
             code = finish_home(page)
         finally:
             api.set_favorite(other["Id"], False)

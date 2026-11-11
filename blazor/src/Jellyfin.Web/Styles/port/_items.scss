@@ -55,3 +55,71 @@ $jf-tabs-height: 40px;
 .jf-with-tabs .jf-appbar-offset {
     height: 48px + $jf-tabs-height;
 }
+
+// --- Cascade order of the icon buttons on cards and list rows -----------------------------------
+// The original loads elements/emby-button/emby-button.scss before components/cardbuilder/card.scss and
+// components/listview/listview.scss (cardBuilder.js imports the button first), so the single-class card and list
+// rules win over .paper-icon-button-light. The bundle of this port emits components/ before elements/
+// (scripts/prepare-assets.sh sorts by path), which turns that around: the overlay buttons lost their absolute
+// position, padding, margin and size. The declarations below repeat the original values of exactly the properties
+// both sides set, in the original order, with the specificity needed to win again. Nothing here is new styling.
+.cardOverlayButton.paper-icon-button-light {
+    margin: 0;
+    z-index: 1;
+    padding: 0.75em;
+    font-size: 88%;
+}
+
+.cardOverlayButton-br.paper-icon-button-light {
+    position: absolute;
+}
+
+.cardOverlayButton-centered.paper-icon-button-light {
+    position: absolute;
+    display: flex;
+    font-size: 112%;
+    margin: -1.3em 0 0 -1.3em;
+    width: 2.6em;
+    height: 2.6em;
+    transition: transform 200ms ease-out;
+}
+
+.cardOverlayButton-hover.paper-icon-button-light {
+    background: transparent;
+    padding: 0.25em;
+}
+
+// Two classes in the original as well; repeated because the rules above now have the same specificity and come later.
+.cardOverlayContainer > .cardOverlayFab-primary.paper-icon-button-light {
+    font-size: 130%;
+    padding: 0;
+    width: 3em;
+    height: 3em;
+    margin-top: -1.5em;
+    margin-left: -1.5em;
+    position: absolute;
+}
+
+.btnCardOptions.paper-icon-button-light {
+    position: absolute;
+    z-index: 1;
+}
+
+.listItemButton.paper-icon-button-light {
+    margin: 0;
+    display: inline-block;
+}
+
+.listItemImageButton.paper-icon-button-light {
+    margin: auto;
+    color: rgba(255, 255, 255, 0.6);
+    background: rgba(0, 0, 0, 0.4);
+    font-size: 1.6em;
+    transition: 200ms ease-out;
+    display: flex;
+
+    &:hover {
+        color: #00a4dc;
+        background: rgba(0, 164, 220, 0.2);
+    }
+}

@@ -3,7 +3,8 @@
     and emby-scrollbuttons. The content is the scroll slider (class "scrollSlider"), usually an
     ItemsContainer. The element around the scroller must have the class "emby-scroller-container"
     (ItemsSection does that): the buttons are positioned against it.
-    Unlike the original, which moves the slider with transforms on desktop, this always scrolls natively.
+    PORT-TODO(items): the original moves the slider with transforms on desktop (scroller.js: scrollToElement,
+    centre focus, wheel translation); this always scrolls natively.
 *@
 @implements IAsyncDisposable
 @inject IItemsInterop Interop

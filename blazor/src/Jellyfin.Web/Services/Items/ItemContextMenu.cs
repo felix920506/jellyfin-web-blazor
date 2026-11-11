@@ -303,6 +303,8 @@ public sealed class ItemContextMenu(
             return null;
         }
 
+        // PORT-TODO(items): the original opens the menu at the button (positionTo); ActionSheetOptions has no
+        // anchor, so the menu opens in the middle of the window.
         var id = await dialogs.ActionSheetAsync(new ActionSheetOptions { Items = commands });
         return string.IsNullOrEmpty(id) ? null : await ExecuteAsync(id, options);
     }
