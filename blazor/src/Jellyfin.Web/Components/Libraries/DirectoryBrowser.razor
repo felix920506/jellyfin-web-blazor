@@ -1,0 +1,249 @@
+@* Picks a folder (or file) on the server. Port of components/directorybrowser/directorybrowser.js. *@
+@implements IDisposable
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject LoadingService Loading
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCloseDialog autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@(string.IsNullOrEmpty(Header) ? Globalize["HeaderSelectPath"] : Header)</h3>
+</div>
+<div class="formDialogContent scrollY">
+    <div class="dialogContentInner dialog-content-centered" style="padding-top:2em;">
+        @if (!PathReadOnly && !string.IsNullOrEmpty(Instruction))
+        {
+            <div class="infoBanner" style="margin-bottom:1.5em;">@Instruction<br /><br /></div>
+        }
+        <form style="margin:auto;" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true" @onsubmit:stopPropagation="true">
+            <div class="inputContainer" style="display: flex; align-items: center;">
+                <div style="flex-grow:1;">
+                    <label class="inputLabel @(_focused ? "inputLabelFocused" : "inputLabelUnfocused")" for="txtDirectoryPickerPath">@Globalize[IncludeFiles == true ? "LabelPath" : "LabelFolder"]</label>
+                    <input id="txtDirectoryPickerPath" class="emby-input" type="text" required readonly="@PathReadOnly" value="@_path" autocomplete="off"
+                           @oninput="args => _path = args.Value?.ToString() ?? string.Empty" @onchange="OnPathCommittedAsync"
+                           @onfocus="() => _focused = true" @onblur="() => _focused = false" />
+                </div>
+                @if (!PathReadOnly)
+                {
+                    <IconButton Icon="search" Class="btnRefreshDirectories emby-input-iconbutton" Title="@Globalize["Refresh"]"
+                                OnClick="() => RefreshAsync(_path, false)" />
+                }
+            </div>
+            @if (!PathReadOnly)
+            {
+                <div class="results paperList" style="max-height: 200px; overflow-y: auto;">
+                    @foreach (var entry in _entries)
+                    {
+                        var item = entry;
+                        <div class="listItem listItem-border @(item.IsFile ? "lnkPath lnkFile" : "lnkPath lnkDirectory")" data-type="@item.Type" data-path="@item.Path"
+                             @onclick="() => OnEntryClickAsync(item)">
+                            <div class="listItemBody" style="padding-left:0;padding-top:.5em;padding-bottom:.5em;">
+                                <div class="listItemBodyText">@item.Name</div>
+                            </div>
+                            <span class="material-icons arrow_forward" aria-hidden="true" style="font-size:inherit;"></span>
+                        </div>
+                    }
+                </div>
+            }
+            <div class="formDialogFooter">
+                <button type="submit" class="emby-button raised button-submit block formDialogFooterItem">@Globalize["ButtonOk"]</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private readonly List<Entry> _entries = [];
+    private string _path = string.Empty;
+    private bool _focused;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>Initial path; the server's default directory browser path when empty.</summary>
+    [Parameter]
+    public string? Path { get; set; }
+
+    [Parameter]
+    public string? Header { get; set; }
+
+    [Parameter]
+    public string? Instruction { get; set; }
+
+    [Parameter]
+    public bool? IncludeDirectories { get; set; }
+
+    [Parameter]
+    public bool? IncludeFiles { get; set; }
+
+    [Parameter]
+    public bool PathReadOnly { get; set; }
+
+    [Parameter]
+    public bool ValidateWriteable { get; set; }
+
+    /// <summary>
+    /// Opens the picker and returns the chosen path, or null when it was closed. As in the
+    /// original, the path is returned as soon as the form is submitted; an invalid path is
+    /// reported with an alert (PathNotFound / WriteAccessRequired) but still returned.
+    /// </summary>
+    public static async Task<string?> ShowAsync(
+        AppDialogs dialogs,
+        string? path = null,
+        string? header = null,
+        string? instruction = null,
+        bool? includeDirectories = null,
+        bool? includeFiles = null,
+        bool pathReadOnly = false,
+        bool validateWriteable = false)
+    {
+        var result = await dialogs.ShowAsync<DirectoryBrowser>(
+            new Dictionary<string, object?>
+            {
+                [nameof(Path)] = path,
+                [nameof(Header)] = header,
+                [nameof(Instruction)] = instruction,
+                [nameof(IncludeDirectories)] = includeDirectories,
+                [nameof(IncludeFiles)] = includeFiles,
+                [nameof(PathReadOnly)] = pathReadOnly,
+                [nameof(ValidateWriteable)] = validateWriteable
+            },
+            new AppDialogOptions { Size = "small", Class = "ui-body-a background-theme-a directoryPicker formDialog" });
+        return result as string;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _path = await GetDefaultPathAsync();
+        if (!PathReadOnly)
+        {
+            await RefreshAsync(_path, true);
+        }
+    }
+
+    public void Dispose() => Loading.Hide();
+
+    private async Task<string> GetDefaultPathAsync()
+    {
+        if (!string.IsNullOrEmpty(Path))
+        {
+            return Path;
+        }
+
+        try
+        {
+            var info = await Api.Client.Environment.DefaultDirectoryBrowser.GetAsync();
+            return info?.Path ?? string.Empty;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private async Task RefreshAsync(string? path, bool updatePathOnError)
+    {
+        Loading.Show();
+        try
+        {
+            List<FileSystemEntryInfo> folders;
+            var parentPath = string.Empty;
+            if (!string.IsNullOrEmpty(path))
+            {
+                var contents = Api.Client.Environment.DirectoryContents.GetAsync(r =>
+                {
+                    r.QueryParameters.Path = path;
+                    r.QueryParameters.IncludeDirectories = IncludeDirectories ?? true;
+                    r.QueryParameters.IncludeFiles = IncludeFiles;
+                });
+                var parent = Api.Client.Environment.ParentPath.GetAsync(r => r.QueryParameters.Path = path);
+                await Task.WhenAll(contents, parent);
+                folders = contents.Result ?? [];
+                parentPath = parent.Result ?? string.Empty;
+            }
+            else
+            {
+                folders = await Api.Client.Environment.Drives.GetAsync() ?? [];
+            }
+
+            _path = path ?? string.Empty;
+            _entries.Clear();
+            if (!string.IsNullOrEmpty(path))
+            {
+                _entries.Add(new Entry(string.Empty, parentPath, "...", false));
+            }
+
+            foreach (var folder in folders)
+            {
+                var type = folder.Type.ToApiString() ?? string.Empty;
+                _entries.Add(new Entry(type, folder.Path ?? string.Empty, folder.Name ?? string.Empty, type == "File"));
+            }
+
+            Loading.Hide();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Without updatePathOnError the original leaves everything as it is (the loading
+            // indicator included, until the dialog closes).
+            if (updatePathOnError)
+            {
+                _path = string.Empty;
+                _entries.Clear();
+                Loading.Hide();
+            }
+        }
+    }
+
+    private Task OnEntryClickAsync(Entry entry)
+    {
+        if (entry.IsFile)
+        {
+            _path = entry.Path;
+            return Task.CompletedTask;
+        }
+
+        return RefreshAsync(entry.Path, true);
+    }
+
+    private Task OnPathCommittedAsync(ChangeEventArgs args)
+    {
+        _path = args.Value?.ToString() ?? string.Empty;
+        return RefreshAsync(_path, false);
+    }
+
+    private async Task SubmitAsync()
+    {
+        var path = _path;
+
+        // The original hands the path to its caller right away and validates it on the side.
+        Dialog.Close(path);
+        await ValidatePathAsync(path);
+    }
+
+    private async Task ValidatePathAsync(string path)
+    {
+        try
+        {
+            // The original posts "ValidateWriteable" (sic), which the server does not know.
+            using var response = await Api.SendAsync(
+                HttpMethod.Post,
+                "Environment/ValidatePath",
+                new System.Text.Json.Nodes.JsonObject { ["ValidateWriteable"] = ValidateWriteable, ["Path"] = path });
+            switch ((int)response.StatusCode)
+            {
+                case 404:
+                    await Dialogs.AlertAsync(Globalize["PathNotFound"]);
+                    break;
+                case 500:
+                    await Dialogs.AlertAsync(Globalize[ValidateWriteable ? "WriteAccessRequired" : "PathNotFound"]);
+                    break;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Network failures are ignored like in the original.
+        }
+    }
+
+    private sealed record Entry(string Type, string Path, string Name, bool IsFile);
+}

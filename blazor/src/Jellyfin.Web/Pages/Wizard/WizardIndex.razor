@@ -1,0 +1,8 @@
+@* /wizard redirects to the first step. Port of the index route of apps/wizard/routes/routes.tsx. *@
+@attribute [Route("/wizard")]
+@attribute [Access(AccessLevel.Wizard)]
+@inject AppRouter Router
+
+@code {
+    protected override void OnInitialized() => Router.Navigate("/wizard/start", replace: true);
+}

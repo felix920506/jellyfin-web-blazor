@@ -1,0 +1,285 @@
+@* Startup wizard, step 3: the media libraries. Port of apps/wizard/controllers/library. *@
+@attribute [Route("/wizard/library")]
+@attribute [Access(AccessLevel.Wizard)]
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject AppDialogs Dialogs
+@inject LoadingService Loading
+@inject IBrowser Browser
+@inject Globalize Globalize
+
+<Page Id="wizardLibraryPage" Class="standalonePage wizardPage mediaLibraryPage">
+    <div class="padded-left padded-right padded-top">
+        <div class="ui-corner-all ui-shadow wizardContent">
+            <div>
+                <h1 style="display:inline-block;">@Globalize["HeaderSetupLibrary"]</h1>
+                <a href="https://jellyfin.org/docs/general/server/libraries" rel="noopener noreferrer" target="_blank" class="clearLink"
+                   style="margin-top:-10px;display:inline-block;vertical-align:middle;margin-left:2em;">
+                    <EmbyButton Class="raised">
+                        <span class="material-icons info" aria-hidden="true"></span>
+                        <span>@Globalize["Help"]</span>
+                    </EmbyButton>
+                </a>
+            </div>
+            <br />
+            <div id="divVirtualFolders" class="@(_loaded ? "itemsContainer vertical-wrap" : null)">
+                @for (var i = 0; i < _cards.Count; i++)
+                {
+                    var index = i;
+                    var card = _cards[i];
+                    var folder = card.Folder;
+                    <div id="@(folder is null ? "addLibrary" : null)" class="card backdropCard scalableCard backdropCard-scalable" style="min-width:33.3%;"
+                         data-index="@index" data-id="@folder?.ItemId" @key="card" @onclick="() => OnCardClickAsync(card)">
+                        <div class="cardBox visualCardBox">
+                            <div class="cardScalable visualCardBox-cardScalable">
+                                <div class="cardPadder cardPadder-backdrop"></div>
+                                <div class="cardContent">
+                                    @if (card.ImageUrl is not null)
+                                    {
+                                        <div class="cardImageContainer editLibrary" style="cursor:pointer" @onclick="() => EditAsync(card)">
+                                            <img src="@card.ImageUrl" style="width:100%" />
+                                            @RefreshIndicator(folder)
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="cardImageContainer editLibrary @card.BackgroundClass" style="cursor:pointer;" @onclick="() => EditAsync(card)">
+                                            <span class="cardImageIcon material-icons @card.Icon" aria-hidden="true"></span>
+                                            @RefreshIndicator(folder)
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                            <div class="cardFooter visualCardBox-cardFooter">
+                                @if (folder is not null)
+                                {
+                                    var align = Globalize.IsRtl ? "left" : "right";
+                                    <div style="text-align:@align; float:@align;padding-top:5px;">
+                                        <IconButton Icon="more_vert" Class="btnCardMenu autoSize" OnClick="() => ShowCardMenuAsync(folder)" />
+                                    </div>
+                                }
+                                <div class="cardText">@card.Name</div>
+                                @if (folder is null)
+                                {
+                                    <div class="cardText cardText-secondary">&nbsp;</div>
+                                    <div class="cardText cardText-secondary">&nbsp;</div>
+                                }
+                                else
+                                {
+                                    <div class="cardText cardText-secondary">@card.TypeName</div>
+                                    @if (folder.Locations is { Count: 1 } locations)
+                                    {
+                                        <div class="cardText cardText-secondary" dir="ltr" style="text-align:left;">@locations[0]</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="cardText cardText-secondary">@Globalize.Translate("NumLocationsValue", folder.Locations?.Count ?? 0)</div>
+                                    }
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+            <br />
+            <br />
+            <div class="wizardNavigation">
+                <EmbyButton Class="raised button-cancel" OnClick="Router.Back">
+                    <span class="material-icons arrow_back" aria-hidden="true"></span>
+                    <span>@Globalize["Previous"]</span>
+                </EmbyButton>
+                <EmbyButton Class="raised button-submit" OnClick="Next">
+                    <span>@Globalize["Next"]</span>
+                    <span class="material-icons arrow_forward" aria-hidden="true"></span>
+                </EmbyButton>
+            </div>
+        </div>
+    </div>
+</Page>
+
+@code {
+    // The wizard never asks the server to scan after a change (the page id is not "mediaLibraryPage").
+    private const bool RefreshAfterChanges = false;
+
+    private readonly List<LibraryCard> _cards = [];
+    private bool _loaded;
+
+    protected override Task OnInitializedAsync() => ReloadLibraryAsync();
+
+    private static RenderFragment RefreshIndicator(VirtualFolderInfo? folder) => builder =>
+    {
+        // PORT-TODO(session): emby-itemrefreshindicator (a progress ring fed by the RefreshProgress
+        // socket messages) is not ported; the element is rendered without its ring. The wizard has
+        // no session and therefore no socket, and it never starts a scan itself.
+        var progress = folder?.RefreshProgress ?? 0;
+        var status = folder?.RefreshStatus;
+        var visible = progress != 0 || (!string.IsNullOrEmpty(status) && status != "Idle");
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "class", "cardIndicators backdropCardIndicators");
+        builder.OpenElement(2, "div");
+        builder.AddAttribute(3, "class", visible ? "progressring" : "progressring hide");
+        builder.AddAttribute(4, "dir", "ltr");
+        builder.AddAttribute(5, "data-progress", progress.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        builder.AddAttribute(6, "data-status", status ?? "undefined");
+        builder.CloseElement();
+        builder.CloseElement();
+    };
+
+    private void Next() => Router.Navigate("/wizard/settings");
+
+    private async Task ReloadLibraryAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var folders = await Api.Client.Library.VirtualFolders.GetAsync() ?? [];
+            var typeOptions = LibraryUi.GetCollectionTypeOptions(Globalize);
+            _cards.Clear();
+            foreach (var folder in folders)
+            {
+                var collectionType = folder.CollectionType.ToApiString();
+                var typeName = (collectionType is null ? null : typeOptions.FirstOrDefault(option => option.Value == collectionType)?.Name)
+                    ?? Globalize["Other"];
+                string? imageUrl = null;
+                if (!string.IsNullOrEmpty(folder.PrimaryImageItemId))
+                {
+                    // getScaledImageUrl: the width in device pixels, the default quality.
+                    var maxWidth = Math.Round(Math.Round(Browser.Environment.ScreenWidth * 0.40, MidpointRounding.AwayFromZero) * Browser.Environment.DevicePixelRatio, MidpointRounding.AwayFromZero);
+                    imageUrl = Api.GetUrl($"Items/{folder.PrimaryImageItemId}/Images/Primary", ("maxWidth", (int)maxWidth), ("quality", 90));
+                }
+
+                _cards.Add(new LibraryCard(folder, folder.Name ?? string.Empty, typeName, imageUrl, LibraryUi.GetLibraryIcon(collectionType), SessionUi.DefaultBackgroundClass()));
+            }
+
+            _cards.Add(new LibraryCard(null, Globalize["ButtonAddMediaLibrary"], string.Empty, null, "add_circle", SessionUi.DefaultBackgroundClass()));
+            _loaded = true;
+            Loading.Hide();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The original leaves the loading indicator up when the request fails.
+            AppLog.Warn("Loading the libraries failed: " + ex.Message);
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task OnCardClickAsync(LibraryCard card)
+    {
+        if (card.Folder is not null)
+        {
+            return;
+        }
+
+        var options = LibraryUi.GetCollectionTypeOptions(Globalize);
+        if (await MediaLibraryCreator.ShowAsync(Dialogs, options, RefreshAfterChanges))
+        {
+            await ReloadLibraryAsync();
+        }
+    }
+
+    private Task EditAsync(LibraryCard card)
+    {
+        if (card.Folder is null || string.IsNullOrEmpty(card.Folder.ItemId))
+        {
+            return Task.CompletedTask;
+        }
+
+        // PORT-TODO(session): clicking a library's image opens components/mediaLibraryEditor
+        // (folders and options of an existing library), which is not ported.
+        return Task.CompletedTask;
+    }
+
+    private async Task ShowCardMenuAsync(VirtualFolderInfo folder)
+    {
+        var result = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        {
+            Items =
+            [
+                new ActionSheetItem { Id = "editimages", Name = Globalize["EditImages"], Icon = "photo" },
+                new ActionSheetItem { Id = "edit", Name = Globalize["ManageLibrary"], Icon = "folder" },
+                new ActionSheetItem { Id = "rename", Name = Globalize["ButtonRename"], Icon = "mode_edit" },
+                new ActionSheetItem { Id = "refresh", Name = Globalize["ScanLibrary"], Icon = "refresh" },
+                new ActionSheetItem { Id = "delete", Name = Globalize["ButtonRemove"], Icon = "delete" }
+            ]
+        });
+
+        switch (result)
+        {
+            case "rename":
+                await RenameAsync(folder);
+                break;
+            case "delete":
+                await DeleteAsync(folder);
+                break;
+            case "edit":
+                // PORT-TODO(session): "Manage library" opens components/mediaLibraryEditor, which is not ported.
+                break;
+            case "editimages":
+                // PORT-TODO(session): "Edit images" opens components/imageeditor, which is not ported.
+                break;
+            case "refresh":
+                // PORT-TODO(session): "Scan library" opens components/refreshdialog, which is not ported.
+                break;
+        }
+    }
+
+    private async Task RenameAsync(VirtualFolderInfo folder)
+    {
+        var newName = await Dialogs.PromptAsync(null, Globalize["LabelNewName"], description: Globalize["MessageRenameMediaFolder"], confirmText: Globalize["ButtonRename"]);
+        if (string.IsNullOrEmpty(newName) || newName == folder.Name)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.Library.VirtualFolders.Name.PostAsync(request =>
+            {
+                request.QueryParameters.RefreshLibrary = RefreshAfterChanges;
+                request.QueryParameters.NewName = newName;
+                request.QueryParameters.Name = folder.Name;
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("Renaming the library failed: " + ex.Message);
+            return;
+        }
+
+        await ReloadLibraryAsync();
+    }
+
+    private async Task DeleteAsync(VirtualFolderInfo folder)
+    {
+        var message = SessionUi.HtmlEncode(Globalize["MessageAreYouSureYouWishToRemoveMediaFolder"]);
+        if (folder.Locations is { Count: > 0 } locations)
+        {
+            message += "<br/><br/>" + SessionUi.HtmlEncode(Globalize["MessageTheFollowingLocationWillBeRemovedFromLibrary"]) + "<br/><br/>";
+            message += string.Join("<br/>", locations.Select(SessionUi.HtmlEncode));
+        }
+
+        if (!await Dialogs.ConfirmHtmlAsync(Globalize, message, Globalize["HeaderRemoveMediaFolder"], Globalize["Delete"], destructive: true))
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.Library.VirtualFolders.DeleteAsync(request =>
+            {
+                request.QueryParameters.RefreshLibrary = RefreshAfterChanges;
+                request.QueryParameters.Name = folder.Name;
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("Removing the library failed: " + ex.Message);
+            return;
+        }
+
+        await ReloadLibraryAsync();
+    }
+
+    private sealed record LibraryCard(VirtualFolderInfo? Folder, string Name, string TypeName, string? ImageUrl, string Icon, string BackgroundClass);
+}

@@ -1,0 +1,91 @@
+@* Startup wizard, step 1: server name and display language. Port of apps/wizard/controllers/start. *@
+@attribute [Route("/wizard/start")]
+@attribute [Access(AccessLevel.Wizard)]
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject LoadingService Loading
+@inject Globalize Globalize
+
+@* The original also adds .noHomeButtonHeader to .skinHeader; the port's shell has no such header. *@
+<Page Id="wizardStartPage" Class="standalonePage wizardPage" BackButton="false">
+    <div class="padded-left padded-right padded-top">
+        <div class="ui-corner-all ui-shadow wizardContent" style="position:relative;">
+            <form class="wizardStartForm" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                <div>
+                    <h1 style="float:left;">@Globalize["WelcomeToProject"]</h1>
+                    <a class="emby-button raised raised-alt" rel="noopener noreferrer" href="https://jellyfin.org/docs/general/post-install/setup-wizard/"
+                       target="_blank" style="float:right;margin-top:20px;">
+                        <span>@Globalize["ButtonQuickStartGuide"]</span>
+                    </a>
+                </div>
+                <br style="clear:both;" />
+                <p>@Globalize["ThisWizardWillGuideYou"]</p>
+                <br />
+                <EmbyInput Id="txtServerName" Label="@Globalize["LabelServerName"]" Required="true" Description="@Globalize["LabelServerNameHelp"]"
+                           @bind-Value="_serverName" />
+                <EmbySelect Id="selectLocalizationLanguage" Label="@Globalize["LabelPreferredDisplayLanguage"]" @bind-Value="_language">
+                    @foreach (var option in _languages)
+                    {
+                        <option value="@option.Value">@option.Name</option>
+                    }
+                </EmbySelect>
+                <br />
+                <div class="wizardNavigation" style="text-align:right;">
+                    <EmbyButton Type="submit" Class="raised button-submit">
+                        <span>@Globalize["Next"]</span>
+                        <span class="material-icons arrow_forward" aria-hidden="true"></span>
+                    </EmbyButton>
+                </div>
+            </form>
+        </div>
+    </div>
+</Page>
+
+@code {
+    // The startup endpoints are marked deprecated in the API description; the wizard still uses them.
+#pragma warning disable CS0618
+    private List<LocalizationOption> _languages = [];
+    private string? _serverName;
+    private string? _language;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var systemInfo = Api.Client.System.Info.Public.GetAsync();
+            var config = Api.Client.Startup.Configuration.GetAsync();
+            var languages = Api.Client.Localization.OptionsPath.GetAsync();
+            await Task.WhenAll(systemInfo, config, languages);
+
+            _languages = languages.Result ?? [];
+            var configuredName = config.Result?.ServerName;
+            _serverName = string.IsNullOrEmpty(configuredName) ? systemInfo.Result?.ServerName : configuredName;
+            _language = config.Result?.UICulture;
+            Loading.Hide();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The original leaves the loading indicator up when a request fails.
+            AppLog.Warn("Loading the wizard start page failed: " + ex.Message);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var config = await Api.Client.Startup.Configuration.GetAsync() ?? new StartupConfigurationDto();
+            config.ServerName = _serverName;
+            config.UICulture = _language;
+            await Api.Client.Startup.Configuration.PostAsync(config);
+            Router.Navigate("/wizard/user");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("Saving the server name and language failed: " + ex.Message);
+        }
+    }
+#pragma warning restore CS0618
+}

@@ -1,0 +1,64 @@
+@* A sortable list of plugins, optionally with checkboxes. The lists of components/libraryoptionseditor. *@
+@inject Globalize Globalize
+
+<div class="checkboxList paperList checkboxList-paperList">
+    @for (var i = 0; i < Rows.Count; i++)
+    {
+        var index = i;
+        var row = Rows[i];
+        <div class="listItem @ItemClass sortableOption" data-pluginname="@row.Name" @key="row">
+            @if (Icon is not null)
+            {
+                <span class="listItemIcon material-icons @Icon" aria-hidden="true"></span>
+            }
+            @if (CheckboxClass is not null)
+            {
+                <EmbyCheckbox LabelClass="listItemCheckboxContainer" Class="@CheckboxClass" data-pluginname="@row.Name"
+                              Value="row.Checked" ValueChanged="value => row.Checked = value" />
+            }
+            <div class="listItemBody">
+                <h3 class="listItemBodyText">@row.Name</h3>
+            </div>
+            @if (index > 0)
+            {
+                <IconButton Icon="keyboard_arrow_up" Class="btnSortableMoveUp btnSortable" Title="@Globalize["Up"]" data-pluginindex="@index"
+                            OnClick="() => Move(index, index - 1)" />
+            }
+            else if (Rows.Count > 1)
+            {
+                <IconButton Icon="keyboard_arrow_down" Class="btnSortableMoveDown btnSortable" Title="@Globalize["Down"]" data-pluginindex="@index"
+                            OnClick="() => Move(index, index + 1)" />
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>The plugins; reordered and (un)checked in place.</summary>
+    [Parameter, EditorRequired]
+    public List<LibraryPluginRow> Rows { get; set; } = [];
+
+    /// <summary>Class of each item, e.g. "metadataFetcherItem".</summary>
+    [Parameter]
+    public string? ItemClass { get; set; }
+
+    /// <summary>Class of the checkboxes, e.g. "chkMetadataFetcher"; null for a list without checkboxes.</summary>
+    [Parameter]
+    public string? CheckboxClass { get; set; }
+
+    /// <summary>Leading icon of each item (the metadata readers use one).</summary>
+    [Parameter]
+    public string? Icon { get; set; }
+
+    private void Move(int from, int to)
+    {
+        if (to < 0 || to >= Rows.Count)
+        {
+            return;
+        }
+
+        var row = Rows[from];
+        Rows.RemoveAt(from);
+        Rows.Insert(to, row);
+    }
+}

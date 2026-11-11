@@ -42,6 +42,8 @@ vendor material-design-icons-iconfont 6.7.0 material-design-icons-iconfont \
     'package/dist/material-design-icons.css' 'package/dist/fonts/*.woff2' 'package/dist/fonts/*.woff'
 vendor @jellyfin/ux-web 1.0.0 jellyfin-ux-web 'package/*.png' 'package/favicons/*'
 vendor hls.js 1.7.4 hls.js 'package/dist/hls.min.js'
+vendor markdown-it 14.3.3 markdown-it 'package/dist/markdown-it.min.js'
+vendor dompurify 2.5.9 dompurify 'package/dist/purify.min.js'
 for font in noto-sans noto-sans-hk noto-sans-jp noto-sans-kr noto-sans-sc noto-sans-tc; do
     vendor "@fontsource/$font" 5.3.0 "fontsource/$font" \
         'package/files/*-400-normal.woff2' 'package/files/*-700-normal.woff2'
