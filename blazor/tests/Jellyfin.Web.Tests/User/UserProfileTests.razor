@@ -1,0 +1,268 @@
+@* The profile page (/userprofile): user image and the password section. *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.User
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private static readonly Guid Other = SettingsTestExtensions.OtherUserId;
+
+    private static object UserJson(Guid id, string name, string? imageTag = null, bool admin = false, bool preferenceAccess = true) => new
+    {
+        Id = id,
+        Name = name,
+        PrimaryImageTag = imageTag,
+        Policy = new { IsAdministrator = admin, EnableUserPreferenceAccess = preferenceAccess }
+    };
+
+    private IRenderedComponent<UserProfile> RenderProfile(string? userId = null)
+    {
+        var cut = Render<UserProfile>(parameters => parameters.Add(page => page.UserId, userId));
+        cut.Eventually(() => Assert.NotNull(cut.Find("#userProfilePage")));
+        return cut;
+    }
+
+    [Fact]
+    public void A_user_without_an_image_gets_the_placeholder_and_the_add_button()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester"));
+
+        var cut = RenderProfile();
+
+        Assert.Equal("tester", cut.Find("h2.username").TextContent);
+        Assert.Contains("background-image:url(generated/assets/img/avatar.png);", cut.Find("#image").GetAttribute("style"), StringComparison.Ordinal);
+        Assert.False(cut.Find("#btnAddImage").HasClass("hide"));
+        Assert.True(cut.Find("#btnDeleteImage").HasClass("hide"));
+        Assert.Equal(this.T("ButtonAddImage"), cut.Find("#btnAddImage").TextContent.Trim());
+        Assert.Equal("image/*", cut.Find("#uploadImage").GetAttribute("accept"));
+        Assert.Equal("file", cut.Find("#uploadImage").GetAttribute("type"));
+        Assert.Equal("page mainAnimatedPage libraryPage userPreferencesPage userPasswordPage noSecondaryNavPage", cut.Find("#userProfilePage").ClassName);
+        // The header shows the user's name, as in the original.
+        cut.Eventually(() => Assert.Equal("tester", Services.GetRequiredService<ShellState>().Title));
+        Assert.False(this.IsLoading());
+        Assert.Single(this.UserLoads(TestApp.UserId));
+    }
+
+    [Fact]
+    public void A_user_with_an_image_gets_it_shown_and_the_delete_button()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester", imageTag: "tag1"));
+
+        var cut = RenderProfile();
+
+        var style = cut.Find("#image").GetAttribute("style");
+        Assert.Contains($"background-image:url({TestApp.ServerUrl}/Users/{TestApp.UserId:N}/Images/Primary?tag=tag1);", style, StringComparison.Ordinal);
+        Assert.True(cut.Find("#btnAddImage").HasClass("hide"));
+        Assert.False(cut.Find("#btnDeleteImage").HasClass("hide"));
+        Assert.Equal(this.T("DeleteImage"), cut.Find("#btnDeleteImage").TextContent.Trim());
+    }
+
+    [Fact]
+    public void Without_preference_access_there_is_no_image_button_and_no_password_form()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester", preferenceAccess: false));
+
+        var cut = RenderProfile();
+
+        Assert.True(cut.Find("#btnAddImage").HasClass("hide"));
+        Assert.True(cut.Find("#btnDeleteImage").HasClass("hide"));
+        Assert.True(cut.Find("form.updatePasswordForm").HasClass("hide"));
+    }
+
+    [Fact]
+    public void An_administrator_edits_another_user()
+    {
+        SignIn(admin: true);
+        this.ScriptUser(Other, UserJson(Other, "guest", preferenceAccess: false));
+
+        var cut = RenderProfile(Other.ToString("N"));
+
+        Assert.Equal("guest", cut.Find("h2.username").TextContent);
+        Assert.False(cut.Find("#btnAddImage").HasClass("hide"));
+        Assert.False(cut.Find("form.updatePasswordForm").HasClass("hide"));
+        Assert.False(cut.Find("#btnResetPassword").HasClass("hide"));
+        Assert.Single(this.UserLoads(Other));
+        Assert.Empty(this.UserLoads(TestApp.UserId));
+    }
+
+    [Fact]
+    public void A_user_that_cannot_be_loaded_leaves_the_page_empty_and_loading()
+    {
+        SignIn();
+
+        var cut = Render<UserProfile>();
+
+        cut.Eventually(() => Assert.Single(this.UserLoads(TestApp.UserId)));
+        Assert.Empty(cut.FindAll("#userProfilePage"));
+        Assert.True(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task The_add_button_opens_the_file_picker()
+    {
+        var module = JSInterop.SetupModule("./js/sessionui.js");
+        module.Mode = JSRuntimeMode.Loose;
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester"));
+        var cut = RenderProfile();
+
+        await this.Settle(() => cut.Find("#btnAddImage").ClickAsync(new MouseEventArgs()));
+
+        cut.Eventually(() => Assert.Single(module.Invocations, invocation => invocation.Identifier == "click"));
+    }
+
+    [Fact]
+    public void A_chosen_image_is_uploaded_base64_encoded_and_the_user_reloaded()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester"));
+        App.Server.OnPost("/UserImage", _ =>
+        {
+            // From now on the user has an image.
+            this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester", imageTag: "fresh"));
+            return FakeHttp.Status(HttpStatusCode.NoContent);
+        });
+        App.Server.OnGet("/Users/Me", UserJson(TestApp.UserId, "tester", imageTag: "fresh"));
+        var cut = RenderProfile();
+        byte[] image = [0x89, 0x50, 0x4E, 0x47, 1, 2, 3, 4, 5];
+
+        cut.FindComponent<InputFile>().UploadFiles(InputFileContent.CreateFromBinary(image, "me.png", contentType: "image/png"));
+
+        cut.Eventually(() => Assert.Contains("Images/Primary?tag=fresh", cut.Find("#image").GetAttribute("style"), StringComparison.Ordinal));
+        var upload = Assert.Single(App.Server.RequestsTo("/UserImage"));
+        Assert.Equal(HttpMethod.Post, upload.Method);
+        Assert.True(upload.QueryIs("userId", TestApp.UserId));
+        Assert.Equal(Convert.ToBase64String(image), upload.Body);
+        Assert.Contains("Token=\"test-token\"", upload.Headers["Authorization"], StringComparison.Ordinal);
+        Assert.True(cut.Find("#btnAddImage").HasClass("hide"));
+        Assert.False(cut.Find("#btnDeleteImage").HasClass("hide"));
+        Assert.Equal(2, this.UserLoads(TestApp.UserId).Count);
+        // The signed-in user is refreshed so that the header shows the new image.
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Users/Me")));
+        cut.Eventually(() => Assert.Equal("fresh", Services.GetRequiredService<JellyfinApi>().User?.PrimaryImageTag));
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public void Uploading_for_another_user_does_not_refresh_the_signed_in_user()
+    {
+        SignIn(admin: true);
+        this.ScriptUser(Other, UserJson(Other, "guest"));
+        App.Server.OnPost("/UserImage");
+        var cut = RenderProfile(Other.ToString("N"));
+
+        cut.FindComponent<InputFile>().UploadFiles(InputFileContent.CreateFromBinary([1, 2, 3], "guest.jpg", contentType: "image/jpeg"));
+
+        cut.Eventually(() => Assert.Equal(2, this.UserLoads(Other).Count));
+        Assert.True(Assert.Single(App.Server.RequestsTo("/UserImage")).QueryIs("userId", Other));
+        Assert.Empty(App.Server.RequestsTo("/Users/Me"));
+    }
+
+    [Fact]
+    public void A_file_that_is_not_an_image_is_ignored()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester"));
+        App.Server.OnPost("/UserImage");
+        var cut = RenderProfile();
+
+        cut.FindComponent<InputFile>().UploadFiles(InputFileContent.CreateFromText("hello", "notes.txt", contentType: "text/plain"));
+
+        Assert.Empty(App.Server.RequestsTo("/UserImage"));
+        Assert.Contains("avatar.png", cut.Find("#image").GetAttribute("style"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_failed_upload_keeps_the_page_usable()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester"));
+        App.Server.OnPost("/UserImage", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+        var cut = RenderProfile();
+
+        cut.FindComponent<InputFile>().UploadFiles(InputFileContent.CreateFromBinary([1, 2, 3], "me.png", contentType: "image/png"));
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/UserImage")));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        // The user is not reloaded; the add button stays.
+        Assert.Single(this.UserLoads(TestApp.UserId));
+        Assert.False(cut.Find("#btnAddImage").HasClass("hide"));
+    }
+
+    [Fact]
+    public async Task Deleting_the_image_asks_first_and_reloads_the_user()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester", imageTag: "tag1"));
+        App.Server.On(HttpMethod.Delete, "/UserImage", _ =>
+        {
+            this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester"));
+            return FakeHttp.Status(HttpStatusCode.NoContent);
+        });
+        App.Server.OnGet("/Users/Me", UserJson(TestApp.UserId, "tester"));
+        var cut = RenderProfile();
+        var dialogs = this.RenderDialogs();
+
+        await this.Settle(() => cut.Find("#btnDeleteImage").ClickAsync(new MouseEventArgs()));
+
+        dialogs.Eventually(() => Assert.Equal(this.T("DeleteImage"), dialogs.Find(".formDialogHeaderTitle").TextContent));
+        Assert.Equal(this.T("DeleteImageConfirmation"), dialogs.Find(".text").TextContent);
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Delete);
+
+        await this.Settle(() => dialogs.Find("button.btnOption[data-id=ok]").ClickAsync(new MouseEventArgs()));
+
+        cut.Eventually(() => Assert.Contains("avatar.png", cut.Find("#image").GetAttribute("style"), StringComparison.Ordinal));
+        var delete = Assert.Single(App.Server.Requests, request => request.Method == HttpMethod.Delete);
+        Assert.EndsWith("/UserImage", delete.Path, StringComparison.Ordinal);
+        Assert.True(delete.QueryIs("userId", TestApp.UserId));
+        Assert.False(cut.Find("#btnAddImage").HasClass("hide"));
+        Assert.True(cut.Find("#btnDeleteImage").HasClass("hide"));
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Users/Me")));
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task Declining_the_confirmation_keeps_the_image()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester", imageTag: "tag1"));
+        App.Server.OnDelete("/UserImage");
+        var cut = RenderProfile();
+        var dialogs = this.RenderDialogs();
+
+        await this.Settle(() => cut.Find("#btnDeleteImage").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("button.btnOption[data-id=cancel]")));
+        await this.Settle(() => dialogs.Find("button.btnOption[data-id=cancel]").ClickAsync(new MouseEventArgs()));
+
+        dialogs.Eventually(() => Assert.Empty(dialogs.FindAll(".dialog")));
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Delete);
+        Assert.Contains("tag=tag1", cut.Find("#image").GetAttribute("style"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_failed_delete_keeps_the_image()
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, "tester", imageTag: "tag1"));
+        var cut = RenderProfile();
+        var dialogs = this.RenderDialogs();
+
+        await this.Settle(() => cut.Find("#btnDeleteImage").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("button.btnOption[data-id=ok]")));
+        await this.Settle(() => dialogs.Find("button.btnOption[data-id=ok]").ClickAsync(new MouseEventArgs()));
+
+        cut.Eventually(() => Assert.Single(App.Server.Requests, request => request.Method == HttpMethod.Delete));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        Assert.Contains("tag=tag1", cut.Find("#image").GetAttribute("style"), StringComparison.Ordinal);
+        Assert.False(cut.Find("#btnDeleteImage").HasClass("hide"));
+    }
+}

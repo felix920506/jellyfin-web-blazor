@@ -1,0 +1,69 @@
+@* Settings: controls (/mypreferencescontrols). *@
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.User
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    [Fact]
+    public void The_stored_settings_are_shown()
+    {
+        SignIn();
+        this.StoreAppSetting("enableGamepad", "true");
+
+        var cut = Render<ControlsPreferences>();
+
+        Assert.True(cut.Find("#controlsPreferencesPage .enableGamepadContainer input.chkEnableGamepad").IsChecked());
+        Assert.False(cut.Find("input.chkSmoothScroll").IsChecked());
+        Assert.Equal(this.T("Controls"), cut.Find("h2.sectionTitle").TextContent);
+        Assert.Equal(
+            [this.T("EnableGamepadHelp"), this.T("LabelPleaseRestart")],
+            cut.FindAll(".enableGamepadContainer .fieldDescription").Select(description => description.TextContent));
+        Assert.Equal(this.T("Save"), cut.Find("button.btnSave").TextContent.Trim());
+    }
+
+    [Fact]
+    public void Nothing_is_enabled_by_default()
+    {
+        SignIn();
+
+        var cut = Render<ControlsPreferences>();
+
+        Assert.False(cut.Find("input.chkEnableGamepad").IsChecked());
+        // Smooth scrolling belongs to the TV layout, which the port does not have.
+        Assert.True(cut.Find(".smoothScrollContainer").HasClass("hide"));
+    }
+
+    [Fact]
+    public async Task Saving_stores_the_settings_for_this_device()
+    {
+        SignIn();
+        var cut = Render<ControlsPreferences>();
+
+        cut.Find("input.chkEnableGamepad").Change(true);
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        Assert.Equal("true", this.AppSetting("enableGamepad"));
+        Assert.Equal("false", this.AppSetting("enableSmoothScroll"));
+        Assert.Equal([this.T("SettingsSaved")], this.Toasts());
+        Assert.True(Services.GetRequiredService<AppSettings>().EnableGamepad);
+        // Nothing of this is stored on the server.
+        Assert.Empty(App.Server.Requests);
+    }
+
+    [Fact]
+    public async Task Unticking_stores_the_setting_as_disabled()
+    {
+        SignIn();
+        this.StoreAppSetting("enableGamepad", "true");
+        var cut = Render<ControlsPreferences>();
+
+        cut.Find("input.chkEnableGamepad").Change(false);
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        Assert.Equal("false", this.AppSetting("enableGamepad"));
+    }
+}

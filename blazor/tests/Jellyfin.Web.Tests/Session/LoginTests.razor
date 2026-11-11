@@ -1,0 +1,273 @@
+@* The sign-in page: user cards, manual form, errors, Quick Connect, disclaimer. *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.Session
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private static readonly object Authenticated = new
+    {
+        AccessToken = "token",
+        ServerId = TestApp.ServerId,
+        User = new { Id = TestApp.UserId, Name = "tester", ServerId = TestApp.ServerId, Policy = new { IsAdministrator = false } }
+    };
+
+    private IRenderedComponent<Login> RenderLogin(object[]? users = null, string? url = null)
+    {
+        this.UseServer();
+        App.Server.OnGet("/Users/Public", users ?? []);
+        return Render<Login>(p => p.Add(x => x.Url, url));
+    }
+
+    private static object[] TwoUsers() =>
+    [
+        new { Id = "11111111111111111111111111111111", Name = "open", HasPassword = false },
+        new { Id = "22222222222222222222222222222222", Name = "locked", HasPassword = true, PrimaryImageTag = "tag1" }
+    ];
+
+    [Fact]
+    public void Public_users_are_shown_as_cards()
+    {
+        App.Server.OnGet("/QuickConnect/Enabled", "true");
+        var cut = RenderLogin(TwoUsers());
+
+        cut.Eventually(() => Assert.Equal(2, cut.FindAll("#divUsers button.card").Count));
+        Assert.False(cut.Find(".visualLoginForm").HasClass("hide"));
+        Assert.True(cut.Find("form.manualLoginForm").HasClass("hide"));
+        Assert.False(cut.Find(".btnManual").HasClass("hide"));
+        Assert.False(cut.Find(".btnQuick").HasClass("hide"));
+        Assert.True(cut.Find(".btnSelectServer").HasClass("hide"));
+
+        var contents = cut.FindAll("#divUsers .cardContent");
+        Assert.Equal("false", contents[0].GetAttribute("data-haspw"));
+        Assert.Equal("open", contents[0].GetAttribute("data-username"));
+        Assert.Equal("11111111111111111111111111111111", contents[0].GetAttribute("data-userid"));
+        Assert.NotNull(contents[0].QuerySelector(".cardImage .material-icons.person"));
+        Assert.Equal("true", contents[1].GetAttribute("data-haspw"));
+        var image = contents[1].QuerySelector(".cardImageContainer")!.GetAttribute("style");
+        Assert.Contains(TestApp.ServerUrl + "/Users/22222222222222222222222222222222/Images/Primary?tag=tag1&width=300", image, StringComparison.Ordinal);
+        Assert.False(Services.GetRequiredService<LoadingService>().IsVisible);
+    }
+
+    [Fact]
+    public void Without_public_users_the_manual_form_is_shown()
+    {
+        var cut = RenderLogin();
+
+        cut.Eventually(() => Assert.False(cut.Find("form.manualLoginForm").HasClass("hide")));
+        Assert.True(cut.Find(".visualLoginForm").HasClass("hide"));
+        Assert.True(cut.Find(".btnManual").HasClass("hide"));
+        Assert.True(cut.Find(".btnCancel").HasClass("hide"));
+        // Quick Connect is not offered when its state cannot be read.
+        Assert.True(cut.Find(".btnQuick").HasClass("hide"));
+        Assert.Single(App.Server.RequestsTo("/QuickConnect/Enabled"));
+        Assert.Single(App.Server.RequestsTo("/Branding/Configuration"));
+    }
+
+    [Fact]
+    public void The_manual_button_opens_the_form_and_cancel_returns_to_the_cards()
+    {
+        var cut = RenderLogin(TwoUsers());
+        cut.Eventually(() => Assert.Equal(2, cut.FindAll("#divUsers button.card").Count));
+
+        cut.Find(".btnManual").Click();
+
+        Assert.False(cut.Find("form.manualLoginForm").HasClass("hide"));
+        Assert.False(cut.Find(".btnCancel").HasClass("hide"));
+        Assert.True(cut.Find(".btnManual").HasClass("hide"));
+
+        cut.Find(".btnCancel").Click();
+
+        Assert.True(cut.Find("form.manualLoginForm").HasClass("hide"));
+        Assert.False(cut.Find(".visualLoginForm").HasClass("hide"));
+    }
+
+    [Fact]
+    public async Task Signing_in_posts_the_credentials_and_opens_the_requested_page()
+    {
+        App.Server.OnPost("/Users/AuthenticateByName", Authenticated);
+        var cut = RenderLogin(url: "/mypreferencesmenu");
+        cut.Eventually(() => Assert.False(cut.Find("form.manualLoginForm").HasClass("hide")));
+
+        cut.Find("#txtManualName").Input("tester");
+        cut.Find("#txtManualPassword").Input("secret");
+        cut.Find(".chkRememberLogin").Change(false);
+        await this.Settle(() => cut.Find("form.manualLoginForm").SubmitAsync());
+
+        var request = Assert.Single(App.Server.RequestsTo("/Users/AuthenticateByName"));
+        Assert.Contains("\"Username\":\"tester\"", request.Body, StringComparison.Ordinal);
+        Assert.Contains("\"Pw\":\"secret\"", request.Body, StringComparison.Ordinal);
+        Assert.Equal("/mypreferencesmenu", App.Browser.Hash);
+        Assert.True(Services.GetRequiredService<JellyfinApi>().IsLoggedIn);
+        Assert.False(Services.GetRequiredService<AppSettings>().EnableAutoLogin);
+        Assert.Contains("\"AccessToken\":\"token\"", App.Browser.LocalStorage[CredentialStore.StorageKey], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Without_a_requested_page_signing_in_opens_home()
+    {
+        App.Server.OnPost("/Users/AuthenticateByName", Authenticated);
+        var cut = RenderLogin();
+        cut.Eventually(() => Assert.False(cut.Find("form.manualLoginForm").HasClass("hide")));
+
+        cut.Find("#txtManualName").Input("tester");
+        await this.Settle(() => cut.Find("form.manualLoginForm").SubmitAsync());
+
+        Assert.Equal("/home", App.Browser.Hash);
+        Assert.Contains("\"Pw\":\"\"", App.Server.RequestsTo("/Users/AuthenticateByName")[0].Body, StringComparison.Ordinal);
+        Assert.True(Services.GetRequiredService<AppSettings>().EnableAutoLogin);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "Invalid username or password. Please try again.")]
+    [InlineData(HttpStatusCode.Forbidden, "You are not authorized to access the server at this time. Please contact your server administrator for more information.")]
+    public async Task A_refused_sign_in_shows_a_toast_and_clears_the_password(HttpStatusCode status, string message)
+    {
+        App.Server.OnPost("/Users/AuthenticateByName", _ => FakeHttp.Status(status));
+        var cut = RenderLogin();
+        cut.Eventually(() => Assert.False(cut.Find("form.manualLoginForm").HasClass("hide")));
+
+        cut.Find("#txtManualName").Input("tester");
+        cut.Find("#txtManualPassword").Input("wrong");
+        await this.Settle(() => cut.Find("form.manualLoginForm").SubmitAsync());
+
+        Assert.Equal([message], this.Toasts());
+        Assert.Equal(string.Empty, cut.Find("#txtManualPassword").GetAttribute("value") ?? string.Empty);
+        Assert.Equal("tester", cut.Find("#txtManualName").GetAttribute("value"));
+        Assert.Equal(string.Empty, App.Browser.Hash);
+        Assert.False(Services.GetRequiredService<LoadingService>().IsVisible);
+        Assert.Empty(this.Dialogs().Dialogs);
+    }
+
+    [Fact]
+    public void A_server_failure_shows_the_connection_alert()
+    {
+        App.Server.OnPost("/Users/AuthenticateByName", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+        var cut = RenderLogin();
+        var dialogs = this.RenderDialogs();
+        cut.Eventually(() => Assert.False(cut.Find("form.manualLoginForm").HasClass("hide")));
+
+        cut.Find("#txtManualName").Input("tester");
+        cut.Find("form.manualLoginForm").Submit();
+
+        dialogs.Eventually(() => Assert.Equal("Connection Failure", dialogs.Find(".formDialogHeaderTitle").TextContent));
+        Assert.Contains("We're unable to connect to the selected server right now.", dialogs.Find(".text").TextContent, StringComparison.Ordinal);
+        Assert.Empty(this.Toasts());
+    }
+
+    [Fact]
+    public async Task A_user_without_password_signs_in_with_one_click()
+    {
+        App.Server.OnPost("/Users/AuthenticateByName", Authenticated);
+        var cut = RenderLogin(TwoUsers());
+        cut.Eventually(() => Assert.Equal(2, cut.FindAll("#divUsers button.card").Count));
+
+        await this.Settle(() => cut.FindAll("#divUsers button.card")[0].ClickAsync(new()));
+
+        var request = Assert.Single(App.Server.RequestsTo("/Users/AuthenticateByName"));
+        Assert.Contains("\"Username\":\"open\"", request.Body, StringComparison.Ordinal);
+        Assert.Contains("\"Pw\":\"\"", request.Body, StringComparison.Ordinal);
+        Assert.Equal("/home", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void A_user_with_password_opens_the_manual_form_with_the_name_filled_in()
+    {
+        var cut = RenderLogin(TwoUsers());
+        cut.Eventually(() => Assert.Equal(2, cut.FindAll("#divUsers button.card").Count));
+
+        cut.FindAll("#divUsers button.card")[1].Click();
+
+        Assert.False(cut.Find("form.manualLoginForm").HasClass("hide"));
+        Assert.Equal("locked", cut.Find("#txtManualName").GetAttribute("value"));
+        Assert.False(cut.Find(".btnCancel").HasClass("hide"));
+        Assert.Empty(App.Server.RequestsTo("/Users/AuthenticateByName"));
+    }
+
+    [Fact]
+    public void Quick_connect_shows_the_code_and_signs_in_once_it_is_authorized()
+    {
+        var interval = Login.QuickConnectPollInterval;
+        Login.QuickConnectPollInterval = TimeSpan.FromMilliseconds(10);
+        try
+        {
+            var polls = 0;
+            App.Server.OnGet("/QuickConnect/Enabled", "true");
+            App.Server.OnPost("/QuickConnect/Initiate", new { Secret = "s3cret", Code = "123456", Authenticated = false });
+            App.Server.OnGet("/QuickConnect/Connect", _ => new { Secret = "s3cret", Code = "123456", Authenticated = ++polls >= 2 });
+            App.Server.OnPost("/Users/AuthenticateWithQuickConnect", Authenticated);
+            var cut = RenderLogin();
+            var dialogs = this.RenderDialogs();
+            cut.Eventually(() => Assert.False(cut.Find(".btnQuick").HasClass("hide")));
+
+            cut.Find(".btnQuick").Click();
+
+            dialogs.Eventually(() => Assert.Contains("123456", dialogs.Find(".text").TextContent, StringComparison.Ordinal));
+            Assert.Equal("Quick Connect", dialogs.Find(".formDialogHeaderTitle").TextContent);
+
+            cut.Eventually(() => Assert.Equal("/home", App.Browser.Hash), TimeSpan.FromSeconds(5));
+            Assert.True(polls >= 2);
+            Assert.All(App.Server.RequestsTo("/QuickConnect/Connect"), request => Assert.Equal("s3cret", request.Query("secret")));
+            Assert.Contains("\"Secret\":\"s3cret\"", Assert.Single(App.Server.RequestsTo("/Users/AuthenticateWithQuickConnect")).Body, StringComparison.Ordinal);
+            // The code dialog closes by itself.
+            Assert.Empty(this.Dialogs().Dialogs);
+        }
+        finally
+        {
+            Login.QuickConnectPollInterval = interval;
+        }
+    }
+
+    [Fact]
+    public void Quick_connect_that_cannot_start_shows_an_error()
+    {
+        App.Server.OnGet("/QuickConnect/Enabled", "true");
+        App.Server.OnPost("/QuickConnect/Initiate", _ => FakeHttp.Status(HttpStatusCode.Unauthorized));
+        var cut = RenderLogin();
+        var dialogs = this.RenderDialogs();
+        cut.Eventually(() => Assert.False(cut.Find(".btnQuick").HasClass("hide")));
+
+        cut.Find(".btnQuick").Click();
+
+        dialogs.Eventually(() => Assert.Equal("Error", dialogs.Find(".formDialogHeaderTitle").TextContent));
+        Assert.Contains("Quick Connect is not active on this server", dialogs.Find(".text").TextContent, StringComparison.Ordinal);
+        Assert.Empty(App.Server.RequestsTo("/QuickConnect/Connect"));
+    }
+
+    [Fact]
+    public void The_login_disclaimer_is_rendered_through_the_sanitising_markdown_renderer()
+    {
+        var module = JSInterop.SetupModule("./js/sessionui.js");
+        module.Setup<string>("renderDisclaimer", "**Welcome**").SetResult("<p><strong>Welcome</strong></p>");
+        App.Server.OnGet("/Branding/Configuration", new { LoginDisclaimer = "**Welcome**" });
+
+        var cut = RenderLogin();
+
+        cut.Eventually(() => Assert.Equal("<p><strong>Welcome</strong></p>", cut.Find(".loginDisclaimer").InnerHtml));
+    }
+
+    [Fact]
+    public async Task The_change_server_button_is_offered_in_multiserver_mode_only()
+    {
+        await this.UseConfigAsync(new { multiserver = true });
+
+        var cut = RenderLogin();
+
+        Assert.False(cut.Find(".btnSelectServer").HasClass("hide"));
+        cut.Find(".btnSelectServer").Click();
+        Assert.Equal("/selectserver", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void The_forgot_password_button_opens_its_page()
+    {
+        var cut = RenderLogin();
+
+        cut.Find(".btnForgotPassword").Click();
+
+        Assert.Equal("/forgotpassword", App.Browser.Hash);
+    }
+}

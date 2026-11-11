@@ -1,0 +1,212 @@
+@* The settings menu (/mypreferencesmenu). *@
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.User
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private static readonly string Me = TestApp.UserId.ToString("N");
+
+    private IRenderedComponent<UserPreferencesMenu> RenderMenu(bool quickConnect = false, string? userId = null)
+    {
+        App.Server.OnGet("/QuickConnect/Enabled", quickConnect ? "true" : "false");
+        var cut = Render<UserPreferencesMenu>(parameters => parameters.Add(page => page.UserId, userId));
+        cut.Eventually(() => Assert.NotNull(cut.Find("#myPreferencesMenuPage")));
+        return cut;
+    }
+
+    [Fact]
+    public void The_menu_links_to_the_settings_pages_of_the_signed_in_user()
+    {
+        SignIn();
+
+        var cut = RenderMenu();
+
+        Assert.Equal("tester", cut.Find("h2.headerUsername").TextContent);
+        Assert.Equal("#/userprofile?userId=" + Me, cut.Find("a.lnkUserProfile").GetAttribute("href"));
+        Assert.Equal("#/mypreferencesdisplay?userId=" + Me, cut.Find("a.lnkDisplayPreferences").GetAttribute("href"));
+        Assert.Equal("#/mypreferenceshome?userId=" + Me, cut.Find("a.lnkHomePreferences").GetAttribute("href"));
+        Assert.Equal("#/mypreferencesplayback?userId=" + Me, cut.Find("a.lnkPlaybackPreferences").GetAttribute("href"));
+        Assert.Equal("#/mypreferencessubtitles?userId=" + Me, cut.Find("a.lnkSubtitlePreferences").GetAttribute("href"));
+        Assert.Equal("#/mypreferencescontrols?userId=" + Me, cut.Find("a.lnkControlsPreferences").GetAttribute("href"));
+        Assert.Equal(
+            [this.T("Profile"), this.T("Display"), this.T("Home"), this.T("TitlePlayback"), this.T("Subtitles"), this.T("Controls"), this.T("ButtonSignOut")],
+            cut.FindAll(".listItemBodyText").Select(text => text.TextContent));
+        Assert.All(cut.FindAll("a.emby-button"), link => Assert.True(link.HasClass("listItem-border")));
+        Assert.Equal("page libraryPage userPreferencesPage noSecondaryNavPage mainAnimatedPage", cut.Find("#myPreferencesMenuPage").ClassName);
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public void Quick_connect_is_offered_when_the_server_has_it_enabled()
+    {
+        SignIn();
+
+        var cut = RenderMenu(quickConnect: true);
+
+        Assert.Equal("#/quickconnect?userId=" + Me, cut.Find("a.lnkQuickConnectPreferences").GetAttribute("href"));
+        Assert.Single(App.Server.RequestsTo("/QuickConnect/Enabled"));
+    }
+
+    [Fact]
+    public void Quick_connect_is_left_out_when_disabled_or_unknown()
+    {
+        SignIn();
+
+        var cut = RenderMenu(quickConnect: false);
+
+        Assert.Empty(cut.FindAll(".lnkQuickConnectPreferences"));
+    }
+
+    [Fact]
+    public void A_failing_quick_connect_request_counts_as_disabled()
+    {
+        SignIn();
+
+        // Nothing scripted: the request answers 404.
+        var cut = Render<UserPreferencesMenu>();
+
+        cut.Eventually(() => Assert.NotNull(cut.Find("#myPreferencesMenuPage")));
+        Assert.Empty(cut.FindAll(".lnkQuickConnectPreferences"));
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public void Administrators_get_the_server_and_metadata_entries()
+    {
+        SignIn(admin: true);
+
+        var cut = RenderMenu();
+
+        Assert.Equal(["#/dashboard", "#/metadata"], cut.FindAll(".adminSection a.emby-button").Select(link => link.GetAttribute("href")));
+        Assert.Equal(this.T("HeaderAdmin"), cut.Find(".adminSection h2").TextContent);
+        Assert.Equal([this.T("ManageServer"), this.T("ManageMetadata")], cut.FindAll(".adminSection .listItemBodyText").Select(text => text.TextContent));
+    }
+
+    [Fact]
+    public void Other_users_get_no_admin_section()
+    {
+        SignIn();
+
+        var cut = RenderMenu();
+
+        Assert.Empty(cut.FindAll(".adminSection"));
+        Assert.NotNull(cut.Find(".userSection .btnLogout"));
+        // Without multiple servers there is no server selection.
+        Assert.Empty(cut.FindAll(".selectServer"));
+    }
+
+    [Fact]
+    public void Mobile_browsers_have_no_controls_entry()
+    {
+        App.Browser.Environment = App.Browser.Environment with
+        {
+            UserAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
+        };
+        SignIn();
+
+        var cut = RenderMenu();
+
+        Assert.Empty(cut.FindAll(".lnkControlsPreferences"));
+        Assert.NotNull(cut.Find(".lnkSubtitlePreferences"));
+    }
+
+    [Fact]
+    public void Another_user_is_looked_up_and_gets_the_settings_links_only()
+    {
+        SignIn(admin: true);
+        var other = SettingsTestExtensions.OtherUserId;
+        App.Server.OnGet("/Users", new[]
+        {
+            new { Id = TestApp.UserId, Name = "tester" },
+            new { Id = other, Name = "guest" }
+        });
+
+        var cut = RenderMenu(quickConnect: true, userId: other.ToString("N"));
+
+        Assert.Equal("guest", cut.Find("h2.headerUsername").TextContent);
+        Assert.Equal("#/userprofile?userId=" + other.ToString("N"), cut.Find("a.lnkUserProfile").GetAttribute("href"));
+        Assert.Equal("#/quickconnect?userId=" + other.ToString("N"), cut.Find("a.lnkQuickConnectPreferences").GetAttribute("href"));
+        Assert.Equal("#/mypreferencesdisplay?userId=" + other.ToString("N"), cut.Find("a.lnkDisplayPreferences").GetAttribute("href"));
+        // The controls are a setting of this device, signing out and the dashboard belong to the signed-in user.
+        Assert.Empty(cut.FindAll(".lnkControlsPreferences"));
+        Assert.Empty(cut.FindAll(".adminSection"));
+        Assert.Empty(cut.FindAll(".userSection"));
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public void An_unknown_user_leaves_the_page_empty_and_loading()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/QuickConnect/Enabled", "true");
+        App.Server.OnGet("/Users", new[] { new { Id = TestApp.UserId, Name = "tester" } });
+
+        var cut = Render<UserPreferencesMenu>(parameters => parameters.Add(page => page.UserId, SettingsTestExtensions.OtherUserId.ToString("N")));
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Users")));
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/QuickConnect/Enabled")));
+        Assert.Empty(cut.FindAll("#myPreferencesMenuPage"));
+        Assert.True(this.IsLoading());
+    }
+
+    [Fact]
+    public void A_failing_user_list_leaves_the_page_empty_and_loading()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/QuickConnect/Enabled", "true");
+
+        var cut = Render<UserPreferencesMenu>(parameters => parameters.Add(page => page.UserId, SettingsTestExtensions.OtherUserId.ToString("N")));
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Users")));
+        Assert.Empty(cut.FindAll("#myPreferencesMenuPage"));
+        Assert.True(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task Signing_out_ends_the_session_and_opens_the_login_page()
+    {
+        SignIn();
+        App.Server.OnPost("/Sessions/Logout");
+        var cut = RenderMenu();
+
+        await this.Settle(() => cut.Find(".btnLogout").ClickAsync(new MouseEventArgs()));
+
+        cut.Eventually(() => Assert.Equal("/login?serverid=" + TestApp.ServerId, App.Browser.Hash));
+        Assert.Single(App.Server.RequestsTo("/Sessions/Logout"));
+        Assert.False(Services.GetRequiredService<JellyfinApi>().IsLoggedIn);
+    }
+
+    [Fact]
+    public async Task With_several_servers_signing_out_opens_the_server_selection()
+    {
+        await this.UseConfigAsync(new { multiserver = true });
+        SignIn();
+        App.Server.OnPost("/Sessions/Logout");
+        var cut = RenderMenu();
+
+        await this.Settle(() => cut.Find(".btnLogout").ClickAsync(new MouseEventArgs()));
+
+        cut.Eventually(() => Assert.Equal("/selectserver", App.Browser.Hash));
+        Assert.Single(App.Server.RequestsTo("/Sessions/Logout"));
+    }
+
+    [Fact]
+    public async Task With_several_servers_the_menu_offers_the_server_selection()
+    {
+        await this.UseConfigAsync(new { multiserver = true });
+        SignIn();
+        var cut = RenderMenu();
+
+        Assert.Equal(this.T("SelectServer"), cut.Find(".userSection .selectServer .listItemBodyText").TextContent);
+        await this.Settle(() => cut.Find(".selectServer").ClickAsync(new MouseEventArgs()));
+
+        Assert.Equal("/selectserver", App.Browser.Hash);
+        // Choosing another server does not end the session.
+        Assert.Empty(App.Server.RequestsTo("/Sessions/Logout"));
+    }
+}

@@ -1,0 +1,297 @@
+@* The startup wizard: start, user, settings, remote access and finish steps. *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.Wizard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private void ScriptConfiguration(string serverName = "", string culture = "en-US", string metadataLanguage = "en", string country = "US")
+    {
+        this.UseServer();
+        App.Server.OnGet("/Startup/Configuration", new
+        {
+            ServerName = serverName,
+            UICulture = culture,
+            MetadataCountryCode = country,
+            PreferredMetadataLanguage = metadataLanguage
+        });
+        App.Server.OnGet("/Localization/Options", new[] { new { Name = "English", Value = "en-US" }, new { Name = "Deutsch", Value = "de" } });
+        App.Server.OnGet("/Localization/Cultures", new[]
+        {
+            new { DisplayName = "English", Name = "English", TwoLetterISOLanguageName = "en", ThreeLetterISOLanguageName = "eng" },
+            new { DisplayName = "German", Name = "German", TwoLetterISOLanguageName = "de", ThreeLetterISOLanguageName = "deu" }
+        });
+        App.Server.OnGet("/Localization/Countries", new[]
+        {
+            new { DisplayName = "United States", Name = "US", TwoLetterISORegionName = "US", ThreeLetterISORegionName = "USA" },
+            new { DisplayName = "Germany", Name = "DE", TwoLetterISORegionName = "DE", ThreeLetterISORegionName = "DEU" }
+        });
+    }
+
+    [Fact]
+    public void The_wizard_root_opens_the_first_step()
+    {
+        Render<WizardIndex>();
+
+        Assert.Equal("/wizard/start", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void Start_shows_the_server_name_and_the_display_languages()
+    {
+        ScriptConfiguration(serverName: string.Empty, culture: "de");
+
+        var cut = Render<WizardStart>();
+
+        // Without a configured name the public system information supplies it.
+        cut.Eventually(() => Assert.Equal("Test Server", cut.Find("#wizardStartPage form.wizardStartForm #txtServerName").Value()));
+        Assert.Equal("de", cut.Find("#selectLocalizationLanguage").Value());
+        Assert.Equal(["en-US", "de"], cut.FindAll("#selectLocalizationLanguage option").Select(option => option.Value()));
+        Assert.Equal(this.T("WelcomeToProject"), cut.Find("h1").TextContent);
+        Assert.Equal("https://jellyfin.org/docs/general/post-install/setup-wizard/", cut.Find("a.raised-alt").GetAttribute("href"));
+        Assert.True(cut.Find("#txtServerName").HasAttribute("required"));
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public void Start_prefers_the_configured_server_name()
+    {
+        ScriptConfiguration(serverName: "Den");
+
+        var cut = Render<WizardStart>();
+
+        cut.Eventually(() => Assert.Equal("Den", cut.Find("#txtServerName").Value()));
+    }
+
+    [Fact]
+    public async Task Start_saves_name_and_language_into_the_startup_configuration()
+    {
+        ScriptConfiguration(serverName: "Den");
+        App.Server.OnPost("/Startup/Configuration");
+        var cut = Render<WizardStart>();
+        cut.Eventually(() => Assert.Equal("Den", cut.Find("#txtServerName").Value()));
+
+        cut.Find("#txtServerName").Input("Attic");
+        cut.Find("#selectLocalizationLanguage").Change("de");
+        await this.Settle(() => cut.Find("form.wizardStartForm").SubmitAsync());
+
+        var posted = Assert.Single(App.Server.Requests, request => request.Method == HttpMethod.Post).JsonBody();
+        Assert.Equal("Attic", posted.Text("ServerName"));
+        Assert.Equal("de", posted.Text("UICulture"));
+        // The rest of the configuration is sent back as it was read.
+        Assert.Equal("en", posted.Text("PreferredMetadataLanguage"));
+        Assert.Equal("US", posted.Text("MetadataCountryCode"));
+        Assert.Equal("/wizard/user", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void Start_keeps_the_loading_indicator_when_the_server_does_not_answer()
+    {
+        this.UseServer();
+
+        var cut = Render<WizardStart>();
+
+        cut.Eventually(() => Assert.NotEmpty(App.Server.RequestsTo("/Startup/Configuration")));
+        Assert.True(this.IsLoading());
+        Assert.Equal(string.Empty, App.Browser.Hash);
+    }
+
+    [Fact]
+    public void User_shows_the_name_the_server_proposes()
+    {
+        this.UseServer();
+        App.Server.OnGet("/Startup/User", new { Name = "root" });
+
+        var cut = Render<WizardUser>();
+
+        cut.Eventually(() => Assert.Equal("root", cut.Find("#wizardUserPage form.wizardUserForm #txtUsername").Value()));
+        Assert.Equal("password", cut.Find("#txtManualPassword").GetAttribute("type"));
+        Assert.Equal("password", cut.Find("#txtPasswordConfirm").GetAttribute("type"));
+        Assert.Equal(this.T("TellUsAboutYourself"), cut.Find("h1").TextContent);
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task User_rejects_passwords_that_differ()
+    {
+        this.UseServer();
+        App.Server.OnGet("/Startup/User", new { Name = "root" });
+        App.Server.OnPost("/Startup/User");
+        var cut = Render<WizardUser>();
+
+        cut.Find("#txtManualPassword").Input("one");
+        cut.Find("#txtPasswordConfirm").Input("two");
+        await this.Settle(() => cut.Find("form.wizardUserForm").SubmitAsync());
+
+        Assert.Equal([this.T("PasswordMatchError")], this.Toasts());
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Post);
+        Assert.Equal(string.Empty, App.Browser.Hash);
+    }
+
+    [Fact]
+    public async Task User_posts_the_trimmed_name_and_the_password()
+    {
+        this.UseServer();
+        App.Server.OnGet("/Startup/User", new { Name = "root" });
+        App.Server.OnPost("/Startup/User");
+        var cut = Render<WizardUser>();
+
+        cut.Find("#txtUsername").Input("  admin ");
+        cut.Find("#txtManualPassword").Input("secret");
+        cut.Find("#txtPasswordConfirm").Input("secret");
+        await this.Settle(() => cut.Find("form.wizardUserForm").SubmitAsync());
+
+        var posted = Assert.Single(App.Server.Requests, request => request.Method == HttpMethod.Post);
+        Assert.EndsWith("/Startup/User", posted.Path, StringComparison.Ordinal);
+        Assert.Equal("admin", posted.JsonBody().Text("Name"));
+        Assert.Equal("secret", posted.JsonBody().Text("Password"));
+        Assert.Empty(this.Toasts());
+        Assert.Equal("/wizard/library", App.Browser.Hash);
+    }
+
+    [Fact]
+    public async Task User_reports_a_failed_request_and_stays()
+    {
+        this.UseServer();
+        App.Server.OnGet("/Startup/User", new { Name = "root" });
+        App.Server.OnPost("/Startup/User", _ => FakeHttp.Status(HttpStatusCode.BadRequest));
+        var cut = Render<WizardUser>();
+
+        cut.Find("#txtManualPassword").Input("secret");
+        cut.Find("#txtPasswordConfirm").Input("secret");
+        await this.Settle(() => cut.Find("form.wizardUserForm").SubmitAsync());
+
+        Assert.Equal([this.T("ErrorDefault")], this.Toasts());
+        Assert.False(this.IsLoading());
+        Assert.Equal(string.Empty, App.Browser.Hash);
+    }
+
+    [Fact]
+    public void User_previous_goes_back()
+    {
+        this.UseServer();
+        App.Server.OnGet("/Startup/User", new { Name = "root" });
+        App.Browser.Navigate("/wizard/start");
+        App.Browser.Navigate("/wizard/user");
+        var cut = Render<WizardUser>();
+
+        cut.Find("button.button-cancel").Click();
+
+        Assert.Equal("/wizard/start", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void Settings_show_the_metadata_language_and_country()
+    {
+        ScriptConfiguration(metadataLanguage: "de", country: "DE");
+
+        var cut = Render<WizardSettings>();
+
+        cut.Eventually(() => Assert.Equal("de", cut.Find("#wizardSettingsPage form.wizardSettingsForm #selectLanguage").Value()));
+        Assert.Equal("DE", cut.Find("#selectCountry").Value());
+        Assert.Equal([string.Empty, "en", "de"], cut.FindAll("#selectLanguage option").Select(option => option.Value()));
+        Assert.Equal([string.Empty, "United States", "Germany"], cut.FindAll("#selectCountry option").Select(option => option.TextContent));
+        Assert.True(cut.Find("#selectLanguage").HasAttribute("required"));
+        Assert.True(cut.Find("#selectCountry").HasAttribute("required"));
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task Settings_save_language_and_country_into_the_startup_configuration()
+    {
+        ScriptConfiguration(serverName: "Den", culture: "de");
+        App.Server.OnPost("/Startup/Configuration");
+        var cut = Render<WizardSettings>();
+        cut.Eventually(() => Assert.Equal("en", cut.Find("#selectLanguage").Value()));
+
+        cut.Find("#selectLanguage").Change("de");
+        cut.Find("#selectCountry").Change("DE");
+        await this.Settle(() => cut.Find("form.wizardSettingsForm").SubmitAsync());
+
+        var posted = Assert.Single(App.Server.Requests, request => request.Method == HttpMethod.Post).JsonBody();
+        Assert.Equal("de", posted.Text("PreferredMetadataLanguage"));
+        Assert.Equal("DE", posted.Text("MetadataCountryCode"));
+        Assert.Equal("Den", posted.Text("ServerName"));
+        Assert.Equal("de", posted.Text("UICulture"));
+        Assert.Equal("/wizard/remoteaccess", App.Browser.Hash);
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task Settings_stay_when_saving_fails()
+    {
+        ScriptConfiguration();
+        App.Server.OnPost("/Startup/Configuration", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+        var cut = Render<WizardSettings>();
+
+        await this.Settle(() => cut.Find("form.wizardSettingsForm").SubmitAsync());
+
+        Assert.Equal(string.Empty, App.Browser.Hash);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Remote_access_is_allowed_by_default_and_posted(bool allow)
+    {
+        this.UseServer();
+        App.Server.OnPost("/Startup/RemoteAccess");
+        var cut = Render<WizardRemoteAccess>();
+        Assert.True(cut.Find("#chkRemoteAccess").IsChecked());
+
+        if (!allow)
+        {
+            cut.Find("#chkRemoteAccess").Change(false);
+        }
+
+        await this.Settle(() => cut.Find("form.wizardSettingsForm").SubmitAsync());
+
+        var posted = Assert.Single(App.Server.RequestsTo("/Startup/RemoteAccess")).JsonBody();
+        Assert.Equal(allow, posted.Flag("EnableRemoteAccess"));
+        Assert.Equal("/wizard/finish", App.Browser.Hash);
+    }
+
+    [Fact]
+    public async Task Remote_access_stays_when_saving_fails()
+    {
+        this.UseServer();
+        var cut = Render<WizardRemoteAccess>();
+
+        await this.Settle(() => cut.Find("form.wizardSettingsForm").SubmitAsync());
+
+        Assert.Single(App.Server.RequestsTo("/Startup/RemoteAccess"));
+        Assert.Equal(string.Empty, App.Browser.Hash);
+    }
+
+    [Fact]
+    public async Task Finish_completes_the_wizard_and_restarts_at_the_root()
+    {
+        this.UseServer();
+        App.Server.OnPost("/Startup/Complete");
+        var cut = Render<WizardFinish>();
+        Assert.Equal(this.T("LabelYoureDone"), cut.Find("#wizardFinishPage h1").TextContent);
+
+        await this.Settle(() => cut.Find("button.btnWizardNext").ClickAsync(new MouseEventArgs()));
+
+        Assert.Single(App.Server.RequestsTo("/Startup/Complete"));
+        Assert.Equal("/", App.Browser.Hash);
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task Finish_stays_when_the_server_refuses()
+    {
+        this.UseServer();
+        App.Server.OnPost("/Startup/Complete", _ => FakeHttp.Status(HttpStatusCode.Forbidden));
+        var cut = Render<WizardFinish>();
+
+        await this.Settle(() => cut.Find("button.btnWizardNext").ClickAsync(new MouseEventArgs()));
+
+        Assert.Equal(string.Empty, App.Browser.Hash);
+    }
+}

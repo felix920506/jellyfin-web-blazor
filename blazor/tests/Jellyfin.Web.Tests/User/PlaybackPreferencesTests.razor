@@ -1,0 +1,587 @@
+@* Settings: playback (/mypreferencesplayback). *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.User
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@inherits AppTestContext
+
+@code {
+    private const string SafariMac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
+    private const string SafariIphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1";
+
+    private static readonly Guid Other = SettingsTestExtensions.OtherUserId;
+
+    private static object UserJson(Guid id, bool video = true, bool audio = true, object? configuration = null) => new
+    {
+        Id = id,
+        Name = id == TestApp.UserId ? "tester" : "guest",
+        Policy = new { EnableVideoPlaybackTranscoding = video, EnableAudioPlaybackTranscoding = audio },
+        Configuration = configuration ?? new { PlayDefaultAudioTrack = false, HidePlayedInLatest = true }
+    };
+
+    /// <summary>Scripts everything the page reads apart from the user.</summary>
+    private void ScriptServer(bool inNetwork = true, object? customPrefs = null)
+    {
+        App.Server.OnGet("/System/Info", new
+        {
+            CastReceiverApplications = new[]
+            {
+                new { Id = "F007D354", Name = "Stable" },
+                new { Id = "6F511C87", Name = "Unstable" }
+            }
+        });
+        App.Server.OnGet("/System/Endpoint", new { IsLocal = inNetwork, IsInNetwork = inNetwork });
+        App.Server.OnGet("/Localization/Cultures", new[]
+        {
+            new { DisplayName = "English", Name = "English", TwoLetterISOLanguageName = "en", ThreeLetterISOLanguageName = "eng" },
+            new { DisplayName = "German", Name = "German", TwoLetterISOLanguageName = "de", ThreeLetterISOLanguageName = "ger" }
+        });
+        this.ScriptPreferences(customPrefs);
+        App.Server.OnPost("/Users/Configuration");
+    }
+
+    private void ScriptSignedInUser(bool video = true, bool audio = true, bool inNetwork = true, object? configuration = null, object? customPrefs = null)
+    {
+        SignIn();
+        this.ScriptUser(TestApp.UserId, UserJson(TestApp.UserId, video, audio, configuration));
+        ScriptServer(inNetwork, customPrefs);
+    }
+
+    /// <summary>Renders the page and waits until the settings are in the form.</summary>
+    private IRenderedComponent<PlaybackPreferences> RenderLoaded(string? userId = null)
+    {
+        var cut = Render<PlaybackPreferences>(parameters => parameters.Add(page => page.UserId, userId));
+        cut.Eventually(() => Assert.Equal(5, cut.FindAll("select.segmentTypeAction").Count));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        return cut;
+    }
+
+    private static bool Hidden(IRenderedComponent<PlaybackPreferences> cut, string selector) => cut.Find(selector).HasClass("hide");
+
+    private static IEnumerable<string?> Options(IRenderedComponent<PlaybackPreferences> cut, string select) =>
+        cut.FindAll(select + " option").Select(option => option.Value());
+
+    [Fact]
+    public void A_new_user_sees_the_defaults_of_the_original()
+    {
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+        cut.Eventually(() => Assert.Equal(4, cut.FindAll("#selectAudioLanguage option").Count));
+
+        Assert.Equal("page libraryPage userPreferencesPage noSecondaryNavPage", cut.Find("#languagePreferencesPage").ClassName);
+        Assert.Equal(["-1", "1", "2", "6", "8"], Options(cut, "#selectAllowedAudioChannels"));
+        Assert.Equal("-1", cut.Find("#selectAllowedAudioChannels").Value());
+        Assert.Equal(["", "OriginalLanguage", "eng", "ger"], Options(cut, "#selectAudioLanguage"));
+        Assert.Equal(
+            [this.T("AnyLanguage"), this.T("OriginalLanguage"), "English", "German"],
+            cut.FindAll("#selectAudioLanguage option").Select(option => option.TextContent));
+        Assert.Equal(string.Empty, cut.Find("#selectAudioLanguage").Value());
+        Assert.False(cut.Find("input.chkPlayDefaultAudioTrack").IsChecked());
+        Assert.False(cut.Find("input.chkDisableVbrAudioEncoding").IsChecked());
+
+        Assert.Equal(15, cut.FindAll("select.selectVideoInNetworkQuality option").Count);
+        Assert.Equal(this.T("Auto"), cut.Find("select.selectVideoInNetworkQuality option").TextContent);
+        Assert.Equal("120000000", cut.FindAll("select.selectVideoInNetworkQuality option")[1].Value());
+        Assert.Equal("420 kbps", cut.FindAll("select.selectVideoInNetworkQuality option")[14].TextContent);
+        Assert.Equal(string.Empty, cut.Find("select.selectVideoInNetworkQuality").Value());
+        Assert.Equal(string.Empty, cut.Find("select.selectVideoInternetQuality").Value());
+        Assert.Equal(string.Empty, cut.Find("select.selectChromecastVideoQuality").Value());
+        Assert.Equal(10, cut.FindAll("select.selectMusicInternetQuality option").Count);
+        Assert.Equal(string.Empty, cut.Find("select.selectMusicInternetQuality").Value());
+        Assert.Equal(["0", "-1", "640", "852", "1280", "1920", "3840", "7680"], Options(cut, "select.selectMaxVideoWidth"));
+        Assert.Equal("0", cut.Find("select.selectMaxVideoWidth").Value());
+        Assert.False(cut.Find("input.chkLimitSupportedVideoResolution").IsChecked());
+
+        // Chrome prefers fMP4 containers unless told otherwise.
+        Assert.True(cut.Find("input.chkPreferFmp4HlsContainer").IsChecked());
+        Assert.True(cut.Find(".cinemaModeOptions input.chkEnableCinemaMode").IsChecked());
+        Assert.False(cut.Find(".fldEpisodeAutoPlay input.chkEpisodeAutoPlay").IsChecked());
+        Assert.False(cut.Find("input.chkRememberAudioSelections").IsChecked());
+        Assert.False(cut.Find("input.chkRememberSubtitleSelections").IsChecked());
+        Assert.True(cut.Find(".fldEnableNextVideoOverlay input.chkEnableNextVideoOverlay").IsChecked());
+        Assert.False(cut.Find("input.chkExternalVideoPlayer").IsChecked());
+        Assert.Equal(["F007D354", "6F511C87"], Options(cut, "select.selectChromecastVersion"));
+        Assert.Equal(["Stable", "Unstable"], cut.FindAll("select.selectChromecastVersion option").Select(option => option.TextContent));
+        Assert.Equal(["5000", "10000", "15000", "20000", "25000", "30000"], Options(cut, "select.selectSkipForwardLength"));
+        Assert.Equal("30000", cut.Find("select.selectSkipForwardLength").Value());
+        Assert.Equal("10000", cut.Find("select.selectSkipBackLength").Value());
+
+        Assert.Equal(
+            ["segmentTypeAction__Intro", "segmentTypeAction__Preview", "segmentTypeAction__Recap", "segmentTypeAction__Commercial", "segmentTypeAction__Outro"],
+            cut.FindAll(".mediaSegmentActionContainer select.segmentTypeAction").Select(select => select.Id));
+        Assert.Equal(["None", "AskToSkip", "Skip"], Options(cut, "#segmentTypeAction__Intro"));
+        Assert.Equal(
+            ["AskToSkip", "None", "None", "None", "AskToSkip"],
+            cut.FindAll("select.segmentTypeAction").Select(select => select.Value()));
+
+        Assert.False(cut.Find("input.chkEnableDts").IsChecked());
+        Assert.False(cut.Find("input.chkEnableTrueHd").IsChecked());
+        Assert.False(cut.Find("input.chkEnableHi10p").IsChecked());
+        Assert.False(cut.Find("input.chkLimitSegmentLength").IsChecked());
+        Assert.Equal(["", "h264", "hevc", "av1"], Options(cut, "#selectPreferredTranscodeVideoCodec"));
+        Assert.Equal(string.Empty, cut.Find("#selectPreferredTranscodeVideoCodec").Value());
+        Assert.Equal(["", "aac", "ac3", "alac", "dts", "flac", "opus"], Options(cut, "#selectPreferredTranscodeVideoAudioCodec"));
+        Assert.Equal(string.Empty, cut.Find("#selectPreferredTranscodeVideoAudioCodec").Value());
+        Assert.Equal(["Off", "TrackGain", "AlbumGain"], Options(cut, "#selectAudioNormalization"));
+        Assert.Equal("TrackGain", cut.Find("#selectAudioNormalization").Value());
+        Assert.False(cut.Find("input.chkAlwaysRemuxFlac").IsChecked());
+        Assert.False(cut.Find("input.chkAlwaysRemuxMp3").IsChecked());
+        Assert.Equal(this.T("Save"), cut.Find("button.btnSave").TextContent.Trim());
+
+        // Fields of other platforms stay hidden.
+        Assert.True(Hidden(cut, ".fldExternalPlayer"));
+        Assert.True(Hidden(cut, ".fldLimitSegmentLength"));
+        Assert.True(Hidden(cut, ".fldEnableHi10p"));
+        Assert.True(Hidden(cut, ".fldStillWatchingOption"));
+        Assert.False(Hidden(cut, ".fldAudioNormalization"));
+
+        Assert.Single(this.UserLoads(TestApp.UserId));
+        Assert.Single(App.Server.RequestsTo("/System/Info"));
+        Assert.Single(App.Server.RequestsTo("/System/Endpoint"));
+        Assert.Single(App.Server.RequestsTo("/Localization/Cultures"));
+        var preferences = Assert.Single(App.Server.RequestsTo("/DisplayPreferences/usersettings"));
+        Assert.True(preferences.QueryIs("userId", TestApp.UserId));
+    }
+
+    [Fact]
+    public void On_the_home_network_only_its_video_quality_is_offered()
+    {
+        ScriptSignedInUser(inNetwork: true);
+
+        var cut = RenderLoaded();
+
+        cut.Eventually(() => Assert.False(Hidden(cut, ".fldVideoInNetworkQuality")));
+        Assert.False(Hidden(cut, ".qualitySections"));
+        Assert.False(Hidden(cut, ".videoQualitySection"));
+        Assert.True(Hidden(cut, ".fldVideoInternetQuality"));
+        Assert.True(Hidden(cut, ".musicQualitySection"));
+        // Chrome can cast.
+        Assert.False(Hidden(cut, ".fldChromecastQuality"));
+    }
+
+    [Fact]
+    public void Away_from_home_the_internet_qualities_are_offered()
+    {
+        ScriptSignedInUser(inNetwork: false);
+
+        var cut = RenderLoaded();
+
+        cut.Eventually(() => Assert.False(Hidden(cut, ".fldVideoInternetQuality")));
+        Assert.True(Hidden(cut, ".fldVideoInNetworkQuality"));
+        Assert.False(Hidden(cut, ".musicQualitySection"));
+    }
+
+    [Fact]
+    public void Music_quality_needs_the_permission_to_transcode_audio()
+    {
+        ScriptSignedInUser(audio: false, inNetwork: false);
+
+        var cut = RenderLoaded();
+
+        cut.Eventually(() => Assert.False(Hidden(cut, ".fldVideoInternetQuality")));
+        Assert.True(Hidden(cut, ".musicQualitySection"));
+        Assert.False(Hidden(cut, ".qualitySections"));
+    }
+
+    [Fact]
+    public void Video_quality_needs_the_permission_to_transcode_video()
+    {
+        ScriptSignedInUser(video: false, inNetwork: false);
+
+        var cut = RenderLoaded();
+
+        cut.Eventually(() => Assert.False(Hidden(cut, ".musicQualitySection")));
+        Assert.False(Hidden(cut, ".qualitySections"));
+        Assert.True(Hidden(cut, ".videoQualitySection"));
+        Assert.True(Hidden(cut, ".fldChromecastQuality"));
+    }
+
+    [Fact]
+    public void Without_transcoding_there_are_no_quality_settings()
+    {
+        ScriptSignedInUser(video: false, audio: false);
+
+        var cut = RenderLoaded();
+
+        Assert.True(Hidden(cut, ".qualitySections"));
+        Assert.True(Hidden(cut, ".videoQualitySection"));
+    }
+
+    [Fact]
+    public async Task With_several_servers_both_networks_are_offered()
+    {
+        await this.UseConfigAsync(new { multiserver = true });
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+
+        Assert.False(Hidden(cut, ".fldVideoInNetworkQuality"));
+        Assert.False(Hidden(cut, ".fldVideoInternetQuality"));
+        Assert.False(Hidden(cut, ".musicQualitySection"));
+        Assert.Empty(App.Server.RequestsTo("/System/Endpoint"));
+    }
+
+    [Fact]
+    public void An_unknown_network_offers_no_network_quality()
+    {
+        ScriptSignedInUser();
+        App.Server.On(HttpMethod.Get, "/System/Endpoint", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+
+        var cut = RenderLoaded();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/System/Endpoint")));
+        Assert.True(Hidden(cut, ".fldVideoInNetworkQuality"));
+        Assert.True(Hidden(cut, ".fldVideoInternetQuality"));
+        Assert.True(Hidden(cut, ".musicQualitySection"));
+        Assert.Equal(5, cut.FindAll("select.segmentTypeAction").Count);
+    }
+
+    [Fact]
+    public void Stored_settings_are_shown()
+    {
+        foreach (var (name, value) in new Dictionary<string, string>
+        {
+            ["allowedAudioChannels"] = "6",
+            ["preferFmp4HlsContainer"] = "false",
+            ["enableCinemaMode"] = "false",
+            ["enableNextVideoInfoOverlay"] = "false",
+            ["selectAudioNormalization"] = "AlbumGain",
+            ["segmentTypeAction__Recap"] = "Skip",
+            ["segmentTypeAction__Intro"] = "None"
+        })
+        {
+            this.StoreUserSetting(name, value);
+        }
+
+        foreach (var (name, value) in new Dictionary<string, string>
+        {
+            ["enableDts"] = "true",
+            ["enableTrueHd"] = "true",
+            ["maxVideoWidth"] = "1920",
+            ["limitSupportedVideoResolution"] = "true",
+            ["preferredTranscodeVideoCodec"] = "hevc",
+            ["preferredTranscodeVideoAudioCodec"] = "opus",
+            ["disableVbrAudio"] = "true",
+            ["alwaysRemuxFlac"] = "true",
+            ["alwaysRemuxMp3"] = "true",
+            ["maxbitrate-Video-true"] = "8000000",
+            ["enableautobitratebitrate-Video-true"] = "false",
+            ["maxbitrate-Video-false"] = "4000000",
+            ["enableautobitratebitrate-Video-false"] = "false",
+            ["maxbitrate-Audio-false"] = "320000",
+            ["enableautobitratebitrate-Audio-false"] = "false",
+            ["chromecastBitrate1"] = "1500000"
+        })
+        {
+            this.StoreAppSetting(name, value);
+        }
+
+        ScriptSignedInUser(
+            configuration: new
+            {
+                AudioLanguagePreference = "ger",
+                PlayDefaultAudioTrack = true,
+                EnableNextEpisodeAutoPlay = true,
+                RememberAudioSelections = true,
+                RememberSubtitleSelections = true,
+                CastReceiverId = "6F511C87"
+            },
+            customPrefs: new { skipForwardLength = "15000", skipBackLength = "5000" });
+
+        var cut = RenderLoaded();
+        cut.Eventually(() => Assert.Equal("ger", cut.Find("#selectAudioLanguage").Value()));
+
+        Assert.Equal("6", cut.Find("#selectAllowedAudioChannels").Value());
+        Assert.True(cut.Find("input.chkPlayDefaultAudioTrack").IsChecked());
+        Assert.True(cut.Find("input.chkDisableVbrAudioEncoding").IsChecked());
+        Assert.Equal("8000000", cut.Find("select.selectVideoInNetworkQuality").Value());
+        Assert.Equal("4000000", cut.Find("select.selectVideoInternetQuality").Value());
+        Assert.Equal("320000", cut.Find("select.selectMusicInternetQuality").Value());
+        Assert.Equal("1500000", cut.Find("select.selectChromecastVideoQuality").Value());
+        Assert.Equal("1920", cut.Find("select.selectMaxVideoWidth").Value());
+        Assert.True(cut.Find("input.chkLimitSupportedVideoResolution").IsChecked());
+        Assert.False(cut.Find("input.chkPreferFmp4HlsContainer").IsChecked());
+        Assert.False(cut.Find("input.chkEnableCinemaMode").IsChecked());
+        Assert.True(cut.Find("input.chkEpisodeAutoPlay").IsChecked());
+        Assert.True(cut.Find("input.chkRememberAudioSelections").IsChecked());
+        Assert.True(cut.Find("input.chkRememberSubtitleSelections").IsChecked());
+        Assert.False(cut.Find("input.chkEnableNextVideoOverlay").IsChecked());
+        Assert.Equal("6F511C87", cut.Find("select.selectChromecastVersion").Value());
+        Assert.Equal("15000", cut.Find("select.selectSkipForwardLength").Value());
+        Assert.Equal("5000", cut.Find("select.selectSkipBackLength").Value());
+        Assert.Equal(
+            ["None", "None", "Skip", "None", "AskToSkip"],
+            cut.FindAll("select.segmentTypeAction").Select(select => select.Value()));
+        Assert.True(cut.Find("input.chkEnableDts").IsChecked());
+        Assert.True(cut.Find("input.chkEnableTrueHd").IsChecked());
+        Assert.Equal("hevc", cut.Find("#selectPreferredTranscodeVideoCodec").Value());
+        Assert.Equal("opus", cut.Find("#selectPreferredTranscodeVideoAudioCodec").Value());
+        Assert.Equal("AlbumGain", cut.Find("#selectAudioNormalization").Value());
+        Assert.True(cut.Find("input.chkAlwaysRemuxFlac").IsChecked());
+        Assert.True(cut.Find("input.chkAlwaysRemuxMp3").IsChecked());
+    }
+
+    [Fact]
+    public async Task The_still_watching_prompt_is_offered_with_its_plugin()
+    {
+        await this.UseConfigAsync(new { plugins = new[] { PlaybackOptions.StillWatchingPlugin } });
+        this.StoreUserSetting("stillWatchingPrompt", "long");
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+
+        Assert.False(Hidden(cut, ".fldStillWatchingOption"));
+        Assert.Equal(["disabled", "short", "default", "long", "veryLong"], Options(cut, "select.selectStillWatchingOption"));
+        Assert.Equal(this.T("Disabled"), cut.Find("select.selectStillWatchingOption option").TextContent);
+        Assert.Equal("long", cut.Find("select.selectStillWatchingOption").Value());
+    }
+
+    [Fact]
+    public void Safari_is_asked_about_10_bit_video_and_cannot_cast()
+    {
+        App.Browser.Environment = App.Browser.Environment with { UserAgent = SafariMac };
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+
+        Assert.False(Hidden(cut, ".fldEnableHi10p"));
+        Assert.True(Hidden(cut, ".fldChromecastQuality"));
+        Assert.False(Hidden(cut, ".fldAudioNormalization"));
+        Assert.True(cut.Find("input.chkPreferFmp4HlsContainer").IsChecked());
+    }
+
+    [Fact]
+    public void Audio_normalization_is_not_offered_on_iOS()
+    {
+        App.Browser.Environment = App.Browser.Environment with { UserAgent = SafariIphone };
+        ScriptSignedInUser();
+
+        var cut = RenderLoaded();
+
+        Assert.True(Hidden(cut, ".fldAudioNormalization"));
+    }
+
+    [Fact]
+    public async Task Saving_stores_every_setting_where_the_original_does()
+    {
+        await this.UseConfigAsync(new { plugins = new[] { PlaybackOptions.StillWatchingPlugin } });
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+        cut.Eventually(() => Assert.Equal(4, cut.FindAll("#selectAudioLanguage option").Count));
+
+        cut.Find("#selectAllowedAudioChannels").Change("2");
+        cut.Find("#selectAudioLanguage").Change("ger");
+        cut.Find("input.chkPlayDefaultAudioTrack").Change(true);
+        cut.Find("input.chkDisableVbrAudioEncoding").Change(true);
+        cut.Find("select.selectVideoInNetworkQuality").Change("20000000");
+        cut.Find("select.selectChromecastVideoQuality").Change("6000000");
+        cut.Find("select.selectMaxVideoWidth").Change("1280");
+        cut.Find("input.chkLimitSupportedVideoResolution").Change(true);
+        cut.Find("input.chkPreferFmp4HlsContainer").Change(false);
+        cut.Find("input.chkEnableCinemaMode").Change(false);
+        cut.Find("input.chkEpisodeAutoPlay").Change(true);
+        cut.Find("select.selectStillWatchingOption").Change("short");
+        cut.Find("input.chkRememberAudioSelections").Change(true);
+        cut.Find("input.chkRememberSubtitleSelections").Change(true);
+        cut.Find("input.chkEnableNextVideoOverlay").Change(false);
+        cut.Find("select.selectChromecastVersion").Change("6F511C87");
+        cut.Find("select.selectSkipForwardLength").Change("20000");
+        cut.Find("select.selectSkipBackLength").Change("15000");
+        cut.Find("#segmentTypeAction__Intro").Change("Skip");
+        cut.Find("#segmentTypeAction__Commercial").Change("AskToSkip");
+        cut.Find("input.chkEnableDts").Change(true);
+        cut.Find("input.chkEnableTrueHd").Change(true);
+        cut.Find("#selectPreferredTranscodeVideoCodec").Change("av1");
+        cut.Find("#selectPreferredTranscodeVideoAudioCodec").Change("flac");
+        cut.Find("#selectAudioNormalization").Change("Off");
+        cut.Find("input.chkAlwaysRemuxFlac").Change(true);
+        cut.Find("input.chkAlwaysRemuxMp3").Change(true);
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal([this.T("SettingsSaved")], this.Toasts()));
+        Assert.False(this.IsLoading());
+
+        // Settings of this device, for every user.
+        Assert.Equal("false", this.AppSetting("enableSystemExternalPlayers"));
+        Assert.Equal("6000000", this.AppSetting("chromecastBitrate1"));
+        Assert.Equal("1280", this.AppSetting("maxVideoWidth"));
+        Assert.Equal("true", this.AppSetting("limitSupportedVideoResolution"));
+        Assert.Equal("av1", this.AppSetting("preferredTranscodeVideoCodec"));
+        Assert.Equal("flac", this.AppSetting("preferredTranscodeVideoAudioCodec"));
+        Assert.Equal("true", this.AppSetting("enableDts"));
+        Assert.Equal("true", this.AppSetting("enableTrueHd"));
+        Assert.Equal("false", this.AppSetting("enableHi10p"));
+        Assert.Equal("true", this.AppSetting("disableVbrAudio"));
+        Assert.Equal("true", this.AppSetting("alwaysRemuxFlac"));
+        Assert.Equal("true", this.AppSetting("alwaysRemuxMp3"));
+        Assert.Equal("20000000", this.AppSetting("maxbitrate-Video-true"));
+        Assert.Equal("false", this.AppSetting("enableautobitratebitrate-Video-true"));
+        Assert.Null(this.AppSetting("maxbitrate-Video-false"));
+        Assert.Equal("true", this.AppSetting("enableautobitratebitrate-Video-false"));
+        Assert.Null(this.AppSetting("maxbitrate-Audio-false"));
+        Assert.Equal("true", this.AppSetting("enableautobitratebitrate-Audio-false"));
+
+        // Settings of this device, for this user.
+        Assert.Equal("2", this.UserSetting("allowedAudioChannels"));
+        Assert.Equal("short", this.UserSetting("stillWatchingPrompt"));
+        Assert.Equal("false", this.UserSetting("preferFmp4HlsContainer"));
+        Assert.Equal("false", this.UserSetting("limitSegmentLength"));
+        Assert.Equal("false", this.UserSetting("enableCinemaMode"));
+        Assert.Equal("Off", this.UserSetting("selectAudioNormalization"));
+        Assert.Equal("Skip", this.UserSetting("segmentTypeAction__Intro"));
+        Assert.Equal("None", this.UserSetting("segmentTypeAction__Preview"));
+        Assert.Equal("None", this.UserSetting("segmentTypeAction__Recap"));
+        Assert.Equal("AskToSkip", this.UserSetting("segmentTypeAction__Commercial"));
+        Assert.Equal("AskToSkip", this.UserSetting("segmentTypeAction__Outro"));
+
+        // Settings that follow the user to other devices.
+        cut.Eventually(() => Assert.NotNull(this.PostedPreferences()));
+        var preferences = this.PostedPreferences()!.Value;
+        Assert.Equal("20000", preferences.Text("skipForwardLength"));
+        Assert.Equal("15000", preferences.Text("skipBackLength"));
+        Assert.Equal("false", preferences.Text("enableNextVideoInfoOverlay"));
+        Assert.Null(preferences.Text("allowedAudioChannels"));
+        Assert.Null(preferences.Text("segmentTypeAction__Intro"));
+
+        var request = this.PostedConfiguration();
+        Assert.NotNull(request);
+        Assert.True(request.QueryIs("userId", TestApp.UserId));
+        var configuration = request.JsonBody();
+        Assert.Equal("ger", configuration.Text("AudioLanguagePreference"));
+        Assert.True(configuration.Flag("PlayDefaultAudioTrack"));
+        Assert.True(configuration.Flag("EnableNextEpisodeAutoPlay"));
+        Assert.True(configuration.Flag("RememberAudioSelections"));
+        Assert.True(configuration.Flag("RememberSubtitleSelections"));
+        Assert.Equal("6F511C87", configuration.Text("CastReceiverId"));
+        // What the page does not edit is sent back as it was read.
+        Assert.True(configuration.Flag("HidePlayedInLatest"));
+        // The user is read again right before saving.
+        Assert.Equal(2, this.UserLoads(TestApp.UserId).Count);
+    }
+
+    [Fact]
+    public async Task Choosing_automatic_quality_turns_bitrate_detection_back_on()
+    {
+        this.StoreAppSetting("maxbitrate-Video-true", "8000000");
+        this.StoreAppSetting("enableautobitratebitrate-Video-true", "false");
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+        Assert.Equal("8000000", cut.Find("select.selectVideoInNetworkQuality").Value());
+
+        cut.Find("select.selectVideoInNetworkQuality").Change(string.Empty);
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Single(this.Toasts()));
+        Assert.Equal("true", this.AppSetting("enableautobitratebitrate-Video-true"));
+        // The bitrate itself is kept, as in the original.
+        Assert.Equal("8000000", this.AppSetting("maxbitrate-Video-true"));
+    }
+
+    [Fact]
+    public async Task An_administrator_edits_the_settings_of_another_user()
+    {
+        SignIn(admin: true);
+        this.ScriptUser(Other, UserJson(Other));
+        ScriptServer();
+        var cut = RenderLoaded(Other.ToString("N"));
+
+        // Streaming quality belongs to the device of the signed-in user.
+        Assert.True(Hidden(cut, ".qualitySections"));
+        Assert.True(App.Server.RequestsTo("/DisplayPreferences/usersettings")[^1].QueryIs("userId", Other));
+
+        cut.Find("#selectAllowedAudioChannels").Change("8");
+        cut.Find("input.chkPlayDefaultAudioTrack").Change(true);
+        cut.Find("select.selectSkipBackLength").Change("5000");
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal([this.T("SettingsSaved")], this.Toasts()));
+        var request = this.PostedConfiguration();
+        Assert.NotNull(request);
+        Assert.True(request.QueryIs("userId", Other));
+        Assert.True(request.JsonBody().Flag("PlayDefaultAudioTrack"));
+        Assert.Equal("8", this.UserSetting("allowedAudioChannels", Other));
+        Assert.Null(this.UserSetting("allowedAudioChannels"));
+        Assert.Equal(2, this.UserLoads(Other).Count);
+        Assert.Empty(this.UserLoads(TestApp.UserId));
+
+        cut.Eventually(() => Assert.NotNull(this.PostedPreferences()));
+        Assert.Equal("5000", this.PostedPreferences()!.Value.Text("skipBackLength"));
+        var posted = App.Server.Requests.Last(r => r.Method == HttpMethod.Post && r.Path.EndsWith("/DisplayPreferences/usersettings", StringComparison.OrdinalIgnoreCase));
+        Assert.True(posted.QueryIs("userId", Other));
+    }
+
+    [Fact]
+    public async Task A_rejected_configuration_is_not_reported_as_saved()
+    {
+        ScriptSignedInUser();
+        App.Server.OnPost("/Users/Configuration", _ => FakeHttp.Status(HttpStatusCode.Forbidden));
+        var cut = RenderLoaded();
+
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.NotNull(this.PostedConfiguration()));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        Assert.Empty(this.Toasts());
+    }
+
+    [Fact]
+    public async Task Saving_without_the_user_keeps_the_page_busy()
+    {
+        ScriptSignedInUser();
+        var cut = RenderLoaded();
+        App.Server.On(HttpMethod.Get, "/Users/" + TestApp.UserId.ToString("N"), _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+        App.Server.On(HttpMethod.Get, "/Users/" + TestApp.UserId.ToString("D"), _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+
+        await this.Settle(() => cut.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal(2, this.UserLoads(TestApp.UserId).Count));
+        Assert.True(this.IsLoading());
+        Assert.Empty(this.Toasts());
+        Assert.Null(this.PostedConfiguration());
+    }
+
+    [Fact]
+    public void Without_the_user_the_form_stays_empty_and_busy()
+    {
+        SignIn();
+        ScriptServer();
+
+        // GET Users/{id} is not scripted and fails.
+        var cut = Render<PlaybackPreferences>();
+
+        cut.Eventually(() => Assert.Single(this.UserLoads(TestApp.UserId)));
+        Assert.Empty(cut.FindAll("select.segmentTypeAction"));
+        Assert.True(this.IsLoading());
+        Assert.Empty(App.Server.RequestsTo("/System/Endpoint"));
+    }
+
+    [Fact]
+    public void Without_the_system_information_the_form_stays_empty_and_busy()
+    {
+        ScriptSignedInUser();
+        App.Server.On(HttpMethod.Get, "/System/Info", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+
+        var cut = Render<PlaybackPreferences>();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/System/Info")));
+        Assert.Empty(cut.FindAll("select.segmentTypeAction"));
+        Assert.True(this.IsLoading());
+    }
+
+    [Fact]
+    public void Without_the_language_list_the_other_settings_still_load()
+    {
+        ScriptSignedInUser();
+        App.Server.On(HttpMethod.Get, "/Localization/Cultures", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+
+        var cut = RenderLoaded();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Localization/Cultures")));
+        Assert.Equal(["", "OriginalLanguage"], Options(cut, "#selectAudioLanguage"));
+        Assert.False(this.IsLoading());
+    }
+}
