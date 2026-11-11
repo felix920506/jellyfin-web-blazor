@@ -1,0 +1,118 @@
+@*
+    A list of cards (cardBuilder.buildCardsHtml): resolves the options for the whole list, groups by
+    IndexBy and stacks cards in columns when Rows is set. Place it inside an ItemsContainer, or let
+    ItemsContainer create it through its CardOptions parameter.
+*@
+@implements IDisposable
+@inject CardBuilder Builder
+@inject AppHost Host
+
+@if (_set is not null)
+{
+    foreach (var section in _set.Sections)
+    {
+        if (section.Title is null)
+        {
+            @Columns(section)
+        }
+        else
+        {
+            <div class="@(_set.IsVertical ? "verticalSection" : "horizontalSection")">
+                @SectionTitle(section.Title)
+                @if (_set.IsVertical)
+                {
+                    <div class="itemsContainer vertical-wrap">@Columns(section)</div>
+                }
+                else
+                {
+                    @Columns(section)
+                }
+            </div>
+        }
+    }
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<BaseItemDto> Items { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public CardOptions Options { get; set; } = new();
+
+    /// <summary>The surrounding list (cascaded by <c>ItemsContainer</c>); without one the options supply the context.</summary>
+    [CascadingParameter]
+    public ItemActionContext? Context { get; set; }
+
+    private readonly Dictionary<CardModel, object> _keys = [];
+    private ItemActionContext? _context;
+    private CardSet? _set;
+
+    /// <summary>The cards as last built (for tests and for callers that need the resolved options).</summary>
+    public CardSet? CardSet => _set;
+
+    protected override void OnInitialized() => Host.LayoutChanged += OnLayoutChanged;
+
+    // Items are changed in place (user data, timers), so the cards are rebuilt on every render request.
+    protected override void OnParametersSet() => Build();
+
+    public void Dispose() => Host.LayoutChanged -= OnLayoutChanged;
+
+    private void OnLayoutChanged() => _ = InvokeAsync(() =>
+    {
+        Build();
+        StateHasChanged();
+    });
+
+    private void Build()
+    {
+        _set = Builder.Build(Items, Options);
+        _context = Context ?? new ItemActionContext
+        {
+            ParentId = Options.ParentId,
+            Context = Options.Context,
+            CollectionId = Options.CollectionId,
+            PlaylistId = Options.PlaylistId,
+            Items = () => Items
+        };
+
+        // Cards keep their element (and its loaded image) across refreshes: keyed by item id,
+        // or by the card itself where a list holds an item twice or an item without id.
+        _keys.Clear();
+        var seen = new HashSet<Guid>();
+        foreach (var card in _set.Cards)
+        {
+            _keys[card] = card.Item.Id is { } id && seen.Add(id) ? id : card;
+        }
+    }
+
+    private RenderFragment SectionTitle(string title) => builder =>
+    {
+        builder.OpenElement(0, string.IsNullOrEmpty(_set?.Options.SectionTitleTagName) ? "div" : _set.Options.SectionTitleTagName);
+        builder.AddAttribute(1, "class", "sectionTitle");
+        builder.AddContent(2, title);
+        builder.CloseElement();
+    };
+
+    private RenderFragment Columns(CardSection section) =>
+        @<text>
+            @foreach (var column in section.Columns)
+            {
+                if (_set!.Options.Rows is > 0)
+                {
+                    <div class="cardColumn">
+                        @foreach (var card in column)
+                        {
+                            <Card @key="_keys[card]" Model="card" Context="_context" />
+                        }
+                    </div>
+                }
+                else
+                {
+                    foreach (var card in column)
+                    {
+                        <Card @key="_keys[card]" Model="card" Context="_context" />
+                    }
+                }
+            }
+        </text>;
+}

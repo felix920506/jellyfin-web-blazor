@@ -1,0 +1,33 @@
+@*
+    The tabs of the current page in the app bar (declared by a page with PageTabs), with the markup
+    of elements/emby-tabs. Mounted through the toolbar shell slot; Styles/port/_items.scss places it
+    as a second row below the toolbar.
+*@
+@attribute [ShellSlot(ShellSlot.Toolbar, -100)]
+@implements IDisposable
+@inject PageTabsState State
+
+@if (State.Visible)
+{
+    <div class="jf-appbar-tabs headerTabs sectionTabs">
+        <div is="emby-tabs" class="emby-tabs" data-index="@State.SelectedIndex">
+            <div class="emby-tabs-slider">
+                @for (var i = 0; i < State.Tabs.Count; i++)
+                {
+                    var index = i;
+                    <button type="button" is="emby-button" class="@(index == State.SelectedIndex ? "emby-tab-button emby-button emby-tab-button-active" : "emby-tab-button emby-button")" data-index="@index" role="tab" aria-selected="@(index == State.SelectedIndex ? "true" : "false")" @onclick="() => State.Select(index)">
+                        <div class="emby-button-foreground">@State.Tabs[index]</div>
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    protected override void OnInitialized() => State.Changed += OnChanged;
+
+    public void Dispose() => State.Changed -= OnChanged;
+
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+}

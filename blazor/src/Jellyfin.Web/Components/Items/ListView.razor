@@ -1,0 +1,202 @@
+@*
+    A list of items with the markup of components/listview/listview.js. ListViewBuilder decides the
+    content of each row; clicks on .itemAction elements go to ItemActions. Place it inside an
+    ItemsContainer, or let ItemsContainer create it through its ListOptions parameter.
+*@
+@inject ListViewBuilder Builder
+@inject ItemActions Actions
+@inject Globalize Globalize
+
+@foreach (var group in _groups)
+{
+    if (group.Title is null)
+    {
+        foreach (var row in group.Rows)
+        {
+            @Row(row)
+        }
+    }
+    else
+    {
+        <h2 class="@(group.First ? "listGroupHeader listGroupHeader-first" : "listGroupHeader")">@group.Title</h2>
+        <div>
+            @foreach (var row in group.Rows)
+            {
+                @Row(row)
+            }
+        </div>
+    }
+}
+
+@code {
+    private const string ButtonClass = "listItemButton itemAction paper-icon-button-light";
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<BaseItemDto> Items { get; set; } = [];
+
+    [Parameter]
+    public ListViewOptions Options { get; set; } = new();
+
+    /// <summary>The surrounding list (cascaded by <c>ItemsContainer</c>); without one the options supply the context.</summary>
+    [CascadingParameter]
+    public ItemActionContext? Context { get; set; }
+
+    private sealed record Group(string? Title, bool First, List<ListItemModel> Rows);
+
+    private readonly List<Group> _groups = [];
+    private readonly Dictionary<ListItemModel, object> _keys = [];
+    private ItemActionContext? _context;
+
+    // Items are changed in place (user data, timers), so the rows are rebuilt on every render request.
+    protected override void OnParametersSet()
+    {
+        _groups.Clear();
+        _keys.Clear();
+        var seen = new HashSet<Guid>();
+        var rows = Builder.Build(Items, Options);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.GroupTitle is not null || _groups.Count == 0)
+            {
+                _groups.Add(new Group(row.GroupTitle, i == 0, []));
+            }
+
+            _groups[^1].Rows.Add(row);
+            _keys[row] = row.Item.Id is { } id && seen.Add(id) ? id : row;
+        }
+
+        _context = Context ?? new ItemActionContext
+        {
+            CollectionId = Options.CollectionId,
+            PlaylistId = Options.PlaylistId,
+            Items = () => Items
+        };
+    }
+
+    private Task RunAsync(ListItemModel row, string action, string? customAction = null) =>
+        Actions.ExecuteAsync(row.Item, action, _context, customAction);
+
+    private RenderFragment Row(ListItemModel row) =>
+        @<div @key="_keys[row]" @attributes="row.Attributes" class="@row.CssClass">
+            @if (Options.EnableOverview)
+            {
+                <div class="listItem-content">@RowContent(row)</div>
+                if (row.Overview is not null)
+                {
+                    <div class="listItem-bottomoverview secondary"><bdi>@row.Overview</bdi></div>
+                }
+            }
+            else
+            {
+                @RowContent(row)
+            }
+        </div>;
+
+    private RenderFragment RowContent(ListItemModel row) =>
+        @<text>
+            @if (Options.DragHandle)
+            {
+                <span class="listViewDragHandle material-icons listItemIcon listItemIcon-transparent drag_handle" aria-hidden="true"></span>
+            }
+            @if (row.ImageClass is not null)
+            {
+                var imageAction = row.ImageUrl is null ? row.Action : row.ImageAction;
+                <div data-action="@(row.ImageUrl is null ? null : row.ImageAction)" class="@(row.ImageUrl is null ? row.ImageClass : row.ImageClass + " lazy")" data-src="@row.ImageUrl" item-icon="@(row.ImageUrl is not null)" @onclick="() => RunAsync(row, imageAction)" @onclick:stopPropagation>
+                    @if (row.ImageUrl is null)
+                    {
+                        if (row.DefaultIcon is not null)
+                        {
+                            <span class="cardImageIcon material-icons @row.DefaultIcon" aria-hidden="true"></span>
+                        }
+                        else if (row.DefaultText is not null)
+                        {
+                            <div class="cardText cardDefaultText">@row.DefaultText</div>
+                        }
+                    }
+                    @if (row.MediaSourceCount is { } versions)
+                    {
+                        <div class="mediaSourceIndicator">@versions</div>
+                    }
+                    @if (row.PlayedIndicatorHtml.Length > 0)
+                    {
+                        <div class="indicators listItemIndicators">@((MarkupString)row.PlayedIndicatorHtml)</div>
+                    }
+                    @if (Options.ImagePlayButton)
+                    {
+                        <button is="paper-icon-button-light" type="button" class="listItemImageButton itemAction paper-icon-button-light" data-action="@ItemAction.Resume" title="@Globalize["Play"]" @onclick="() => RunAsync(row, ItemAction.Resume)" @onclick:stopPropagation><span class="material-icons listItemImageButton-icon play_arrow" aria-hidden="true"></span></button>
+                    }
+                    @if (row.ProgressHtml.Length > 0)
+                    {
+                        @((MarkupString)row.ProgressHtml)
+                    }
+                </div>
+            }
+            @if (Options.ShowIndexNumberLeft)
+            {
+                <div class="listItem-indexnumberleft">
+                    @if (row.Item.IndexNumber is { } number and not 0)
+                    {
+                        @number
+                    }
+                    else
+                    {
+                        @:&nbsp;
+                    }
+                </div>
+            }
+            <div class="@row.BodyClass" @onclick="() => RunAsync(row, row.Action)" @onclick:stopPropagation>
+                @for (var i = 0; i < row.TextLines.Count; i++)
+                {
+                    var text = row.TextLines[i];
+                    if (text.Length > 0)
+                    {
+                        <div class="@(i == 0 ? "listItemBodyText" : "secondary listItemBodyText")"><bdi>@text</bdi></div>
+                    }
+                }
+                @if (row.BodyMediaInfoHtml is not null)
+                {
+                    <div class="secondary listItemMediaInfo listItemBodyText">@((MarkupString)row.BodyMediaInfoHtml)</div>
+                }
+                @if (row.Overview is not null)
+                {
+                    @* PORT-TODO(items): the original renders the overview as sanitized Markdown; here it is plain text. *@
+                    <div class="secondary listItem-overview listItemBodyText"><bdi>@row.Overview</bdi></div>
+                }
+            </div>
+            @if (row.SideMediaInfoHtml is not null)
+            {
+                <div class="secondary listItemMediaInfo">@((MarkupString)row.SideMediaInfoHtml)</div>
+            }
+            @if (row.TimerIndicatorHtml.Length > 0)
+            {
+                @((MarkupString)row.TimerIndicatorHtml)
+            }
+            <div class="listViewUserDataButtons">
+                @if (Options.AddToListButton)
+                {
+                    <button is="paper-icon-button-light" type="button" class="@ButtonClass" data-action="@ItemAction.AddToPlaylist" title="@Globalize["AddToPlaylist"]" @onclick="() => RunAsync(row, ItemAction.AddToPlaylist)" @onclick:stopPropagation><span class="material-icons playlist_add" aria-hidden="true"></span></button>
+                }
+                @if (Options.InfoButton)
+                {
+                    <button is="paper-icon-button-light" type="button" class="@ButtonClass" data-action="@ItemAction.Link" title="@Globalize["ButtonInfo"]" @onclick="() => RunAsync(row, ItemAction.Link)" @onclick:stopPropagation><span class="material-icons info_outline" aria-hidden="true"></span></button>
+                }
+                @foreach (var button in Options.RightButtons ?? [])
+                {
+                    <button is="paper-icon-button-light" type="button" class="@ButtonClass" data-action="@ItemAction.Custom" data-customaction="@button.Id" title="@button.Title" @onclick="() => RunAsync(row, ItemAction.Custom, button.Id)" @onclick:stopPropagation><span class="material-icons @button.Icon" aria-hidden="true"></span></button>
+                }
+                @if (row.PlayedButton)
+                {
+                    <PlayStateButton Item="row.Item" Class="listItemButton paper-icon-button-light" />
+                }
+                @if (row.RatingButton)
+                {
+                    <RatingButton Item="row.Item" Class="listItemButton paper-icon-button-light" />
+                }
+                @if (Options.MoreButton)
+                {
+                    <button is="paper-icon-button-light" type="button" class="@ButtonClass" data-action="@ItemAction.Menu" title="@Globalize["ButtonMore"]" @onclick="() => RunAsync(row, ItemAction.Menu)" @onclick:stopPropagation><span class="material-icons more_vert" aria-hidden="true"></span></button>
+                }
+            </div>
+        </text>;
+}

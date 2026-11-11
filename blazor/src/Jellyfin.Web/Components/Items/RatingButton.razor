@@ -1,0 +1,73 @@
+@* The favourite toggle of an item. Port of elements/emby-ratingbutton. *@
+@implements IDisposable
+@inject ItemUserData UserData
+@inject Globalize Globalize
+
+<button is="emby-ratingbutton" type="button" class="@CssClass" data-action="none" data-id="@Item.IdText()" data-serverid="@Item.ServerId" data-itemtype="@Item.TypeName()" data-likes="@Likes" data-isfavorite="@(Favorite ? "true" : "false")" title="@Title" @onclick="ToggleAsync" @onclick:stopPropagation @attributes="Attributes">
+    <span class="material-icons @IconClass favorite @(Favorite ? "ratingbutton-icon-withrating" : null)" aria-hidden="true"></span>
+</button>
+
+@code {
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    /// <summary>Classes of the button, e.g. "listItemButton paper-icon-button-light".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>Extra classes of the icon.</summary>
+    [Parameter]
+    public string? IconClass { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private bool _busy;
+
+    private bool Favorite => Item.UserData?.IsFavorite == true;
+
+    private string Likes => Item.UserData?.Likes switch
+    {
+        true => "true",
+        false => "false",
+        null => string.Empty
+    };
+
+    private string CssClass => Favorite ? $"{Class} ratingbutton-withrating" : Class ?? string.Empty;
+
+    private string Title => Globalize.Translate(Favorite ? "Favorite" : "AddToFavorites");
+
+    protected override void OnInitialized() => UserData.Changed += OnUserDataChanged;
+
+    public void Dispose() => UserData.Changed -= OnUserDataChanged;
+
+    private void OnUserDataChanged(UserItemDataDto data)
+    {
+        if (ItemUserData.Apply(Item, data))
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ToggleAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await UserData.SetFavoriteAsync(Item, !Favorite);
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Changing the favourite state failed: " + exception.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

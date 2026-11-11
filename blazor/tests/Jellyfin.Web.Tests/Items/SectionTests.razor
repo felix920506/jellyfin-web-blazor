@@ -1,0 +1,211 @@
+@* Scroller (emby-scroller with emby-scrollbuttons), SectionHeader and ItemsSection. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Support
+@inherits ItemsTestContext
+
+@code {
+    private static readonly CardOptions PortraitCards = new() { Shape = CardShape.OverflowPortrait, ShowTitle = true };
+
+    private IReadOnlyList<BaseItemDto> _served = [];
+    private Func<Task<IReadOnlyList<BaseItemDto>>> _fetch = default!;
+    private bool _scrollButtons = true;
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        SignIn();
+        _fetch = () => Task.FromResult(_served);
+    }
+
+    private static BaseItemDto Movie(int number, string name) => TestItems.Item(TestItems.Movie(number, name));
+
+    private IRenderedComponent<ContainerFragment> RenderScroller() => Render(
+        @<div class="emby-scroller-container">
+            <Scroller Class="padded-top-focusscale" ScrollButtons="_scrollButtons" data-centerfocus="true">
+                <div class="scrollSlider">content</div>
+            </Scroller>
+        </div>);
+
+    [Fact]
+    public void The_desktop_layout_has_scroll_buttons_that_follow_the_scroll_position()
+    {
+        var cut = RenderScroller();
+
+        var scroller = cut.Find("div[is=emby-scroller]");
+        Assert.Equal("emby-scroller scrollX hiddenScrollX padded-top-focusscale", scroller.ClassName);
+        Assert.Equal("true", scroller.GetAttribute("data-centerfocus"));
+        Assert.Null(scroller.GetAttribute("data-scrollbuttons"));
+        Assert.Equal("content", scroller.QuerySelector(".scrollSlider")!.TextContent);
+        Assert.Equal(1, Interop.Watched);
+
+        // The buttons come before the scroller and stay hidden while everything fits.
+        var container = cut.Find(".emby-scroller-container");
+        Assert.Equal("emby-scrollbuttons", container.FirstElementChild!.GetAttribute("is"));
+        Assert.Equal("emby-scrollbuttons padded-right", container.FirstElementChild.ClassName);
+        var buttons = cut.FindAll(".emby-scrollbuttons > button");
+        Assert.Equal(new string?[] { "left", "right" }, buttons.Select(button => button.GetAttribute("data-direction")));
+        Assert.Equal(new string?[] { "Previous", "Next" }, buttons.Select(button => button.GetAttribute("title")));
+        Assert.All(buttons, button => Assert.Equal("emby-scrollbuttons-button paper-icon-button-light hide", button.ClassName));
+        Assert.NotNull(buttons[0].QuerySelector(".material-icons.chevron_left"));
+        Assert.NotNull(buttons[1].QuerySelector(".material-icons.chevron_right"));
+
+        Interop.Report(visible: true, canScrollBack: false, canScrollForward: true);
+
+        cut.WaitForAssertion(() => Assert.All(
+            cut.FindAll(".emby-scrollbuttons > button"),
+            button => Assert.Equal("emby-scrollbuttons-button paper-icon-button-light", button.ClassName)));
+        Assert.True(cut.FindAll(".emby-scrollbuttons > button")[0].HasAttribute("disabled"));
+        Assert.False(cut.FindAll(".emby-scrollbuttons > button")[1].HasAttribute("disabled"));
+
+        cut.FindAll(".emby-scrollbuttons > button")[1].Click();
+        Interop.Report(visible: true, canScrollBack: true, canScrollForward: false);
+
+        cut.WaitForAssertion(() => Assert.True(cut.FindAll(".emby-scrollbuttons > button")[1].HasAttribute("disabled")));
+        cut.FindAll(".emby-scrollbuttons > button")[0].Click();
+
+        Assert.Equal(new[] { true, false }, Interop.Scrolls);
+    }
+
+    [Fact]
+    public void Scroll_buttons_can_be_turned_off()
+    {
+        _scrollButtons = false;
+
+        var cut = RenderScroller();
+
+        Assert.Empty(cut.FindAll(".emby-scrollbuttons"));
+        Assert.Equal("false", cut.Find("div[is=emby-scroller]").GetAttribute("data-scrollbuttons"));
+    }
+
+    [Fact]
+    public void The_mobile_layout_has_no_scroll_buttons()
+    {
+        var cut = RenderScroller();
+        Assert.NotEmpty(cut.FindAll(".emby-scrollbuttons"));
+
+        Get<AppHost>().SetLayout("mobile");
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".emby-scrollbuttons")));
+        Assert.NotNull(cut.Find("div[is=emby-scroller] .scrollSlider"));
+    }
+
+    [Fact]
+    public void Touch_devices_have_no_scroll_buttons()
+    {
+        App.Browser.Environment = App.Browser.Environment with { Touch = true };
+
+        var cut = RenderScroller();
+
+        Assert.Empty(cut.FindAll(".emby-scrollbuttons"));
+    }
+
+    [Fact]
+    public async Task A_removed_scroller_stops_watching()
+    {
+        RenderScroller();
+        Assert.Equal(1, Interop.Watched);
+
+        await DisposeComponentsAsync();
+
+        Assert.Equal(0, Interop.Watched);
+    }
+
+    [Fact]
+    public void Section_headers_have_the_original_markup()
+    {
+        var plain = Render(@<SectionHeader Title="Next Up" />);
+        var linked = Render(@<SectionHeader Title="Next Up" Href="#/list?type=nextup" />);
+        var noMore = Render(@<SectionHeader Title="Next Up" Href="#/list?type=nextup" More="false"><span class="extra">x</span></SectionHeader>);
+        var container = Render(@<SectionHeader Title="Live TV" Container="true" />);
+        var padded = Render(@<SectionHeader Title="Active Recordings" Container="true" PadTitle="true" />);
+
+        Assert.Equal("sectionTitle sectionTitle-cards padded-left", plain.Find("h2").ClassName);
+        Assert.Equal("Next Up", plain.Find("h2").TextContent);
+        Assert.Empty(plain.FindAll(".sectionTitleContainer"));
+
+        var link = linked.Find(".sectionTitleContainer.sectionTitleContainer-cards.padded-left > a");
+        Assert.Equal("emby-linkbutton", link.GetAttribute("is"));
+        Assert.Equal("#/list?type=nextup", link.GetAttribute("href"));
+        Assert.Equal("more button-flat button-flat-mini sectionTitleTextButton emby-button", link.ClassName);
+        Assert.Equal("sectionTitle sectionTitle-cards", link.QuerySelector("h2")!.ClassName);
+        Assert.Equal("Next Up", link.QuerySelector("h2")!.TextContent);
+        Assert.NotNull(link.QuerySelector("span.material-icons.chevron_right"));
+
+        Assert.Equal("button-flat button-flat-mini sectionTitleTextButton emby-button", noMore.Find("a").ClassName);
+        Assert.Equal("x", noMore.Find(".sectionTitleContainer > span.extra").TextContent);
+
+        Assert.Equal("sectionTitleContainer sectionTitleContainer-cards padded-left", container.Find("div").ClassName);
+        Assert.Equal("sectionTitle sectionTitle-cards", container.Find("h2").ClassName);
+        Assert.Equal("sectionTitleContainer sectionTitleContainer-cards", padded.Find("div").ClassName);
+        Assert.Equal("sectionTitle sectionTitle-cards padded-left", padded.Find("h2").ClassName);
+    }
+
+    [Fact]
+    public void A_section_stays_hidden_until_it_has_items()
+    {
+        var reported = new List<int>();
+        var cut = Render(
+            @<ItemsSection Class="section1" Title="Next Up" Href="#/list?type=nextup" More="false" Monitor="videoplayback,markplayed" ParentId="p1"
+                           Fetch="_fetch" CardOptions="PortraitCards" ItemsChanged="@((IReadOnlyList<BaseItemDto> list) => reported.Add(list.Count))" data-test="1" />);
+
+        var section = cut.Find("div.verticalSection");
+        Assert.Equal("verticalSection emby-scroller-container section1 hide", section.ClassName);
+        Assert.Equal("1", section.GetAttribute("data-test"));
+        Assert.Equal("Next Up", cut.Find(".sectionTitleContainer a h2.sectionTitle").TextContent);
+        Assert.DoesNotContain("more", cut.Find(".sectionTitleContainer a").ClassList);
+
+        var scroller = cut.Find(".verticalSection > div[is=emby-scroller]");
+        Assert.Equal("emby-scroller scrollX hiddenScrollX padded-top-focusscale padded-bottom-focusscale", scroller.ClassName);
+        Assert.Equal("true", scroller.GetAttribute("data-centerfocus"));
+        var items = cut.Find("div[is=emby-scroller] > div[is=emby-itemscontainer]");
+        Assert.Equal("itemsContainer scrollSlider focuscontainer-x", items.ClassName);
+        Assert.Equal("videoplayback,markplayed", items.GetAttribute("data-monitor"));
+        Assert.Equal("p1", items.GetAttribute("data-parentid"));
+        Assert.Equal(new[] { 0 }, reported);
+
+        // An episode was played elsewhere: the list reloads and the section appears.
+        _served = [Movie(1, "One"), Movie(2, "Two")];
+        Playback.Start(Movie(9, "Playing"));
+        Playback.Stop();
+
+        cut.WaitForAssertion(() => Assert.Equal("verticalSection emby-scroller-container section1", cut.Find("div.verticalSection").ClassName));
+        Assert.Equal(2, cut.FindAll(".scrollSlider > .card").Count);
+        Assert.Equal(new[] { 0, 2 }, reported);
+
+        _served = [];
+        Playback.Start(Movie(9, "Playing"));
+        Playback.Stop();
+
+        cut.WaitForAssertion(() => Assert.Contains("hide", cut.Find("div.verticalSection").ClassList));
+        Assert.Empty(cut.FindAll(".card"));
+    }
+
+    [Fact]
+    public async Task A_section_takes_fixed_items_a_custom_header_and_refreshes_on_request()
+    {
+        IReadOnlyList<BaseItemDto> items = [Movie(1, "One")];
+        var fixedItems = Render(
+            @<ItemsSection Items="items" CardOptions="PortraitCards" ScrollButtons="false">
+                <Header>
+                    <SectionHeader Title="Active Recordings" Container="true" PadTitle="true" />
+                </Header>
+            </ItemsSection>);
+
+        Assert.Equal("verticalSection emby-scroller-container", fixedItems.Find("div.verticalSection").ClassName);
+        Assert.Equal("Active Recordings", fixedItems.Find(".sectionTitleContainer > h2.padded-left").TextContent);
+        Assert.Single(fixedItems.FindAll(".card"));
+        Assert.Empty(fixedItems.FindAll(".emby-scrollbuttons"));
+
+        var fetched = Render(@<ItemsSection Fetch="_fetch" CardOptions="PortraitCards" />);
+        Assert.Empty(fetched.FindAll("h2"));
+        _served = [Movie(1, "One")];
+
+        await fetched.InvokeAsync(() => fetched.FindComponent<ItemsSection>().Instance.RefreshAsync());
+
+        fetched.WaitForAssertion(() => Assert.Single(fetched.FindAll(".card")));
+        Assert.DoesNotContain("hide", fetched.Find("div.verticalSection").ClassList);
+    }
+}

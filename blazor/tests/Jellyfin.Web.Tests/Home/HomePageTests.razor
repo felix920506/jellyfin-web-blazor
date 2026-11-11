@@ -1,0 +1,333 @@
+@* The home page: its two tabs, the home sections with their requests, and what makes them reload. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages
+@using Jellyfin.Web.Routing
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Items
+@using Jellyfin.Web.Tests.Support
+@inherits ItemsTestContext
+
+@code {
+    private static readonly string UserIdText = TestApp.UserId.ToString("N");
+
+    private readonly List<object> _views = [View(1, "Films", "movies"), View(2, "Series", "tvshows")];
+    private readonly List<object> _favoriteMovies = [];
+    private AppLocation _location = AppLocation.Parse("/home");
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        App.Server.OnGet("/UserViews", _ => new { Items = _views, TotalRecordCount = _views.Count });
+        App.Server.OnGet("/UserItems/Resume", request => new
+        {
+            Items = request.Query("mediaTypes") == "Video" ? new[] { TestItems.Movie(11, "Half seen") } : []
+        });
+        App.Server.OnGet("/Shows/NextUp", new { Items = new[] { Episode(21, "Next one") } });
+        App.Server.OnGet("/Items/Latest", request => request.Query("parentId") == TestItems.Id(1)
+            ? new[] { TestItems.Movie(31, "New one"), TestItems.Movie(32, "New two") }
+            : []);
+        App.Server.OnGet("/Items", request => new
+        {
+            Items = request.Query("IncludeItemTypes") == "Movie" ? _favoriteMovies : []
+        });
+        App.Server.OnGet("/Persons", new { Items = Array.Empty<object>() });
+        App.Server.OnGet("/Studios", new { Items = Array.Empty<object>() });
+    }
+
+    private static object View(int number, string name, string collectionType) => new
+    {
+        Id = TestItems.Id(number),
+        Name = name,
+        ServerId = TestApp.ServerId,
+        Type = "CollectionFolder",
+        CollectionType = collectionType,
+        IsFolder = true,
+        ImageTags = new { Primary = "view" + number }
+    };
+
+    private static object Episode(int number, string name) => new
+    {
+        Id = TestItems.Id(number),
+        Name = name,
+        ServerId = TestApp.ServerId,
+        Type = "Episode",
+        MediaType = "Video",
+        SeriesName = "A series",
+        SeriesId = TestItems.Id(90),
+        IndexNumber = 2,
+        ParentIndexNumber = 1,
+        ImageTags = new { Primary = "tag" + number },
+        UserData = new { Played = false, IsFavorite = false, PlaybackPositionTicks = 0 }
+    };
+
+    private IRenderedComponent<ContainerFragment> RenderHome() => Render(
+        @<CascadingValue Value="_location">
+            <Home />
+        </CascadingValue>);
+
+    private static string[] Titles(AngleSharp.Dom.IElement root) =>
+        root.QuerySelectorAll(".verticalSection:not(.hide) h2.sectionTitle").Select(title => title.TextContent.Trim()).ToArray();
+
+    [Fact]
+    public void The_home_tab_shows_the_default_sections_that_have_items()
+    {
+        SignIn();
+
+        var cut = RenderHome();
+
+        cut.WaitForAssertion(() => Assert.Equal(
+            new[] { "My Media", "Continue Watching", "Next Up", "Recently Added in Films" },
+            Titles(cut.Find("#homeTab"))));
+
+        var page = cut.Find("#indexPage");
+        Assert.Equal("page mainAnimatedPage homePage libraryPage allLibraryPage backdropPage pageWithAbsoluteTabs withTabs", page.ClassName);
+        Assert.Equal("page", page.GetAttribute("data-role"));
+        Assert.Equal("false", page.GetAttribute("data-backbutton"));
+        Assert.Equal("tabContent pageTabContent is-active", cut.Find("#homeTab").ClassName);
+        Assert.Equal("sections homeSectionsContainer", cut.Find("#homeTab > div").ClassName);
+
+        // The sections keep their position classes, also the ones that stay empty.
+        Assert.Equal(new[] { "Films", "Series" }, cut.FindAll(".section0 .card .cardText").Select(text => text.TextContent.Trim()));
+        Assert.Single(cut.FindAll(".section1 .card"));
+        Assert.Contains("hide", cut.Find(".section2").ClassList);
+        Assert.Contains("hide", cut.Find(".section3").ClassList);
+        Assert.Empty(cut.Find(".section4").Children);
+        Assert.Single(cut.FindAll(".section5 .card"));
+        Assert.Equal(2, cut.FindAll(".section6 .verticalSection:not(.hide) .card").Count);
+        Assert.Single(cut.FindAll(".section6 .verticalSection.hide"));
+        Assert.Empty(cut.FindAll(".centerMessage"));
+
+        // Section titles that lead somewhere are links.
+        Assert.Equal(Get<AppRouter>().GetNextUpUrl(), cut.Find(".section5 .sectionTitleContainer a").GetAttribute("href"));
+        Assert.Empty(cut.FindAll(".section1 .sectionTitleContainer a"));
+        Assert.NotNull(cut.Find(".section6 .sectionTitleContainer a.more"));
+
+        // No tab bar: the favorites are reached from the navigation.
+        Assert.False(Get<PageTabsState>().Visible);
+        Assert.Empty(cut.FindAll("#favoritesTab .sections"));
+    }
+
+    [Fact]
+    public void The_sections_send_the_original_requests()
+    {
+        SignIn();
+
+        var cut = RenderHome();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".section6 .card").Count));
+
+        var views = Assert.Single(App.Server.RequestsTo("/UserViews"));
+        Assert.Equal(TestApp.UserId, Guid.Parse(views.Query("userId")!));
+
+        var resume = App.Server.RequestsTo("/UserItems/Resume");
+        Assert.Equal(new string?[] { "Audio", "Book", "Video" }, resume.Select(request => request.Query("mediaTypes")).Order());
+        Assert.All(resume, request =>
+        {
+            Assert.Equal(UserIdText, request.Query("userId"));
+            Assert.Equal("12", request.Query("limit"));
+            Assert.Equal("PrimaryImageAspectRatio", request.Query("fields"));
+            Assert.Equal("1", request.Query("imageTypeLimit"));
+            Assert.Equal("Primary,Backdrop,Thumb", request.Query("enableImageTypes"));
+            Assert.Equal("false", request.Query("enableTotalRecordCount"));
+        });
+
+        var nextUp = Assert.Single(App.Server.RequestsTo("/Shows/NextUp"));
+        Assert.Equal(UserIdText, nextUp.Query("userId"));
+        Assert.Equal("24", nextUp.Query("limit"));
+        Assert.Equal("PrimaryImageAspectRatio,DateCreated,Path,MediaSourceCount", nextUp.Query("fields"));
+        Assert.Equal("false", nextUp.Query("enableResumable"));
+        Assert.Equal("false", nextUp.Query("enableRewatching"));
+        Assert.Equal("2023-05-18T12:00:00.000Z", nextUp.Query("nextUpDateCutoff"));
+
+        var latest = App.Server.RequestsTo("/Items/Latest");
+        Assert.Equal(new string?[] { TestItems.Id(1), TestItems.Id(2) }, latest.Select(request => request.Query("parentId")).Order());
+        Assert.All(latest, request =>
+        {
+            Assert.Equal(UserIdText, request.Query("userId"));
+            Assert.Equal("PrimaryImageAspectRatio,Path", request.Query("fields"));
+            Assert.Equal("Primary,Backdrop,Thumb", request.Query("enableImageTypes"));
+        });
+        Assert.All(latest, request => Assert.Equal("16", request.Query("limit")));
+
+        // No Live TV access: nothing is asked about programmes, and the favorites wait for their tab.
+        Assert.Empty(App.Server.RequestsTo("/LiveTv/Programs/Recommended"));
+        Assert.Empty(App.Server.RequestsTo("/Items"));
+    }
+
+    [Fact]
+    public void Live_tv_appears_when_something_is_on()
+    {
+        SignIn(configure: user => user.Policy!.EnableLiveTvAccess = true);
+        App.Server.OnGet("/LiveTv/Programs/Recommended", new
+        {
+            Items = new[]
+            {
+                new { Id = TestItems.Id(41), Name = "News", ServerId = TestApp.ServerId, Type = "Program", ChannelName = "One", ChannelId = TestItems.Id(42) }
+            }
+        });
+
+        var cut = RenderHome();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".section4 .card")));
+        Assert.Contains("Live TV", Titles(cut.Find(".section4")));
+        Assert.Contains("On Now", Titles(cut.Find(".section4")));
+        Assert.Equal(
+            new[] { "Programs", "Guide", "Channels", "Recordings", "Schedule", "Series" },
+            cut.FindAll(".section4 .scrollSlider > a.raised.emby-button").Select(link => link.TextContent.Trim()));
+        Assert.Equal(Get<AppRouter>().GetLiveTvUrl("guide"), cut.FindAll(".section4 .scrollSlider > a.raised")[1].GetAttribute("href"));
+        Assert.Equal(new string?[] { "1", "24" }, App.Server.RequestsTo("/LiveTv/Programs/Recommended").Select(request => request.Query("limit")));
+    }
+
+    [Fact]
+    public void An_administrator_without_libraries_is_offered_to_create_one()
+    {
+        SignIn(admin: true);
+        _views.Clear();
+
+        var cut = RenderHome();
+
+        cut.WaitForAssertion(() => Assert.Equal("Nothing here.", cut.Find("#homeTab .centerMessage h2").TextContent));
+        Assert.Equal("sections", cut.Find("#homeTab > div").ClassName);
+        var link = cut.Find(".centerMessage a#button-createLibrary");
+        Assert.Equal("#/dashboard/libraries", link.GetAttribute("href"));
+        Assert.Equal("button-link", link.ClassName);
+        Assert.Equal("Would you like to create one now?", link.TextContent);
+        Assert.StartsWith("Seems like you haven't created any libraries yet.", cut.Find(".centerMessage p").TextContent, StringComparison.Ordinal);
+        Assert.Empty(App.Server.RequestsTo("/UserItems/Resume"));
+        Assert.Empty(cut.FindAll(".verticalSection"));
+    }
+
+    [Fact]
+    public void Other_users_without_libraries_are_sent_to_the_administrator()
+    {
+        SignIn();
+        _views.Clear();
+
+        var cut = RenderHome();
+
+        cut.WaitForAssertion(() => Assert.Equal("Ask an administrator to create a library.", cut.Find(".centerMessage p").TextContent));
+        Assert.Empty(cut.FindAll("#button-createLibrary"));
+    }
+
+    [Fact]
+    public void The_sections_follow_the_home_screen_settings()
+    {
+        SignIn();
+        var settings = Get<UserSettings>();
+        settings.Set("homesection0", "latestmedia");
+        settings.Set("homesection1", "librarybuttons");
+        for (var index = 2; index < 10; index++)
+        {
+            settings.Set("homesection" + index, "none");
+        }
+
+        var cut = RenderHome();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Recently Added in Films", "My Media" }, Titles(cut.Find("#homeTab"))));
+        Assert.Equal(
+            new[] { "Films", "Series" },
+            cut.FindAll(".section1 .homeLibraryButtonContainer > a.raised.homeLibraryButton .homeLibraryText").Select(text => text.TextContent));
+        Assert.Empty(App.Server.RequestsTo("/UserItems/Resume"));
+        Assert.Empty(App.Server.RequestsTo("/Shows/NextUp"));
+
+        // Saving other settings redraws the page.
+        settings.Set("homesection0", "nextup");
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Next Up", "My Media" }, Titles(cut.Find("#homeTab"))));
+        Assert.Single(App.Server.RequestsTo("/Shows/NextUp"));
+    }
+
+    [Fact]
+    public void The_page_reloads_when_the_libraries_change()
+    {
+        SignIn();
+        var cut = RenderHome();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".section0 .card").Count));
+
+        _views.Add(View(3, "Songs", "music"));
+        Get<UserViews>().Invalidate();
+
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll(".section0 .card").Count));
+        Assert.Equal(2, App.Server.RequestsTo("/UserViews").Count);
+        cut.WaitForAssertion(() => Assert.Contains(App.Server.RequestsTo("/Items/Latest"), request => request.Query("parentId") == TestItems.Id(3)));
+    }
+
+    [Fact]
+    public void Sections_reload_after_playback_and_when_items_are_marked()
+    {
+        SignIn();
+        var cut = RenderHome();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".section5 .card")));
+        var resumeRequests = App.Server.RequestsTo("/UserItems/Resume").Count;
+
+        Playback.Start(TestItems.Item(TestItems.Movie(11, "Half seen")));
+        Playback.Stop();
+
+        // Continue Watching and Next Up reload; the audio and book rows do not.
+        cut.WaitForAssertion(() => Assert.Equal(2, App.Server.RequestsTo("/Shows/NextUp").Count));
+        cut.WaitForAssertion(() => Assert.Equal(resumeRequests + 1, App.Server.RequestsTo("/UserItems/Resume").Count));
+        Assert.Equal("Video", App.Server.RequestsTo("/UserItems/Resume")[^1].Query("mediaTypes"));
+
+        ServerMessage("UserDataChanged", new
+        {
+            UserId = UserIdText,
+            UserDataList = new[] { new { ItemId = TestItems.Id(21), Played = true, IsFavorite = false } }
+        });
+
+        cut.WaitForAssertion(() => Assert.Equal(3, App.Server.RequestsTo("/Shows/NextUp").Count));
+    }
+
+    [Fact]
+    public void The_favorites_tab_loads_when_it_is_opened()
+    {
+        SignIn();
+        _favoriteMovies.Add(TestItems.Movie(51, "Liked", new { Played = false, IsFavorite = true, PlaybackPositionTicks = 0 }));
+        var cut = RenderHome();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".section0 .card").Count));
+        Assert.Empty(App.Server.RequestsTo("/Items"));
+
+        _location = AppLocation.Parse("/home?tab=1");
+        Rerender(cut);
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Movies" }, Titles(cut.Find("#favoritesTab"))));
+        Assert.Equal("tabContent pageTabContent is-active", cut.Find("#favoritesTab").ClassName);
+        Assert.Equal("tabContent pageTabContent", cut.Find("#homeTab").ClassName);
+        Assert.Equal("Liked", cut.Find("#favoritesTab .card .cardText").TextContent.Trim());
+        Assert.Equal(
+            Get<AppRouter>().GetListUrl(new ListRouteOptions { ItemTypes = "Movie", IsFavorite = true }),
+            cut.Find("#favoritesTab .verticalSection:not(.hide) .sectionTitleContainer a").GetAttribute("href"));
+
+        var movies = Assert.Single(App.Server.RequestsTo("/Items"), request => request.Query("IncludeItemTypes") == "Movie");
+        Assert.Equal(UserIdText, movies.Query("userId"));
+        Assert.Equal("IsFavorite", movies.Query("Filters"));
+        Assert.Equal("SeriesSortName,SortName", movies.Query("SortBy"));
+        Assert.Equal("true", movies.Query("Recursive"));
+        Assert.Equal("20", movies.Query("Limit"));
+        Assert.Single(App.Server.RequestsTo("/Studios"));
+        Assert.Equal(new string?[] { "Artist", null }, App.Server.RequestsTo("/Persons").Select(request => request.Query("PersonTypes")).OrderBy(type => type is null));
+
+        // Un-favouring the item elsewhere empties the row again.
+        _favoriteMovies.Clear();
+        ServerMessage("UserDataChanged", new
+        {
+            UserId = UserIdText,
+            UserDataList = new[] { new { ItemId = TestItems.Id(51), Played = false, IsFavorite = false } }
+        });
+
+        cut.WaitForAssertion(() => Assert.Empty(Titles(cut.Find("#favoritesTab"))));
+    }
+
+    [Fact]
+    public void Opening_the_page_on_the_favorites_tab_leaves_the_home_sections_alone()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/home?tab=1");
+
+        var cut = RenderHome();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(App.Server.RequestsTo("/Items")));
+        Assert.Empty(cut.FindAll("#homeTab .sections"));
+        Assert.Empty(App.Server.RequestsTo("/UserItems/Resume"));
+    }
+}

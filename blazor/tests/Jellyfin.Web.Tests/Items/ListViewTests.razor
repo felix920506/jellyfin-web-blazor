@@ -1,0 +1,208 @@
+@* ListView (listview.js markup and clicks) and MediaInfoLine. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Support
+@inherits ItemsTestContext
+
+@code {
+    private IReadOnlyList<BaseItemDto> _items = [];
+    private ListViewOptions _options = new();
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        SignIn();
+    }
+
+    private static BaseItemDto Movie(int number, string name, string? sortName = null) => TestItems.Item(new
+    {
+        Id = TestItems.Id(number),
+        Name = name,
+        SortName = sortName ?? name,
+        ServerId = TestApp.ServerId,
+        Type = "Movie",
+        MediaType = "Video",
+        IsFolder = false,
+        ProductionYear = 2000 + number,
+        RunTimeTicks = 57_000_000_000L,
+        Overview = "A story.",
+        IndexNumber = number,
+        ImageTags = new { Primary = "tag" + number },
+        UserData = new { Played = false, IsFavorite = false, PlaybackPositionTicks = 0 }
+    });
+
+    private IRenderedComponent<ContainerFragment> RenderList() => Render(@<ListView Items="_items" Options="_options" />);
+
+    [Fact]
+    public void A_row_has_the_original_markup()
+    {
+        _items = [Movie(1, "One")];
+
+        var cut = RenderList();
+
+        var row = cut.Find("div.listItem");
+        Assert.Equal("listItem listItem-border", row.ClassName);
+        Assert.Equal(TestItems.Id(1), row.GetAttribute("data-id"));
+        Assert.Equal("Movie", row.GetAttribute("data-type"));
+        Assert.Equal("link", row.GetAttribute("data-action"));
+
+        var image = cut.Find(".listItem > .listItemImage");
+        Assert.Equal("listItemImage itemAction lazy", image.ClassName);
+        Assert.Equal("link", image.GetAttribute("data-action"));
+        Assert.Equal(
+            $"{TestApp.ServerUrl}/Items/{TestItems.Id(1)}/Images/Primary?fillWidth=80&fillHeight=80&tag=tag1&quality=90",
+            image.GetAttribute("data-src"));
+
+        Assert.Equal("listItemBody itemAction", cut.Find(".listItem > .listItemBody").ClassName);
+        Assert.Equal(new[] { "One" }, cut.FindAll(".listItemBody > .listItemBodyText > bdi").Select(line => line.TextContent));
+        // The side info leaves out the year (listview.js passes year: false).
+        Assert.Equal("1h 35m", cut.Find(".listItem > .secondary.listItemMediaInfo").TextContent.Trim());
+
+        var buttons = cut.FindAll(".listItem > .listViewUserDataButtons > button");
+        Assert.Equal(
+            new string?[] { "emby-playstatebutton", "emby-ratingbutton", "paper-icon-button-light" },
+            buttons.Select(button => button.GetAttribute("is")));
+        Assert.Equal("listItemButton paper-icon-button-light", buttons[0].ClassName);
+        Assert.Equal("listItemButton itemAction paper-icon-button-light", buttons[2].ClassName);
+        Assert.Equal("menu", buttons[2].GetAttribute("data-action"));
+        Assert.NotNull(buttons[2].QuerySelector(".material-icons.more_vert"));
+    }
+
+    [Fact]
+    public void Options_add_the_other_parts_of_a_row()
+    {
+        _items = [Movie(3, "Three")];
+        _options = new ListViewOptions
+        {
+            DragHandle = true,
+            ShowIndexNumberLeft = true,
+            ImagePlayButton = true,
+            AddToListButton = true,
+            InfoButton = true,
+            EnableOverview = true,
+            MoreButton = false,
+            EnableUserDataButtons = false,
+            RightButtons = [new ListRightButton("remove", "Remove it", "remove_circle_outline")]
+        };
+
+        var cut = RenderList();
+
+        var content = cut.Find(".listItem > .listItem-content");
+        Assert.NotNull(content.QuerySelector(".listViewDragHandle.material-icons.listItemIcon.listItemIcon-transparent.drag_handle"));
+        Assert.Equal("3", content.QuerySelector(".listItem-indexnumberleft")!.TextContent.Trim());
+        var play = content.QuerySelector(".listItemImage > button.listItemImageButton.itemAction")!;
+        Assert.Equal("resume", play.GetAttribute("data-action"));
+        Assert.NotNull(play.QuerySelector(".listItemImageButton-icon.play_arrow"));
+        Assert.Equal("A story.", cut.Find(".listItem > .listItem-bottomoverview.secondary > bdi").TextContent);
+
+        var buttons = content.QuerySelectorAll(".listViewUserDataButtons > button");
+        Assert.Equal(new string?[] { "addtoplaylist", "link", "custom" }, buttons.Select(button => button.GetAttribute("data-action")));
+        Assert.Equal(new string?[] { "Add to playlist", buttons[1].GetAttribute("title"), "Remove it" }, buttons.Select(button => button.GetAttribute("title")));
+        Assert.Equal("remove", buttons[2].GetAttribute("data-customaction"));
+        Assert.NotNull(buttons[0].QuerySelector(".material-icons.playlist_add"));
+        Assert.NotNull(buttons[1].QuerySelector(".material-icons.info_outline"));
+        Assert.NotNull(buttons[2].QuerySelector(".material-icons.remove_circle_outline"));
+    }
+
+    [Fact]
+    public void Rows_are_grouped_under_headers()
+    {
+        _items = [Movie(1, "Alpha"), Movie(2, "Avocado"), Movie(3, "Beta")];
+        _options = new ListViewOptions { ShowIndex = true, SortBy = "SortName" };
+
+        var cut = RenderList();
+
+        var headers = cut.FindAll("h2.listGroupHeader");
+        Assert.Equal(new[] { "A", "B" }, headers.Select(header => header.TextContent));
+        Assert.Equal("listGroupHeader listGroupHeader-first", headers[0].ClassName);
+        Assert.Equal("listGroupHeader", headers[1].ClassName);
+        Assert.Equal(new[] { 2, 1 }, headers.Select(header => header.NextElementSibling!.QuerySelectorAll(".listItem").Length));
+    }
+
+    [Fact]
+    public void Clicking_a_row_runs_its_action()
+    {
+        var movie = Movie(1, "One");
+        _items = [movie, Movie(2, "Two")];
+        App.Browser.Navigate("/home");
+        var cut = RenderList();
+
+        cut.FindAll(".listItemBody")[0].Click();
+
+        cut.WaitForAssertion(() => Assert.StartsWith("/details?id=" + TestItems.Id(1), App.Browser.Hash, StringComparison.Ordinal));
+        Assert.Empty(Playback.Calls);
+
+        _options = new ListViewOptions { Action = ItemAction.Play, ImagePlayButton = true };
+        Rerender(cut);
+        cut.FindAll(".listItemBody")[1].Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Play" }, Playback.Calls));
+        Assert.Equal(new[] { TestItems.Id(2) }, Playback.PlayRequests[0].Ids);
+
+        cut.FindAll("button.listItemImageButton")[0].Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(2, Playback.PlayRequests.Count));
+        Assert.Equal(new[] { TestItems.Id(1) }, Playback.PlayRequests[1].Ids);
+    }
+
+    [Fact]
+    public async Task Row_buttons_reach_the_context_menu_and_the_custom_action_of_the_list()
+    {
+        App.Server.OnGet("/Items/" + TestItems.Id(1), TestItems.Movie(1, "One"));
+        IReadOnlyList<BaseItemDto> items = [Movie(1, "One")];
+        var options = new ListViewOptions { RightButtons = [new ListRightButton("remove", "Remove it", "close")] };
+        var custom = new List<(string Action, BaseItemDto Item)>();
+        Func<string, BaseItemDto, Task> onCustom = (action, item) =>
+        {
+            custom.Add((action, item));
+            return Task.CompletedTask;
+        };
+        var cut = Render(@<ItemsContainer Items="items" ListOptions="options" OnCustomAction="onCustom" Class="vertical-list" />);
+
+        cut.Find("button[data-customaction=remove]").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(custom));
+        Assert.Equal("remove", custom[0].Action);
+        Assert.Same(items[0], custom[0].Item);
+
+        cut.Find("button[data-action=menu]").Click();
+        var dialog = await NextDialogAsync();
+
+        Assert.Contains("actionSheet", dialog.Options.Class, StringComparison.Ordinal);
+        dialog.Cancel();
+    }
+
+    [Fact]
+    public void User_data_buttons_of_a_row_work()
+    {
+        var movie = Movie(1, "One");
+        App.Server.OnPost("/UserPlayedItems/" + TestItems.Id(1), new { Played = true, IsFavorite = false });
+        _items = [movie];
+        App.Browser.Navigate("/home");
+        var cut = RenderList();
+
+        cut.Find("button[is=emby-playstatebutton]").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("true", cut.Find("button[is=emby-playstatebutton]").GetAttribute("data-played")));
+        Assert.Equal("/home", App.Browser.Hash);
+    }
+
+    [Fact]
+    public void Media_info_lines()
+    {
+        var movie = Movie(1, "One");
+
+        var primary = Render(@<MediaInfoLine Item="movie" data-test="1" />).Find("div");
+        var secondary = Render(@<MediaInfoLine Item="movie" Secondary="true" />).Find("div");
+        var custom = Render(@<MediaInfoLine Item="movie" Class="secondary listItemMediaInfo" Options="@(new MediaInfoOptions { Year = false })" />).Find("div");
+
+        Assert.Equal("itemMiscInfo itemMiscInfo-primary", primary.ClassName);
+        Assert.Equal("1", primary.GetAttribute("data-test"));
+        Assert.Equal(new[] { "2001", "1h 35m" }, primary.QuerySelectorAll(".mediaInfoItem").Select(part => part.TextContent.Trim()).Take(2));
+        Assert.Equal("itemMiscInfo itemMiscInfo-secondary", secondary.ClassName);
+        Assert.Equal("secondary listItemMediaInfo", custom.ClassName);
+        Assert.DoesNotContain("2001", custom.TextContent, StringComparison.Ordinal);
+    }
+}

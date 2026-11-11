@@ -1,0 +1,175 @@
+@*
+    One section of the home screen, chosen by its type (components/homesections/sections/*.ts).
+    Sections that load items stay hidden until they have some.
+*@
+@inject HomeSections Sections
+@inject ItemQueries Queries
+@inject UserSettings Settings
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject Globalize Globalize
+@inject DateTimeText Clock
+
+@switch (Type)
+{
+    case HomeSectionType.SmallLibraryTiles:
+        <ItemsSection Class="@SectionClass" Title="@Globalize["HeaderMyMedia"]" Items="Views" CardOptions="HomeSections.LibraryTilesOptions" />
+        break;
+
+    case HomeSectionType.LibraryButtons:
+        <div class="@SectionClass">
+            <div class="verticalSection verticalSection-extrabottompadding">
+                <h2 class="sectionTitle sectionTitle-cards padded-left">@Globalize["HeaderMyMedia"]</h2>
+                <div is="emby-itemscontainer" class="homeLibraryButtonContainer itemsContainer padded-left padded-right vertical-wrap focuscontainer-x" data-multiselect="false">
+                    @foreach (var view in Views)
+                    {
+                        <a is="emby-linkbutton" href="@Router.GetRouteUrl(view)" class="raised homeLibraryButton emby-button">
+                            <span class="material-icons homeLibraryIcon @ItemIcons.ForLibrary(view.CollectionTypeName())" aria-hidden="true"></span>
+                            <span class="homeLibraryText">@view.Name</span>
+                        </a>
+                    }
+                </div>
+            </div>
+        </div>
+        break;
+
+    case HomeSectionType.Resume:
+        <ItemsSection Class="@SectionClass" Title="@Globalize["HeaderContinueWatching"]" Monitor="@HomeSections.GetResumeMonitor("Video")" Fetch="LoadResumeVideoAsync" CardOptions="_options!" />
+        break;
+
+    case HomeSectionType.ResumeAudio:
+        <ItemsSection Class="@SectionClass" Title="@Globalize["HeaderContinueListening"]" Monitor="@HomeSections.GetResumeMonitor("Audio")" Fetch="LoadResumeAudioAsync" CardOptions="_options!" />
+        break;
+
+    case HomeSectionType.ResumeBook:
+        <ItemsSection Class="@SectionClass" Title="@Globalize["HeaderContinueReading"]" Monitor="@HomeSections.GetResumeMonitor("Book")" Fetch="LoadResumeBookAsync" CardOptions="_options!" />
+        break;
+
+    case HomeSectionType.NextUp:
+        <ItemsSection Class="@SectionClass" Title="@Globalize["NextUp"]" Href="@Router.GetNextUpUrl()" More="false" Monitor="videoplayback,markplayed" Fetch="LoadNextUpAsync" CardOptions="_options!" />
+        break;
+
+    case HomeSectionType.LatestMedia:
+        <div class="@SectionClass">
+            @foreach (var view in _latestViews)
+            {
+                <ItemsSection @key="view.Id" Title="@Globalize.Translate("LatestFromLibrary", view.Name)" Href="@Router.GetRouteUrl(view, new RouteOptions { Section = "latest" })"
+                              ParentId="@view.IdText()" Fetch="() => Queries.GetLatestItemsAsync(view.IdText(), HomeSections.GetLatestLimit(view))" CardOptions="_latestOptions[view]" />
+            }
+        </div>
+        break;
+
+    case HomeSectionType.LiveTv:
+        @if (_hasLiveTv)
+        {
+            <div class="@SectionClass">
+                <div class="verticalSection emby-scroller-container">
+                    <SectionHeader Title="@Globalize["LiveTV"]" Container="true" />
+                    <Scroller Class="padded-top-focusscale padded-bottom-focusscale" ScrollButtons="false" data-centerfocus="true">
+                        <div class="padded-top padded-bottom scrollSlider focuscontainer-x">
+                            @foreach (var (key, section) in LiveTvLinks)
+                            {
+                                <a is="emby-linkbutton" href="@Router.GetLiveTvUrl(section)" class="raised emby-button"><span>@Globalize[key]</span></a>
+                            }
+                        </div>
+                    </Scroller>
+                </div>
+                <ItemsSection Title="@Globalize["HeaderOnNow"]" Href="@Router.GetLiveTvUrl("onnow")" Fetch="LoadOnNowAsync" CardOptions="HomeSections.OnNowOptions" />
+            </div>
+        }
+        else
+        {
+            <div class="verticalSection @SectionClass"></div>
+        }
+
+        break;
+
+    case HomeSectionType.ActiveRecordings:
+        <ItemsSection Class="@SectionClass" Fetch="LoadActiveRecordingsAsync" CardOptions="HomeSections.ActiveRecordingsOptions">
+            <Header>
+                <SectionHeader Title="@Globalize["HeaderActiveRecordings"]" Container="true" PadTitle="true" />
+            </Header>
+        </ItemsSection>
+        break;
+
+    default:
+        <div class="verticalSection @SectionClass"></div>
+        break;
+}
+
+@code {
+    private static readonly (string Key, string? Section)[] LiveTvLinks =
+    [
+        ("Programs", "programs"),
+        ("Guide", "guide"),
+        ("Channels", "channels"),
+        ("Recordings", "recordedtv"),
+        ("Schedule", "dvrschedule"),
+        ("Series", "seriesrecording")
+    ];
+
+    /// <summary>The position of the section on the home screen (0 to 9).</summary>
+    [Parameter, EditorRequired]
+    public int Index { get; set; }
+
+    /// <summary>A <see cref="HomeSectionType"/>.</summary>
+    [Parameter, EditorRequired]
+    public string Type { get; set; } = HomeSectionType.None;
+
+    /// <summary>The user's libraries.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<BaseItemDto> Views { get; set; } = [];
+
+    private readonly Dictionary<BaseItemDto, CardOptions> _latestOptions = [];
+    private IReadOnlyList<BaseItemDto> _latestViews = [];
+    private CardOptions? _options;
+    private bool _hasLiveTv;
+
+    private string SectionClass => "section" + Index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _options = Type switch
+        {
+            HomeSectionType.Resume => Sections.GetResumeOptions("Video"),
+            HomeSectionType.ResumeAudio => Sections.GetResumeOptions("Audio"),
+            HomeSectionType.ResumeBook => Sections.GetResumeOptions("Book"),
+            HomeSectionType.NextUp => Sections.GetNextUpOptions(),
+            _ => null
+        };
+
+        if (Type == HomeSectionType.LatestMedia)
+        {
+            _latestViews = HomeSections.GetLatestViews(Views, Api.User);
+            foreach (var view in _latestViews)
+            {
+                _latestOptions[view] = HomeSections.GetLatestOptions(view);
+            }
+        }
+        else if (Type == HomeSectionType.LiveTv && Api.User?.Policy?.EnableLiveTvAccess == true)
+        {
+            // The section only exists when something is on air.
+            try
+            {
+                _hasLiveTv = (await Queries.GetOnNowProgramsAsync(1)).Count > 0;
+            }
+            catch (HttpRequestException exception)
+            {
+                AppLog.Warn("Loading the Live TV programmes failed: " + exception.Message);
+            }
+        }
+    }
+
+    private Task<IReadOnlyList<BaseItemDto>> LoadResumeVideoAsync() => Queries.GetResumeItemsAsync("Video");
+
+    private Task<IReadOnlyList<BaseItemDto>> LoadResumeAudioAsync() => Queries.GetResumeItemsAsync("Audio");
+
+    private Task<IReadOnlyList<BaseItemDto>> LoadResumeBookAsync() => Queries.GetResumeItemsAsync("Book");
+
+    private Task<IReadOnlyList<BaseItemDto>> LoadNextUpAsync() =>
+        Queries.GetNextUpAsync(Sections.GetNextUpCutoff(Clock.Now), Settings.EnableRewatchingInNextUp);
+
+    private Task<IReadOnlyList<BaseItemDto>> LoadOnNowAsync() => Queries.GetOnNowProgramsAsync(24);
+
+    private Task<IReadOnlyList<BaseItemDto>> LoadActiveRecordingsAsync() => Queries.GetActiveRecordingsAsync();
+}

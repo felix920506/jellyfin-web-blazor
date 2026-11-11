@@ -1,0 +1,165 @@
+@*
+    One card, with the markup of components/cardbuilder/cardBuilder.js (buildCard). CardBuilder decides
+    everything; this component only draws the CardModel and forwards clicks on .itemAction elements
+    to ItemActions (the role of components/shortcuts.js).
+*@
+@inject ItemActions Actions
+@inject Globalize Globalize
+@inject UserSettings Settings
+
+<div @attributes="Model.Attributes" class="@Model.CssClass">
+    <div class="@Model.BoxClass">
+        <div class="cardScalable">
+            <div class="cardPadder cardPadder-@Model.Shape">
+                @if (Model.PadderIcon is not null)
+                {
+                    <span class="cardImageIcon material-icons @Model.PadderIcon" aria-hidden="true"></span>
+                }
+                else if (Model.PadderText is not null)
+                {
+                    <div class="cardText cardDefaultText">@Model.PadderText</div>
+                }
+            </div>
+            @if (ShowBlurhash)
+            {
+                <canvas class="blurhash-canvas lazy-hidden" width="20" height="20" aria-hidden="true"></canvas>
+            }
+            <a href="@Model.RouteUrl" data-action="@Model.Action" class="@ImageContainerClass" data-src="@Model.ImageUrl" data-blurhash="@(ShowBlurhash ? Model.BlurHash : null)" aria-label="@Model.Item.Name" role="img" @onclick="() => RunAsync(Model.Action)" @onclick:preventDefault @onclick:stopPropagation>
+                @if (Model.IndicatorsHtml.Length > 0)
+                {
+                    <div class="cardIndicators">@((MarkupString)Model.IndicatorsHtml)</div>
+                }
+                @if (Model.ImageUrl is null)
+                {
+                    if (Model.DefaultIcon is not null)
+                    {
+                        <span class="cardImageIcon material-icons @Model.DefaultIcon" aria-hidden="true"></span>
+                    }
+                    else if (Model.DefaultText is not null)
+                    {
+                        <div class="cardText cardDefaultText">@Model.DefaultText</div>
+                    }
+                }
+                @if (Model.InnerFooter is { IsEmpty: false } inner)
+                {
+                    @Footer(inner)
+                    if (inner.MediaSourceCount is { } versions)
+                    {
+                        <div class="mediaSourceIndicator">@versions</div>
+                    }
+                }
+            </a>
+            @if (Model.CenterPlayButton)
+            {
+                <button is="paper-icon-button-light" type="button" class="@OverlayButtonClass cardOverlayButton-centered" data-action="@ItemAction.Play" title="@Globalize["Play"]" @onclick="() => RunAsync(ItemAction.Play)" @onclick:stopPropagation><span class="material-icons cardOverlayButtonIcon play_arrow" aria-hidden="true"></span></button>
+            }
+            @if (Model.OverlayPlayButton)
+            {
+                <button is="paper-icon-button-light" type="button" class="@OverlayButtonClass" data-action="@ItemAction.Play" title="@Globalize["Play"]" @onclick="() => RunAsync(ItemAction.Play)" @onclick:stopPropagation><span class="material-icons cardOverlayButtonIcon play_arrow" aria-hidden="true"></span></button>
+            }
+            @if (Model.OverlayMoreButton)
+            {
+                <button is="paper-icon-button-light" type="button" class="@OverlayButtonClass" data-action="@ItemAction.Menu" title="@Globalize["ButtonMore"]" @onclick="() => RunAsync(ItemAction.Menu)" @onclick:stopPropagation><span class="material-icons cardOverlayButtonIcon more_vert" aria-hidden="true"></span></button>
+            }
+            @if (Model.HoverMenu)
+            {
+                <div class="cardOverlayContainer itemAction" data-action="@Model.Action" @onclick="() => RunAsync(Model.Action)" @onclick:stopPropagation>
+                    @if (Model.HoverPlayButton)
+                    {
+                        <button is="paper-icon-button-light" type="button" class="@HoverButtonClass cardOverlayFab-primary" data-action="@ItemAction.Resume" title="@Globalize["Play"]" @onclick="() => RunAsync(ItemAction.Resume)" @onclick:stopPropagation><span class="material-icons cardOverlayButtonIcon cardOverlayButtonIcon-hover play_arrow" aria-hidden="true"></span></button>
+                    }
+                    <div class="cardOverlayButton-br flex">
+                        @if (Model.HoverPlayedButton)
+                        {
+                            <PlayStateButton Item="Model.Item" Class="@HoverButtonClass" IconClass="cardOverlayButtonIcon cardOverlayButtonIcon-hover" />
+                        }
+                        @if (Model.HoverRatingButton)
+                        {
+                            <RatingButton Item="Model.Item" Class="@HoverButtonClass" IconClass="cardOverlayButtonIcon cardOverlayButtonIcon-hover" />
+                        }
+                        <button is="paper-icon-button-light" type="button" class="@HoverButtonClass" data-action="@ItemAction.Menu" title="@Globalize["ButtonMore"]" @onclick="() => RunAsync(ItemAction.Menu)" @onclick:stopPropagation><span class="material-icons cardOverlayButtonIcon cardOverlayButtonIcon-hover more_vert" aria-hidden="true"></span></button>
+                    </div>
+                </div>
+            }
+        </div>
+        @if (Model.OuterFooter is { IsEmpty: false } outer)
+        {
+            @Footer(outer)
+        }
+    </div>
+</div>
+
+@code {
+    private const string OverlayButtonClass = "cardOverlayButton cardOverlayButton-br itemAction paper-icon-button-light";
+    private const string HoverButtonClass = "cardOverlayButton cardOverlayButton-hover itemAction paper-icon-button-light";
+
+    /// <summary>The card to draw, from <see cref="CardBuilder"/>.</summary>
+    [Parameter, EditorRequired]
+    public CardModel Model { get; set; } = default!;
+
+    /// <summary>The list the card is part of; defaults to the one cascaded by <c>ItemsContainer</c>.</summary>
+    [Parameter]
+    public ItemActionContext? Context { get; set; }
+
+    [CascadingParameter]
+    public ItemActionContext? CascadedContext { get; set; }
+
+    private bool ShowBlurhash => Model.ImageUrl is not null && !string.IsNullOrEmpty(Model.BlurHash) && Settings.EnableBlurhash;
+
+    private string ImageContainerClass => Model.ImageUrl is null
+        ? $"{Model.ImageContainerClass} cardContent itemAction"
+        : $"{Model.ImageContainerClass} cardContent itemAction lazy";
+
+    private Task RunAsync(string action) => Actions.ExecuteAsync(Model.Item, action, Context ?? CascadedContext);
+
+    private Task OpenAsync(BaseItemDto item) => Actions.ExecuteAsync(item, ItemAction.Link, Context ?? CascadedContext);
+
+    private RenderFragment Footer(CardFooter footer) => footer.CssClass is null
+        ? FooterContent(footer)
+        : @<div class="@footer.CssClass">@FooterContent(footer)</div>;
+
+    private RenderFragment FooterContent(CardFooter footer) =>
+        @<text>
+            @if (footer.LogoUrl is not null)
+            {
+                <div class="lazy cardFooterLogo" data-src="@footer.LogoUrl"></div>
+            }
+            @if (footer.MoreButton)
+            {
+                <button is="paper-icon-button-light" type="button" class="itemAction btnCardOptions cardText-secondary paper-icon-button-light" data-action="@ItemAction.Menu" title="@Globalize["ButtonMore"]" @onclick="() => RunAsync(ItemAction.Menu)" @onclick:stopPropagation><span class="material-icons more_vert" aria-hidden="true"></span></button>
+            }
+            @foreach (var line in footer.Lines)
+            {
+                if (line.Parts.Count == 0)
+                {
+                    <div class="@line.CssClass">&nbsp;</div>
+                }
+                else
+                {
+                    <div class="@line.CssClass"><bdi>@foreach (var part in line.Parts)
+                    {
+                        @TextPart(part)
+                    }</bdi></div>
+                }
+            }
+            @if (footer.ProgressHtml.Length > 0)
+            {
+                @((MarkupString)footer.ProgressHtml)
+            }
+        </text>;
+
+    private RenderFragment TextPart(CardTextPart part)
+    {
+        if (part.Link is { } link)
+        {
+            return @<a href="@part.Href" @attributes="ItemActions.GetShortcutAttributeMap(link)" class="itemAction textActionButton" title="@part.Title" data-action="@ItemAction.Link" @onclick="() => OpenAsync(link)" @onclick:preventDefault @onclick:stopPropagation>@part.Text</a>;
+        }
+
+        if (part.Title is not null)
+        {
+            return @<span title="@part.Title">@part.Text</span>;
+        }
+
+        return @<text>@part.Text</text>;
+    }
+}

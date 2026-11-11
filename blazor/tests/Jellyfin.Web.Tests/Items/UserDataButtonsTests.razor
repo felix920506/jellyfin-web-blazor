@@ -1,0 +1,165 @@
+@* The played and favourite toggles (elements/emby-playstatebutton, emby-ratingbutton). *@
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Support
+@inherits ItemsTestContext
+
+@code {
+    private static readonly string MovieId = TestItems.Id(1);
+
+    private static readonly string UserIdText = TestApp.UserId.ToString("N");
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        SignIn();
+    }
+
+    private static BaseItemDto Movie(bool played = false, bool favorite = false, string type = "Movie") => TestItems.Item(new
+    {
+        Id = MovieId,
+        Name = "One",
+        ServerId = TestApp.ServerId,
+        Type = type,
+        MediaType = "Video",
+        UserData = new { Played = played, IsFavorite = favorite, Likes = favorite ? (bool?)true : null }
+    });
+
+    [Fact]
+    public void The_played_button_shows_the_state_of_the_item()
+    {
+        var unplayed = Render(@<PlayStateButton Item="@Movie()" Class="listItemButton paper-icon-button-light" IconClass="extra" data-test="1" />).Find("button");
+        var played = Render(@<PlayStateButton Item="@Movie(played: true)" Class="listItemButton paper-icon-button-light" />).Find("button");
+        var book = Render(@<PlayStateButton Item="@Movie(played: true, type: "AudioBook")" />).Find("button");
+
+        Assert.Equal("emby-playstatebutton", unplayed.GetAttribute("is"));
+        Assert.Equal("button", unplayed.GetAttribute("type"));
+        Assert.Equal("listItemButton paper-icon-button-light", unplayed.ClassName);
+        Assert.Equal("none", unplayed.GetAttribute("data-action"));
+        Assert.Equal(MovieId, unplayed.GetAttribute("data-id"));
+        Assert.Equal(TestApp.ServerId, unplayed.GetAttribute("data-serverid"));
+        Assert.Equal("Movie", unplayed.GetAttribute("data-itemtype"));
+        Assert.Equal("false", unplayed.GetAttribute("data-played"));
+        Assert.Equal("1", unplayed.GetAttribute("data-test"));
+        Assert.Equal("Mark played", unplayed.GetAttribute("title"));
+        Assert.Equal("material-icons extra check playstatebutton-icon-unplayed", unplayed.QuerySelector("span")!.ClassName);
+
+        Assert.Equal("listItemButton paper-icon-button-light playstatebutton-played", played.ClassName);
+        Assert.Equal("true", played.GetAttribute("data-played"));
+        Assert.Equal("Watched", played.GetAttribute("title"));
+        Assert.Contains("playstatebutton-icon-played", played.QuerySelector("span")!.ClassList);
+
+        Assert.Equal("Played", book.GetAttribute("title"));
+    }
+
+    [Fact]
+    public void Clicking_the_played_button_toggles_the_item_on_the_server()
+    {
+        var movie = Movie();
+        App.Server.OnPost("/UserPlayedItems/" + MovieId, new { Played = true, IsFavorite = false, PlayCount = 1 });
+        App.Server.On(HttpMethod.Delete, "/UserPlayedItems/" + MovieId, _ => FakeHttp.Json(new { Played = false, IsFavorite = false, PlayCount = 0 }));
+        var cut = Render(@<PlayStateButton Item="movie" Class="listItemButton" />);
+
+        cut.Find("button").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("true", cut.Find("button").GetAttribute("data-played")));
+        Assert.Equal("listItemButton playstatebutton-played", cut.Find("button").ClassName);
+        var post = Assert.Single(App.Server.Requests);
+        Assert.Equal(HttpMethod.Post, post.Method);
+        Assert.Equal("/UserPlayedItems/" + MovieId, post.Path);
+        Assert.Equal(UserIdText, post.Query("userId"));
+        Assert.Equal(14, post.Query("DatePlayed")!.Length);
+        Assert.True(movie.UserData!.Played);
+
+        cut.Find("button").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("false", cut.Find("button").GetAttribute("data-played")));
+        Assert.Equal(HttpMethod.Delete, App.Server.Requests[1].Method);
+        Assert.Equal(UserIdText, App.Server.Requests[1].Query("userId"));
+        Assert.Null(App.Server.Requests[1].Query("DatePlayed"));
+    }
+
+    [Fact]
+    public void A_failed_request_leaves_the_button_as_it_was()
+    {
+        var cut = Render(@<PlayStateButton Item="@Movie()" />);
+
+        cut.Find("button").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(App.Server.Requests));
+        Assert.Equal("false", cut.Find("button").GetAttribute("data-played"));
+    }
+
+    [Fact]
+    public void The_favourite_button_shows_the_state_of_the_item()
+    {
+        var plain = Render(@<RatingButton Item="@Movie()" Class="listItemButton paper-icon-button-light" IconClass="extra" />).Find("button");
+        var favorite = Render(@<RatingButton Item="@Movie(favorite: true)" Class="listItemButton paper-icon-button-light" />).Find("button");
+
+        Assert.Equal("emby-ratingbutton", plain.GetAttribute("is"));
+        Assert.Equal("listItemButton paper-icon-button-light", plain.ClassName);
+        Assert.Equal("none", plain.GetAttribute("data-action"));
+        Assert.Equal(MovieId, plain.GetAttribute("data-id"));
+        Assert.Equal(TestApp.ServerId, plain.GetAttribute("data-serverid"));
+        Assert.Equal("Movie", plain.GetAttribute("data-itemtype"));
+        Assert.Equal("false", plain.GetAttribute("data-isfavorite"));
+        Assert.Equal(string.Empty, plain.GetAttribute("data-likes"));
+        Assert.Equal("Add to favorites", plain.GetAttribute("title"));
+        Assert.Equal("material-icons extra favorite", plain.QuerySelector("span")!.ClassName!.Trim());
+
+        Assert.Equal("listItemButton paper-icon-button-light ratingbutton-withrating", favorite.ClassName);
+        Assert.Equal("true", favorite.GetAttribute("data-isfavorite"));
+        Assert.Equal("true", favorite.GetAttribute("data-likes"));
+        Assert.Equal("Favorite", favorite.GetAttribute("title"));
+        Assert.Contains("ratingbutton-icon-withrating", favorite.QuerySelector("span")!.ClassList);
+    }
+
+    [Fact]
+    public void Clicking_the_favourite_button_toggles_the_item_on_the_server()
+    {
+        var movie = Movie();
+        App.Server.OnPost("/UserFavoriteItems/" + MovieId, new { Played = false, IsFavorite = true });
+        App.Server.On(HttpMethod.Delete, "/UserFavoriteItems/" + MovieId, _ => FakeHttp.Json(new { Played = false, IsFavorite = false }));
+        var cut = Render(@<RatingButton Item="movie" Class="listItemButton" />);
+
+        cut.Find("button").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("true", cut.Find("button").GetAttribute("data-isfavorite")));
+        var post = Assert.Single(App.Server.Requests);
+        Assert.Equal(HttpMethod.Post, post.Method);
+        Assert.Equal("/UserFavoriteItems/" + MovieId, post.Path);
+        Assert.Equal(UserIdText, post.Query("userId"));
+        Assert.True(movie.UserData!.IsFavorite);
+
+        cut.Find("button").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("false", cut.Find("button").GetAttribute("data-isfavorite")));
+        Assert.Equal(HttpMethod.Delete, App.Server.Requests[1].Method);
+    }
+
+    [Fact]
+    public void Buttons_follow_changes_made_elsewhere()
+    {
+        var movie = Movie();
+        var cut = Render(
+            @<div>
+                <PlayStateButton Item="movie" />
+                <RatingButton Item="movie" />
+            </div>);
+
+        ServerMessage("UserDataChanged", new
+        {
+            UserId = UserIdText,
+            UserDataList = new object[]
+            {
+                new { ItemId = TestItems.Id(2), Played = false, IsFavorite = false },
+                new { ItemId = MovieId, Played = true, IsFavorite = true }
+            }
+        });
+
+        cut.WaitForAssertion(() => Assert.Equal("true", cut.Find("button[is=emby-playstatebutton]").GetAttribute("data-played")));
+        cut.WaitForAssertion(() => Assert.Equal("true", cut.Find("button[is=emby-ratingbutton]").GetAttribute("data-isfavorite")));
+        Assert.Empty(App.Server.Requests);
+    }
+}
