@@ -1,0 +1,58 @@
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Tests.Items
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components
+@inherits Jellyfin.Web.Tests.ItemDialogs.MetadataEditorTestContext
+
+@code {
+    [Fact]
+    public void Embedded_mode_has_a_header_save_and_no_close_button()
+    {
+        SignIn(admin: true);
+        Have(Movie());
+        var cut = Render<MetadataEditor>(parameters => parameters
+            .Add(editor => editor.ItemId, ItemId)
+            .Add(editor => editor.Embedded, true));
+
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find(".btnHeaderSave")));
+        Assert.True(cut.Find(".btnClose").ClassList.Contains("hide"));
+        Assert.Contains("form=", cut.Find(".btnHeaderSave").OuterHtml);
+    }
+
+    [Fact]
+    public void Dialog_mode_keeps_the_close_button_and_does_not_add_header_save()
+    {
+        SignIn(admin: true);
+        Have(Movie());
+        var cut = Render<MetadataEditor>(parameters => parameters.Add(editor => editor.ItemId, ItemId));
+
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find(".editItemMetadataForm")));
+        Assert.Empty(cut.FindAll(".btnHeaderSave"));
+        Assert.False(cut.Find(".btnClose").ClassList.Contains("hide"));
+    }
+
+    [Fact]
+    public async Task Changing_the_embedded_item_id_reloads_the_editor()
+    {
+        SignIn(admin: true);
+        Have(Movie());
+        var second = Item("Movie");
+        second["Id"] = TestItems.Id(2);
+        second["Name"] = "Second Film";
+        Have(second);
+        var cut = Render<MetadataEditor>(parameters => parameters
+            .Add(editor => editor.ItemId, ItemId)
+            .Add(editor => editor.Embedded, true));
+        cut.WaitForAssertion(() => Assert.Contains("Third Film", cut.Markup));
+
+        await cut.InvokeAsync(() => cut.Instance.SetParametersAsync(ParameterView.FromDictionary(new Dictionary<string, object?>
+        {
+            [nameof(MetadataEditor.ItemId)] = TestItems.Id(2),
+            [nameof(MetadataEditor.Embedded)] = true,
+        })));
+
+        cut.WaitForAssertion(() => Assert.Contains("Second Film", cut.Markup));
+        Assert.Contains($"/Items/{TestItems.Id(2)}/MetadataEditor", App.Server.Requests.Select(request => request.Path));
+    }
+}
