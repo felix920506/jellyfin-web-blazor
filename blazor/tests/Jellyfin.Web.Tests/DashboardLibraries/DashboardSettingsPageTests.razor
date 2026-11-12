@@ -166,4 +166,63 @@
 
         Assert.DoesNotContain(App.Server.RequestsTo("/System/Configuration"), request => request.Method == HttpMethod.Post);
     }
+
+    [Fact]
+    public async Task Library_display_saves_server_and_named_configuration_fields()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/System/Configuration", new { EnableFolderView = false, DisplaySpecialsWithinSeasons = false, EnableGroupingMoviesIntoCollections = false, EnableGroupingShowsIntoCollections = false, EnableExternalContentInSuggestions = false });
+        App.Server.OnGet("/System/Configuration/metadata", new { UseFileCreationTimeForDateAdded = false });
+        App.Server.OnPost("/System/Configuration");
+        App.Server.OnPost("/System/Configuration/metadata");
+
+        var cut = RenderAt<DashboardLibraryDisplay>("/dashboard/libraries/display");
+        cut.WaitForElement(".jf-dashboard-display-folderview");
+        await Box(cut, "jf-dashboard-display-folderview").ChangeAsync(new ChangeEventArgs { Value = true });
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration")));
+        Assert.True(BodiesTo("/System/Configuration")[0].GetProperty("EnableFolderView").GetBoolean());
+        Assert.Equal("metadata", Assert.Single(App.Server.RequestsTo("/System/Configuration/metadata"), request => request.Method == HttpMethod.Post).Path.Split('/').Last());
+    }
+
+    [Fact]
+    public async Task Library_metadata_saves_the_language_country_and_chapter_fields()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Localization/Cultures", new[] { new { DisplayName = "English", TwoLetterISOLanguageName = "en" } });
+        App.Server.OnGet("/Localization/Countries", new[] { new { DisplayName = "United States", TwoLetterISORegionName = "US" } });
+        App.Server.OnGet("/System/Configuration", new { PreferredMetadataLanguage = "en", MetadataCountryCode = "US", DummyChapterDuration = 0, ChapterImageResolution = "MatchSource" });
+        App.Server.OnPost("/System/Configuration");
+
+        var cut = RenderAt<DashboardLibraryMetadata>("/dashboard/libraries/metadata");
+        cut.WaitForElement("#jf-dashboard-metadata-chapterduration");
+        await cut.Find("#jf-dashboard-metadata-chapterduration").ChangeAsync(new ChangeEventArgs { Value = "15" });
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration")));
+        Assert.Equal(15, BodiesTo("/System/Configuration")[0].GetProperty("DummyChapterDuration").GetInt32());
+        Assert.Equal("en", BodiesTo("/System/Configuration")[0].GetProperty("PreferredMetadataLanguage").GetString());
+    }
+
+    [Fact]
+    public async Task Library_nfo_saves_the_exact_named_configuration_payload()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", new[] { new { Id = "11111111-1111-1111-1111-111111111111", Name = "admin" } });
+        App.Server.OnGet("/System/Configuration/xbmcmetadata", new { UserId = "", ReleaseDateFormat = "yyyy-MM-dd", SaveImagePathsInNfo = false, EnablePathSubstitution = false, EnableExtraThumbsDuplication = false });
+        App.Server.OnPost("/System/Configuration/xbmcmetadata");
+        this.RenderDialogs();
+
+        var cut = RenderAt<DashboardLibraryNfo>("/dashboard/libraries/nfo");
+        cut.WaitForElement("#jf-dashboard-nfo-user");
+        await Box(cut, "jf-dashboard-nfo-imagepaths").ChangeAsync(new ChangeEventArgs { Value = true });
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration/xbmcmetadata")));
+        var body = BodiesTo("/System/Configuration/xbmcmetadata")[0];
+        Assert.True(body.GetProperty("SaveImagePathsInNfo").GetBoolean());
+        Assert.Equal("yyyy-MM-dd", body.GetProperty("ReleaseDateFormat").GetString());
+        Assert.Equal(5, body.EnumerateObject().Count());
+    }
 }
