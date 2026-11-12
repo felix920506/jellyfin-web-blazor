@@ -23,6 +23,7 @@ class Api:
         )
         body = response.json()
         self.user = body["User"]["Id"]
+        self.hide_played_in_latest = body["User"]["Configuration"].get("HidePlayedInLatest", True)
         self.headers = {"Authorization": f'{AUTH}, Token="{body["AccessToken"]}"'}
 
     def items(self, **query):
@@ -181,9 +182,16 @@ def main() -> int:
             page.wait_for_selector(f"#favoritesTab .card[data-id='{other['Id']}']", state="detached", timeout=30_000)
             check(page, section_titles(page, "#favoritesTab") == [], "the favorites sections are hidden again")
 
-            # Back on the home tab the played state is still shown.
+            # Back on the home tab the played state is still shown, unless the user hides played items
+            # in "Latest" (HidePlayedInLatest, the server's default): then the movie has left that row.
             go(page, "/home")
-            page.wait_for_selector(f"#homeTab .card[data-id='{other['Id']}'] .playedIndicator", timeout=30_000)
+            if api.hide_played_in_latest:
+                page.wait_for_selector("#homeTab .section0 .card", timeout=30_000)
+                page.wait_for_timeout(2000)
+                check(page, page.locator(f"#homeTab .card[data-id='{other['Id']}'] .playedIndicator").count() == 0,
+                      "a played movie leaves Latest when the user hides played items there")
+            else:
+                page.wait_for_selector(f"#homeTab .card[data-id='{other['Id']}'] .playedIndicator", timeout=30_000)
 
             # A narrow desktop window keeps the desktop layout (the layout follows the user agent, as in the original).
             api.set_favorite(other["Id"], True)

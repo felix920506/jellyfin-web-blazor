@@ -162,10 +162,11 @@ def media_time(page, kind):
 
 
 def stop_playback(page):
-    if page.locator(".btnStop:visible").count():
-        page.locator(".btnStop:visible").first.click()
-    elif page.locator(".headerBackButton:visible").count():
-        page.locator(".headerBackButton:visible").first.click()
+    # The now playing bar's button is .stopButton (as in the original); the video OSD's is .btnStop.
+    for selector in (".nowPlayingBar .stopButton:visible", ".btnStop:visible"):
+        if page.locator(selector).count():
+            page.locator(selector).first.click()
+            break
     return wait_until(lambda: not player(page).get("isPlaying"), timeout=15)
 
 
