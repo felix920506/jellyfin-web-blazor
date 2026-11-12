@@ -67,6 +67,10 @@ and `Open Codec Movie (2015)` in VP9/Opus webm, which Playwright's Chromium can 
 no H.264/AAC decoders); posters and backdrops), Shows (`Test Show`, 4 episodes in 2 seasons) and Music (`Test Artist` / `First Album`
 with 3 songs, `Other Band` / `Second Album` with 1 song). Tests may change user data (played,
 favorites, playback position) but must not delete media, libraries or the admin user.
+Tests that change the server itself (libraries, plugins, tuners, network or encoding settings,
+backups) use a private server instead: `JELLYFIN_INSTANCE=<name> JELLYFIN_PORT=<port>
+scripts/test-server.sh up` (same seed; `down` stops it, `reset` also deletes its data), then
+`JELLYFIN_URL=http://localhost:<port> ./dev e2e <script>`. Stop it as soon as the run is over.
 `e2e/lib.py` has the helpers (`new_page`, `sign_in`, `go`, `shot`, `finish`); `e2e/smoke.py` is
 the template for a script. Screenshots go to `blazor/artifacts/e2e/` (read them to check your
 layout). A browser test for your area is expected for anything visual; keep scripts short.

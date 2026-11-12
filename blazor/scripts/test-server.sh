@@ -13,10 +13,17 @@
 # Data lives on disk under the port's cache directory.
 set -euo pipefail
 
-NAME="jellyfin-web-blazor-testserver"
+# JELLYFIN_INSTANCE=<name> (with its own JELLYFIN_PORT) selects a private server with the same seed
+# for tests that change the server itself (libraries, plugins, tuners, network settings):
+#   JELLYFIN_INSTANCE=livetv JELLYFIN_PORT=18098 scripts/test-server.sh up|down|reset
+INSTANCE="${JELLYFIN_INSTANCE:-}"
+if [ -n "$INSTANCE" ] && [ -z "${JELLYFIN_PORT:-}" ]; then
+    echo "JELLYFIN_INSTANCE needs its own JELLYFIN_PORT" >&2; exit 2
+fi
+NAME="jellyfin-web-blazor-testserver${INSTANCE:+-$INSTANCE}"
 IMAGE="${JELLYFIN_IMAGE:-jellyfin/jellyfin:12.4.20261026-211555}"
 PORT="${JELLYFIN_PORT:-18096}"
-DATA="${JFWEB_CACHE:-$HOME/.cache/jellyfin-web-blazor}/testserver"
+DATA="${JFWEB_CACHE:-$HOME/.cache/jellyfin-web-blazor}/testserver${INSTANCE:+-$INSTANCE}"
 URL="http://localhost:$PORT"
 export TEST_USER="${TEST_USER:-admin}" TEST_PASSWORD="${TEST_PASSWORD:-jellyfin}"
 AUTH='MediaBrowser Client="seed", Device="seed", DeviceId="seed", Version="1"'
@@ -33,7 +40,8 @@ up() {
             -v "$DATA/config:/config" -v "$DATA/cache:/cache" -v "$DATA/media:/media:ro" "$IMAGE" >/dev/null
     fi
     for _ in $(seq 1 90); do
-        if curl -fsS "$URL/System/Info/Public" >/dev/null 2>&1; then break; fi
+        # While it migrates its database the server answers without the wizard state.
+        if curl -fsS "$URL/System/Info/Public" 2>/dev/null | grep -q '"StartupWizardCompleted"'; then break; fi
         sleep 2
     done
     if curl -fsS "$URL/System/Info/Public" | grep -q '"StartupWizardCompleted":false'; then
