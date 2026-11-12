@@ -1,0 +1,98 @@
+@namespace Jellyfin.Web.Components
+@attribute [ShellSlot(ShellSlot.Toolbar, 5)]
+@implements IDisposable
+@inject SyncPlayService SyncPlay
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+@if (Api.IsLoggedIn)
+{
+    <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" Class="jf-syncplay" ListClass="jf-syncplay-menu">
+        <ActivatorContent Context="menu">
+            <MudTooltip Text="@Globalize["ButtonSyncPlay"]">
+                <MudIconButton Icon="@MdIcon.Of(SyncPlay.IsEnabled ? "groups" : "group_add")" Color="Color.Inherit" Size="Size.Large"
+                               Class=@ButtonClass aria-label="@Globalize["ButtonSyncPlay"]"
+                               aria-haspopup="true" OnClick="@(e => OpenAsync(menu, e))" />
+            </MudTooltip>
+        </ActivatorContent>
+        <ChildContent>
+            @if (SyncPlay.IsEnabled && SyncPlay.Group is { } group)
+            {
+                <div class="jf-menu-subheader">@group.GroupName</div>
+                <div class="jf-syncplay-participants">@string.Join(", ", group.Participants)</div>
+                <MudMenuItem Icon="@MdIcon.Of("play_circle")" Label="@Globalize["LabelSyncPlayResumePlayback"]" OnClick="ResumeAsync" />
+                <MudMenuItem Icon="@MdIcon.Of("pause_circle")" Label="@Globalize["LabelSyncPlayHaltPlayback"]" OnClick="HaltAsync" />
+                <MudMenuItem Icon="@MdIcon.Of("settings")" Label="@Globalize["Settings"]" OnClick="SettingsAsync" />
+                <MudDivider />
+                <MudMenuItem Icon="@MdIcon.Of("meeting_room")" Label="@Globalize["LabelSyncPlayLeaveGroup"]" OnClick="LeaveAsync" />
+            }
+            else
+            {
+                <MudMenuItem Icon="@MdIcon.Of("refresh")" Label="@Globalize["HeaderSyncPlaySelectGroup"]" OnClick="LoadGroupsAsync" />
+                @foreach (var listedGroup in _groups)
+                {
+                    var current = listedGroup;
+                    <MudMenuItem @key="current.GroupId" Class="jf-syncplay-group" data-id="@current.GroupId" OnClick="() => JoinAsync(current.GroupId)">
+                        <span class="jf-menu-lines"><span class="jf-menu-primary">@current.GroupName</span><span class="jf-menu-secondary">@string.Join(", ", current.Participants)</span></span>
+                    </MudMenuItem>
+                }
+                <MudDivider />
+                @if (CanCreate)
+                {
+                    <MudMenuItem Icon="@MdIcon.Of("add")" Label="@Globalize["LabelSyncPlayNewGroup"]" OnClick="CreateAsync" />
+                }
+            }
+        </ChildContent>
+    </MudMenu>
+}
+
+@code {
+    private IReadOnlyList<SyncPlayGroup> _groups = [];
+
+    private string ButtonClass => "jf-syncplay-button" + (SyncPlay.IsEnabled ? " jf-syncplay-active" : string.Empty);
+
+    private bool CanCreate => Api.User?.Policy?.SyncPlayAccess?.ToApiString() is "CreateAndJoinGroups";
+
+    protected override void OnInitialized()
+    {
+        SyncPlay.Changed += Refresh;
+        Api.Changed += Refresh;
+        Globalize.LanguageChanged += Refresh;
+    }
+
+    public void Dispose()
+    {
+        SyncPlay.Changed -= Refresh;
+        Api.Changed -= Refresh;
+        Globalize.LanguageChanged -= Refresh;
+    }
+
+    private async Task OpenAsync(MenuContext menu, MouseEventArgs args)
+    {
+        await menu.ToggleAsync(args);
+        if (!SyncPlay.IsEnabled) await LoadGroupsAsync();
+    }
+
+    private async Task LoadGroupsAsync()
+    {
+        _groups = await SyncPlay.GetGroupsAsync();
+        Refresh();
+    }
+
+    private Task JoinAsync(string id) => SyncPlay.JoinGroupAsync(id);
+
+    private async Task CreateAsync()
+    {
+        var name = Globalize.Translate("SyncPlayGroupDefaultTitle", Api.User?.Name ?? string.Empty);
+        await SyncPlay.CreateGroupAsync(name);
+    }
+
+    private Task LeaveAsync() => SyncPlay.LeaveGroupAsync();
+    private Task HaltAsync() => SyncPlay.HaltLocalPlaybackAsync();
+    private Task ResumeAsync() => SyncPlay.ResumeLocalPlaybackAsync();
+
+    private async Task SettingsAsync() => await Dialogs.ShowAsync<SyncPlaySettingsDialog>();
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+}

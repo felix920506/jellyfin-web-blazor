@@ -9,6 +9,7 @@
 @inject UserViews UserViews
 @inject UserSettings UserSettings
 @inject IPlaybackManager Playback
+@inject SyncPlayService SyncPlay
 
 <div class="formDialogHeader">
     <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
@@ -149,8 +150,7 @@
             }
         }
 
-        // PORT-TODO(itemdialogs): the original also offers the queue while a SyncPlay group is active; SyncPlay is not ported.
-        _offerQueue = EnableAddToPlayQueue && Playback.IsPlaying;
+        _offerQueue = EnableAddToPlayQueue && (Playback.IsPlaying || SyncPlay.IsEnabled);
 
         var defaultValue = string.IsNullOrEmpty(DefaultValue) ? UserSettings.Get(LastPlaylistSetting) ?? string.Empty : DefaultValue;
         if (defaultValue == "new")
@@ -245,7 +245,14 @@
         if (playlistId == "queue")
         {
             Dialog.Close(true);
-            await Playback.QueueAsync(new PlayOptions { Ids = [.. ItemIds] });
+            if (SyncPlay.IsEnabled)
+            {
+                foreach (var itemId in ItemIds) await SyncPlay.RequestQueueAsync(itemId);
+            }
+            else
+            {
+                await Playback.QueueAsync(new PlayOptions { Ids = [.. ItemIds] });
+            }
             return;
         }
 

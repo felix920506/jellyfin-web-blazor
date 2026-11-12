@@ -1,0 +1,5 @@
+.jf-syncplay-button.jf-syncplay-active { color: var(--theme-accent-color) !important; }
+.jf-syncplay-participants { padding: 0 .75rem .5rem; opacity: .75; font-size: .85em; }
+.jf-syncplay-settings { max-width: 32rem; margin: auto; }
+.jf-syncplay-settings .checkboxContainer { margin: 1em 0; }
+@media (max-width: 600px) { .jf-syncplay-menu { min-width: 18rem; } }

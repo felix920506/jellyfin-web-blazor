@@ -1,0 +1,48 @@
+@namespace Jellyfin.Web.Components
+@inject SyncPlayService SyncPlay
+@inject Globalize Globalize
+
+<div class="formDialogHeader"><h3 class="formDialogHeaderTitle">@Globalize["HeaderSyncPlaySettings"]</h3></div>
+<div class="formDialogContent smoothScrollY"><div class="dialogContentInner jf-syncplay-settings">
+    <div class="fieldDescription">@Globalize["LabelSyncPlaySettingsDescription"]</div>
+    <EmbyCheckbox Id="chkSyncCorrection" Label="@Globalize["LabelSyncPlaySettingsSyncCorrection"]" @bind-Value="_enabled" />
+    <EmbyCheckbox Id="chkSpeedToSync" Label="@Globalize["LabelSyncPlaySettingsSpeedToSync"]" @bind-Value="_speed" />
+    <EmbyCheckbox Id="chkSkipToSync" Label="@Globalize["LabelSyncPlaySettingsSkipToSync"]" @bind-Value="_skip" />
+    <EditorInput Id="txtExtraTimeOffset" Label="@Globalize["LabelSyncPlaySettingsExtraTimeOffset"]" Type="number" @bind-Value="_extraOffset" />
+    <EditorInput Id="txtMinDelaySpeedToSync" Label="@Globalize["LabelSyncPlaySettingsMinDelaySpeedToSync"]" Type="number" @bind-Value="_minSpeed" />
+    <EditorInput Id="txtMaxDelaySpeedToSync" Label="@Globalize["LabelSyncPlaySettingsMaxDelaySpeedToSync"]" Type="number" @bind-Value="_maxSpeed" />
+    <EditorInput Id="txtSpeedToSyncDuration" Label="@Globalize["LabelSyncPlaySettingsSpeedToSyncDuration"]" Type="number" @bind-Value="_speedDuration" />
+    <EditorInput Id="txtMinDelaySkipToSync" Label="@Globalize["LabelSyncPlaySettingsMinDelaySkipToSync"]" Type="number" @bind-Value="_minSkip" />
+</div></div>
+<div class="formDialogFooter"><button class="emby-button raised button-submit" @onclick="Save">@Globalize["Save"]</button><button class="emby-button" @onclick="() => Dialog.Cancel()">@Globalize["ButtonCancel"]</button></div>
+
+@code {
+    [CascadingParameter] public DialogInstance Dialog { get; set; } = default!;
+    private bool _enabled, _speed, _skip;
+    private string _extraOffset = string.Empty, _minSpeed = string.Empty, _maxSpeed = string.Empty, _speedDuration = string.Empty, _minSkip = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        var s = SyncPlay.Settings;
+        _enabled = s.EnableSyncCorrection; _speed = s.UseSpeedToSync; _skip = s.UseSkipToSync;
+        _extraOffset = s.ExtraTimeOffset.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _minSpeed = s.MinDelaySpeedToSync.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _maxSpeed = s.MaxDelaySpeedToSync.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _speedDuration = s.SpeedToSyncDuration.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _minSkip = s.MinDelaySkipToSync.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private void Save()
+    {
+        SyncPlay.SaveSettings(new SyncPlaySettings
+        {
+            EnableSyncCorrection = _enabled, UseSpeedToSync = _speed, UseSkipToSync = _skip,
+            ExtraTimeOffset = Number(_extraOffset, 0), MinDelaySpeedToSync = Number(_minSpeed, 60),
+            MaxDelaySpeedToSync = Number(_maxSpeed, 3000), SpeedToSyncDuration = Number(_speedDuration, 1000),
+            MinDelaySkipToSync = Number(_minSkip, 400)
+        });
+        Dialog.Close(true);
+    }
+
+    private static double Number(string value, double fallback) => double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var result) ? result : fallback;
+}
