@@ -449,9 +449,10 @@ public class PlaybackFlowTests
     public async Task Without_a_player_for_the_media_type_a_message_is_shown()
     {
         await using var harness = await PlaybackHarness.WithMediaAsync();
-        var book = PlaybackServer.Movie("33333333333333333333333333333333", "A Book");
+        var book = PlaybackServer.Movie("33333333333333333333333333333333", "An Unsupported Book");
         book.Type = BaseItemDto_Type.Book;
         book.MediaType = BaseItemDto_MediaType.Book;
+        book.Path = "/books/unsupported.mobi";
         PlaybackServer.Script(harness.Server, book);
 
         await harness.Manager.PlayAsync(new PlayOptions { Items = [book] });
@@ -471,7 +472,7 @@ public class PlaybackFlowTests
         Assert.True(manager.CanPlay(PlaybackServer.Song()));
         Assert.True(manager.CanPlay(new BaseItemDto { Type = BaseItemDto_Type.Series }));
         Assert.True(manager.CanPlay(new BaseItemDto { Type = BaseItemDto_Type.MusicAlbum }));
-        Assert.False(manager.CanPlay(new BaseItemDto { Type = BaseItemDto_Type.Photo, MediaType = BaseItemDto_MediaType.Photo }));
+        Assert.True(manager.CanPlay(new BaseItemDto { Type = BaseItemDto_Type.Photo, MediaType = BaseItemDto_MediaType.Photo, Path = "/photo.jpg" }));
         var missing = PlaybackServer.Movie();
         missing.LocationType = BaseItemDto_LocationType.Virtual;
         Assert.False(manager.CanPlay(missing));
