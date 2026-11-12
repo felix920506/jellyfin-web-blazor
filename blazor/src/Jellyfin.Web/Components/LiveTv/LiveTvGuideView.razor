@@ -1,0 +1,327 @@
+@namespace Jellyfin.Web.Components
+@using System.Net
+@using System.Text.Json
+@*
+    The TV guide (components/guide/guide.js + tvguide.template.html). The rows are plain markup, so
+    the scrolling, the sliding names and the arrow keys live in livetv.js. A programme opens its
+    details page (the original opens the programme dialog on the desktop); a channel opens its page.
+*@
+@implements IAsyncDisposable
+@inject LiveTvData Data
+@inject ILiveTvInterop Interop
+@inject UserSettings Settings
+@inject AppDialogs Dialogs
+@inject AppRouter Router
+@inject ServerEvents Events
+@inject DateTimeText Dates
+@inject IBrowser Browser
+@inject Globalize Globalize
+@inject LoadingService Loading
+
+<div @ref="_root" class="tvguide flex flex-direction-column" style="position:relative;">
+    <div class="tvGuideHeader">
+        <div class="guideHeaderDateSelection">
+            <div class="guideDateTabs focuscontainer-x" data-selectionbar="false">
+                <div class="emby-tabs-slider guideDateTabsSlider">
+                    @foreach (var tab in _range?.Tabs ?? [])
+                    {
+                        <button type="button" class="@TabClass(tab)" data-date="@tab.Date.ToUnixTimeMilliseconds()" @onclick="() => SelectDateAsync(tab)">
+                            <div class="emby-button-foreground">@Weekday(tab.Date)<br />@tab.Day</div>
+                        </button>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="guide-headerTimeslots">
+            <div class="guide-channelTimeslotHeader">
+                <IconButton Icon="more_vert" IconClass="btnGuideViewSettingsIcon" Class="btnGuideViewSettings" Title="@Globalize["ButtonMore"]" OnClick="ShowSettingsAsync" />
+            </div>
+            <div class="timeslotHeaders scrollX guideScroller">
+                <div class="timeslotHeadersInner">
+                    @foreach (var slot in _timeslots)
+                    {
+                        <div class="timeslotHeader">@Dates.GetDisplayTime(slot).ToLowerInvariant()</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="guideVerticalScroller flex flex-grow programContainer guideScroller" data-horizontal="false" style="overflow:auto;">
+        <div class="scrollSlider flex flex-grow flex-direction-row" style="overflow:hidden;contain: layout style paint;">
+            <div class="channelsContainer">
+                @foreach (var channel in _channels)
+                {
+                    <a title="@ChannelTitle(channel)" class="guide-channelHeaderCell itemAction" href="@Router.GetRouteUrl(channel)" data-id="@channel.IdText()" data-type="@channel.TypeName()">
+                        @if (channel.ImageTag("Primary") is { Length: > 0 } tag)
+                        {
+                            <div class="guideChannelImage" style="background-image:url('@Data.GetImageUrl(channel.IdText(), "Primary", tag, 220)')"></div>
+                        }
+                        @if (!string.IsNullOrEmpty(channel.ChannelNumber))
+                        {
+                            <h3 class="guideChannelNumber">@channel.ChannelNumber</h3>
+                        }
+                        @if (channel.ImageTag("Primary") is null && !string.IsNullOrEmpty(channel.Name))
+                        {
+                            <div class="guideChannelName">@channel.Name</div>
+                        }
+                    </a>
+                }
+            </div>
+            <div class="programGrid scrollX guideScroller flex-grow focuscontainer-right" style="white-space: nowrap; overflow:auto;">
+                @foreach (var channel in _channels)
+                {
+                    <div class="channelPrograms" data-channelid="@channel.IdText()">
+                        @((MarkupString)GuideHtml.ChannelPrograms(ProgramsOf(channel), _range?.Date ?? DateTimeOffset.UnixEpoch, _options, Dates.Now, _labels))
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="@("guideOptions" + (_paging ? null : " hide"))">
+        <IconButton Icon="arrow_back" Class="btnPreviousPage" Title="@Globalize["Previous"]" Disabled="@(_startIndex == 0)" OnClick="() => PageAsync(-1)" />
+        <IconButton Icon="arrow_forward" Class="btnNextPage" Title="@Globalize["Next"]" Disabled="@(!_hasNext)" OnClick="() => PageAsync(1)" />
+    </div>
+</div>
+
+@code {
+    /// <summary>How many channels one page of the guide asks for (<c>channelLimit</c> of <c>guide.js</c>).</summary>
+    public const int ChannelPageSize = 500;
+
+    private static readonly string[] TimerMessages = ["TimerCreated", "TimerCancelled", "SeriesTimerCreated", "SeriesTimerCancelled"];
+    private static readonly object WeekdayOptions = new { weekday = "short" };
+
+    private readonly List<string> _categories = [];
+    private readonly Dictionary<string, List<GuideProgram>> _programs = new(StringComparer.Ordinal);
+    private ElementReference _root;
+    private IAsyncDisposable? _attached;
+    private IDisposable? _timers;
+    private GuideDateRange? _range;
+    private GuideOptions _options = new();
+    private GuideLabels _labels = new(string.Empty, string.Empty, string.Empty, string.Empty);
+    private IReadOnlyList<Jellyfin.Sdk.Generated.Models.BaseItemDto> _channels = [];
+    private IReadOnlyList<DateTimeOffset> _timeslots = [];
+    private int _startIndex;
+    private int _total;
+    private bool _paging;
+    private bool _hasNext;
+    private bool _scroll;
+    private bool _disposed;
+
+    [Parameter, EditorRequired]
+    public LibraryTabContent Content { get; set; } = default!;
+
+    /// <summary>The library (?topParentId=); the guide does not depend on it.</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    private GuideClock Clock => field ??= new GuideClock(Browser.UtcOffsetMinutes);
+
+    protected override void OnInitialized()
+    {
+        _labels = new GuideLabels(Globalize["Live"], Globalize["Premiere"], Globalize["New"], Globalize["Repeat"]);
+        _timers = Events.Subscribe(TimerMessages, (_, _) => _ = InvokeAsync(OnTimersChangedAsync));
+    }
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync(scroll: true);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var attached = await Interop.AttachGuideAsync(_root, OnProgramClickAsync);
+            if (_disposed)
+            {
+                await attached.DisposeAsync();
+                return;
+            }
+
+            _attached = attached;
+        }
+
+        if (_scroll || firstRender)
+        {
+            var fraction = _scroll && _range is { } range ? (range.ScrollToTimeMs - range.StartTimeOfDayMs) / GuideClock.MsPerDay : (double?)null;
+            _scroll = false;
+            await Interop.RefreshGuideAsync(_root, fraction);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        _timers?.Dispose();
+        if (_attached is { } attached)
+        {
+            _attached = null;
+            await attached.DisposeAsync();
+        }
+    }
+
+    private async Task ReloadAsync(bool scroll)
+    {
+        Loading.Show();
+        try
+        {
+            var info = await Data.GetGuideInfoAsync();
+            if (info is null || _disposed)
+            {
+                return;
+            }
+
+            _range = Clock.DateRange(info, Dates.Now, _range?.Date);
+            _timeslots = GuideClock.Timeslots(_range.Date);
+            _options = GuideOptions.From(Settings, _categories, Browser.Environment.InnerWidth);
+            await LoadPageAsync();
+            _scroll = scroll;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
+        {
+            AppLog.Warn("Live TV: loading the guide failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    private async Task LoadPageAsync()
+    {
+        if (_range is not { } range)
+        {
+            return;
+        }
+
+        var channels = await Data.GetGuideChannelsAsync(_options.ChannelQuery(_startIndex, ChannelPageSize));
+        var ids = channels.Items.Select(channel => channel.IdText()).Where(id => id.Length > 0).ToList();
+        var programs = ids.Count == 0
+            ? []
+            : await Data.GetGuideProgramsAsync(ids, range.Date.AddSeconds(1), range.Date.AddMilliseconds(GuideClock.MsPerDay - 1), _options.ShowHdIcon);
+
+        _programs.Clear();
+        foreach (var program in programs.OrderBy(program => program.Start))
+        {
+            if (!_programs.TryGetValue(program.ChannelId, out var row))
+            {
+                row = [];
+                _programs[program.ChannelId] = row;
+            }
+
+            row.Add(program);
+        }
+
+        _channels = channels.Items;
+        _total = channels.TotalRecordCount;
+        _paging = _total > ChannelPageSize;
+        _hasNext = _startIndex + ChannelPageSize < _total;
+    }
+
+    private IEnumerable<GuideProgram> ProgramsOf(Jellyfin.Sdk.Generated.Models.BaseItemDto channel) =>
+        _programs.TryGetValue(channel.IdText(), out var programs) ? programs : [];
+
+    private async Task SelectDateAsync(GuideDateTab tab)
+    {
+        if (_range is null || tab.Active)
+        {
+            return;
+        }
+
+        _range = _range with { Date = tab.Date, Tabs = [.. _range.Tabs.Select(candidate => candidate with { Active = candidate.Date == tab.Date })] };
+        _timeslots = GuideClock.Timeslots(tab.Date);
+        Loading.Show();
+        try
+        {
+            await LoadPageAsync();
+            _scroll = true;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
+        {
+            AppLog.Warn("Live TV: changing the guide's day failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    private async Task PageAsync(int direction)
+    {
+        var next = _startIndex + (direction * ChannelPageSize);
+        if (next < 0 || next >= _total)
+        {
+            return;
+        }
+
+        _startIndex = next;
+        Loading.Show();
+        try
+        {
+            await LoadPageAsync();
+            _scroll = true;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
+        {
+            AppLog.Warn("Live TV: paging the guide failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    private async Task ShowSettingsAsync()
+    {
+        var changed = await GuideSettingsDialog.ShowAsync(Dialogs, Settings, _categories);
+        if (changed == true)
+        {
+            _startIndex = 0;
+            await ReloadAsync(scroll: true);
+        }
+    }
+
+    private Task OnProgramClickAsync(string programId)
+    {
+        Router.ShowItem(programId);
+        return Task.CompletedTask;
+    }
+
+    private async Task OnTimersChangedAsync()
+    {
+        if (_disposed || _channels.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await LoadPageAsync();
+            StateHasChanged();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
+        {
+            AppLog.Warn("Live TV: refreshing the guide's timers failed: " + exception.Message);
+        }
+    }
+
+    private string Weekday(DateTimeOffset date) => Dates.ToLocaleDateString(date, WeekdayOptions);
+
+    private static string TabClass(GuideDateTab tab) =>
+        "emby-tab-button guide-date-tab-button" + (tab.Active ? " emby-tab-button-active" : null);
+
+    private static string ChannelTitle(Jellyfin.Sdk.Generated.Models.BaseItemDto channel)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(channel.ChannelNumber))
+        {
+            parts.Add(channel.ChannelNumber);
+        }
+
+        if (!string.IsNullOrEmpty(channel.Name))
+        {
+            parts.Add(channel.Name);
+        }
+
+        return parts.Count == 0 ? string.Empty : WebUtility.HtmlEncode(string.Join(' ', parts));
+    }
+}

@@ -252,14 +252,18 @@ public sealed class GuideClock(Func<DateTimeOffset, int> utcOffsetMinutes)
     public DateTime ToLocal(DateTimeOffset moment) =>
         DateTime.SpecifyKind(moment.UtcDateTime.AddMinutes(utcOffsetMinutes(moment)), DateTimeKind.Unspecified);
 
-    /// <summary>The moment the viewer's wall clock shows a time.</summary>
+    /// <summary>
+    /// The moment the viewer's wall clock shows a time. The original builds these dates with
+    /// <c>new Date()</c> and then changes the hours, so the offset is applied once: the lookup
+    /// is made at the UTC reading of the wall-clock numbers, and that offset is attached without
+    /// moving the numbers again.
+    /// </summary>
     public DateTimeOffset FromLocal(DateTime local)
     {
-        var naive = new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Utc));
-        var guess = naive.AddMinutes(-utcOffsetMinutes(naive));
-
-        // Across a change of the offset the first guess is off by the difference; the second is right.
-        return naive.AddMinutes(-utcOffsetMinutes(guess));
+        var reading = new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Utc));
+        return new DateTimeOffset(
+            DateTime.SpecifyKind(local, DateTimeKind.Unspecified),
+            TimeSpan.FromMinutes(utcOffsetMinutes(reading)));
     }
 
     /// <summary>The time of day of a moment in milliseconds, without seconds (<c>getHours() / getMinutes()</c>).</summary>
@@ -282,6 +286,9 @@ public sealed class GuideClock(Func<DateTimeOffset, int> utcOffsetMinutes)
     /// </summary>
     public GuideDateRange DateRange(GuideInfo info, DateTimeOffset now, DateTimeOffset? currentDate)
     {
+        // setDateRange: the current hour of today, the guide start at that hour, the guide end
+        // at local midnight, then start = max(today, start). A span that does not cover a day
+        // still yields one tab (end.setDate(start.getDate() + 1) keeps the cleared hour).
         var nowLocal = ToLocal(now);
         var hour = nowLocal.Hour;
         var today = nowLocal.Date.AddHours(hour);
@@ -289,7 +296,7 @@ public sealed class GuideClock(Func<DateTimeOffset, int> utcOffsetMinutes)
         var end = ToLocal(info.EndDate).Date;
         if (start >= end)
         {
-            end = start.Date.AddDays(1);
+            end = start.AddDays(1).Date;
         }
 
         if (today > start)
@@ -297,13 +304,15 @@ public sealed class GuideClock(Func<DateTimeOffset, int> utcOffsetMinutes)
             start = today;
         }
 
-        var date = ToLocal(currentDate ?? now).Date.AddHours(hour);
+        var date = currentDate is { } selected ? ToLocal(selected) : nowLocal;
+        date = date.Date.AddHours(hour);
         var startTimeOfDayMs = ((start.Hour * 60) + start.Minute) * 60000d;
         var tabs = new List<GuideDateTab>();
         while (start <= end)
         {
             tabs.Add(new GuideDateTab(FromLocal(start), start.Day, start.Date == date.Date));
-            start = start.Date.AddDays(1);
+            // setDate() keeps the hour, then the original clears it for every day after the first.
+            start = start.AddDays(1).Date;
         }
 
         var scrollToTimeMs = (nowLocal.Hour * 3600000d) + (nowLocal.Minute >= 30 ? 30 * 60000d : 0);

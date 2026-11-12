@@ -1,0 +1,155 @@
+@namespace Jellyfin.Web.Components
+@*
+    The guide's settings (components/guide/guide-settings.js). Indicators, colour, favourite channels
+    and the channel order are saved in the user settings; the categories stay in memory, and closing
+    the dialog always writes them (the original saves on close, even when nothing changed).
+*@
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["Previous"]" tabindex="-1" OnClick="Close" />
+    <h3 class="formDialogHeaderTitle">@Globalize["Settings"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY">
+    <form class="dialogContentInner dialog-content-centered" style="padding-top:2em;" onsubmit="return false;">
+        <h3 class="checkboxListLabel">@Globalize["SortChannelsBy"]</h3>
+        <EmbyRadio Name="ChannelSortOrder" Value="Number" Class="chkSortOrder" LabelClass="radio-label-block" Label="@Globalize["ChannelNumber"]" Selected="@(_order == "Number")" OnSelected="value => { _order = value; _changed = true; }" />
+        <EmbyRadio Name="ChannelSortOrder" Value="DatePlayed" Class="chkSortOrder" LabelClass="radio-label-block" Label="@Globalize["RecentlyWatched"]" Selected="@(_order == "DatePlayed")" OnSelected="value => { _order = value; _changed = true; }" />
+        <br />
+        <label class="checkboxContainer">
+            <EmbyCheckbox Class="chkFavoriteChannelsAtTop" Label="@Globalize["PlaceFavoriteChannelsAtBeginning"]" Value="_favorites" ValueChanged="value => { _favorites = value; _changed = true; }" />
+        </label>
+
+        <h3 class="checkboxListLabel">@Globalize["ShowIndicatorsFor"]</h3>
+        <div class="checkboxList">
+            @foreach (var indicator in _indicators)
+            {
+                <label>
+                    <EmbyCheckbox Class="chkIndicator" data-type="@indicator.Type" Label="@Globalize[indicator.Label]" Value="indicator.Checked" ValueChanged="value => SetIndicator(indicator, value)" />
+                </label>
+            }
+        </div>
+        <br />
+        <label class="checkboxContainer">
+            <EmbyCheckbox Class="chkColorCodedBackgrounds" Label="@Globalize["EnableColorCodedBackgrounds"]" Value="_color" ValueChanged="value => { _color = value; _changed = true; }" />
+        </label>
+
+        <h3 class="checkboxListLabel">@Globalize["Categories"]</h3>
+        <div class="checkboxList">
+            @foreach (var category in _categories)
+            {
+                <label>
+                    <EmbyCheckbox Class="chkCategory" data-type="@category.Type" Label="@Globalize[category.Label]" Value="category.Checked" ValueChanged="value => SetCategory(category, value)" />
+                </label>
+            }
+        </div>
+    </form>
+</div>
+
+@code {
+    private static readonly (string Type, string Label, bool DefaultOn)[] IndicatorDefinitions =
+    [
+        ("hd", "HDPrograms", false),
+        ("live", "LiveBroadcasts", true),
+        ("new", "NewEpisodes", false),
+        ("premiere", "Premieres", true),
+        ("repeat", "RepeatEpisodes", false)
+    ];
+
+    private static readonly (string Type, string Label)[] CategoryDefinitions =
+    [
+        ("movies", "Movies"),
+        ("sports", "Sports"),
+        ("kids", "Kids"),
+        ("news", "News")
+    ];
+
+    private readonly List<Check> _indicators = [];
+    private readonly List<Check> _categories = [];
+    private string _order = "Number";
+    private bool _favorites = true;
+    private bool _color;
+    private bool _changed;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public UserSettings Settings { get; set; } = default!;
+
+    /// <summary>The categories the guide currently shows; replaced when the dialog closes.</summary>
+    [Parameter, EditorRequired]
+    public List<string> Categories { get; set; } = [];
+
+    /// <summary>Opens the dialog; true when a setting changed, so the guide reloads.</summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, UserSettings settings, List<string> categories)
+    {
+        var result = await dialogs.ShowAsync<GuideSettingsDialog>(
+            new Dictionary<string, object?> { ["Settings"] = settings, ["Categories"] = categories },
+            new AppDialogOptions { Size = "small", Class = "formDialog" });
+        return result is true;
+    }
+
+    protected override void OnInitialized()
+    {
+        _order = Settings.Get("livetv-channelorder") is { Length: > 0 } order ? order : "Number";
+        _favorites = Settings.Get("livetv-favoritechannelsattop") != "false";
+        _color = Settings.Get("guide-colorcodedbackgrounds") == "true";
+        foreach (var (type, label, defaultOn) in IndicatorDefinitions)
+        {
+            var stored = Settings.Get("guide-indicator-" + type);
+            _indicators.Add(new Check(type, label, defaultOn ? stored != "false" : stored == "true"));
+        }
+
+        foreach (var (type, label) in CategoryDefinitions)
+        {
+            _categories.Add(new Check(type, label, Categories.Count == 0 || Categories.Contains(type)));
+        }
+    }
+
+    private void SetIndicator(Check indicator, bool value)
+    {
+        indicator.Checked = value;
+        _changed = true;
+    }
+
+    private void SetCategory(Check category, bool value)
+    {
+        category.Checked = value;
+        _changed = true;
+    }
+
+    private void Close()
+    {
+        foreach (var indicator in _indicators)
+        {
+            Settings.Set("guide-indicator-" + indicator.Type, indicator.Checked);
+        }
+
+        Settings.Set("guide-colorcodedbackgrounds", _color);
+        Settings.Set("livetv-favoritechannelsattop", _favorites);
+        Settings.Set("livetv-channelorder", _order);
+
+        // saveCategories: four checked boxes also mean series, and "all" is always stored so that
+        // an empty list (nothing picked) stays different from every box picked.
+        var categories = _categories.Where(category => category.Checked).Select(category => category.Type).ToList();
+        if (categories.Count >= 4)
+        {
+            categories.Add("series");
+        }
+
+        categories.Add("all");
+        Categories.Clear();
+        Categories.AddRange(categories);
+        Dialog.Close(_changed);
+    }
+
+    private sealed class Check(string type, string label, bool @checked)
+    {
+        public string Type { get; } = type;
+
+        public string Label { get; } = label;
+
+        public bool Checked { get; set; } = @checked;
+    }
+}

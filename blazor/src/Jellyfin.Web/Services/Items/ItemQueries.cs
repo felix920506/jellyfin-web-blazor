@@ -64,7 +64,14 @@ public sealed class ItemQueries(JellyfinApi api)
     {
         using var response = await api.SendAsync(HttpMethod.Get, api.GetUrl($"LiveTv/SeriesTimers/{seriesTimerId}"));
         response.EnsureSuccessStatusCode();
-        return KiotaJson.Parse(await response.Content.ReadAsStringAsync(), SeriesTimerInfoDto.CreateFromDiscriminatorValue)?.ToItem();
+        var json = await response.Content.ReadAsStringAsync();
+        var item = KiotaJson.Parse(json, SeriesTimerInfoDto.CreateFromDiscriminatorValue)?.ToItem();
+        if (item is not null && System.Text.Json.Nodes.JsonNode.Parse(json) is System.Text.Json.Nodes.JsonObject timer)
+        {
+            item.EnsureExtras().SeriesTimer = timer;
+        }
+
+        return item;
     }
 
     /// <summary>

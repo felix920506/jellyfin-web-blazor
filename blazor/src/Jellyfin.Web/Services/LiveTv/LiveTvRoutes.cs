@@ -132,6 +132,26 @@ public static class LiveTvSections
         RecordingCards with { ShowYear = false, ShowParentTitle = false },
         new ListRouteOptions { ItemTypes = "Recordings" });
 
+    /// <summary>
+    /// The recordings of one kind. The modern client shows only the latest recordings and the
+    /// folders; the task asks for movies, shows, sports and kids as well.
+    /// </summary>
+    private static LiveTvSection RecordingKind(string type, string name, params (string Key, object? Value)[] query) => new(
+        type,
+        name,
+        Recordings,
+        [("limit", 12), ("imageTypeLimit", 1), .. query],
+        RecordingCards with { ShowYear = true, Lines = 2, ShowParentTitle = true },
+        new ListRouteOptions { ItemTypes = "Recordings" });
+
+    public static readonly LiveTvSection RecordingMovies = RecordingKind("recordingmovies", "Movies", ("isMovie", true));
+
+    public static readonly LiveTvSection RecordingShows = RecordingKind("recordingshows", "Shows", ("isSeries", true), ("isMovie", false));
+
+    public static readonly LiveTvSection RecordingSports = RecordingKind("recordingsports", "Sports", ("isSports", true));
+
+    public static readonly LiveTvSection RecordingKids = RecordingKind("recordingkids", "HeaderForKids", ("isKids", true));
+
     public static readonly LiveTvSection ActiveRecordings = new(
         "activerecordings",
         "HeaderActiveRecordings",

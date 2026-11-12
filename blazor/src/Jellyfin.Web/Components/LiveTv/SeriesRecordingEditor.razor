@@ -1,0 +1,262 @@
+@namespace Jellyfin.Web.Components
+@using System.Globalization
+@using System.Text.Json.Nodes
+@*
+    The options of a series recording (components/recordingcreator/seriesrecordingeditor.js): what to
+    record, where, when, how many to keep and the padding. As a dialog it saves on close; embedded in
+    the details page it has no header or footer and saves as soon as a field changes.
+*@
+@inject LiveTvData Data
+@inject RecordingHelper Recordings
+@inject DateTimeText Dates
+@inject Globalize Globalize
+@inject LoadingService Loading
+
+@if (!Embedded)
+{
+    <div class="formDialogHeader">
+        <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="CloseAsync" />
+        <h3 class="formDialogHeaderTitle">@Globalize["HeaderSeriesOptions"]</h3>
+    </div>
+}
+<div class="@(Embedded ? null : "formDialogContent smoothScrollY")">
+    <div class="@(Embedded ? null : "dialogContentInner dialog-content-centered")" style="@(Embedded ? null : "padding-top:2em;")">
+        @if (_timer is not null)
+        {
+            <form style="max-width: none;" onsubmit="return false;">
+                <EmbySelect Class="selectShowType" Label="@Globalize["LabelRecord"]" Value="@_showType" ValueChanged="value => Set(ref _showType, value)">
+                    <option value="new" selected="@(_showType == "new")">@Globalize["NewEpisodesOnly"]</option>
+                    <option value="all" selected="@(_showType == "all")">@Globalize["AllEpisodes"]</option>
+                </EmbySelect>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <EmbyCheckbox Class="chkSkipEpisodesInLibrary" Label="@Globalize["SkipEpisodesAlreadyInMyLibrary"]" Value="_skip" ValueChanged="value => Set(ref _skip, value)" />
+                    </label>
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["SkipEpisodesAlreadyInMyLibraryHelp"]</div>
+                </div>
+                <EmbySelect Class="selectChannels" Label="@Globalize["LabelChannels"]" Value="@_channels" ValueChanged="value => Set(ref _channels, value)">
+                    <option class="optionChannelOnly" value="one" selected="@(_channels == "one")">@ChannelOnly</option>
+                    <option value="all" selected="@(_channels == "all")">@Globalize["AllChannels"]</option>
+                </EmbySelect>
+                <EmbySelect Class="selectAirTime" Label="@Globalize["LabelAirTime"]" Value="@_airTime" ValueChanged="value => Set(ref _airTime, value)">
+                    <option class="optionAroundTime" value="original" selected="@(_airTime == "original")">@AroundTime</option>
+                    <option value="any" selected="@(_airTime == "any")">@Globalize["Anytime"]</option>
+                </EmbySelect>
+                <EmbySelect Class="selectKeepUpTo" Label="@Globalize["LabelKeepUpTo"]" Value="@_keep" ValueChanged="value => Set(ref _keep, value)">
+                    @for (var count = 0; count <= 50; count++)
+                    {
+                        var value = count.ToString(CultureInfo.InvariantCulture);
+                        <option value="@value" selected="@(value == _keep)">@KeepText(count)</option>
+                    }
+                </EmbySelect>
+                <div class="inputContainer">
+                    <div class="flex align-items-center">
+                        <div class="flex-grow">
+                            <EmbyInput Id="txtPrePaddingMinutes" Type="number" Label="@Globalize["LabelStartWhenPossible"]" Required="true"
+                                       Value="@_pre" ValueChanged="value => Set(ref _pre, value)" OnCommit="CommitAsync" min="0" step="1" pattern="[0-9]*" />
+                        </div>
+                        <div class="fieldDescription" style="margin-left:.5em;font-size:90%;margin-top:1.3em;">@Globalize["MinutesBefore"]</div>
+                    </div>
+                </div>
+                <div class="inputContainer">
+                    <div class="flex align-items-center">
+                        <div class="flex-grow">
+                            <EmbyInput Id="txtPostPaddingMinutes" Type="number" Label="@Globalize["LabelStopWhenPossible"]" Required="true"
+                                       Value="@_post" ValueChanged="value => Set(ref _post, value)" OnCommit="CommitAsync" min="0" step="1" pattern="[0-9]*" />
+                        </div>
+                        <div class="fieldDescription" style="margin-left:.5em;font-size:90%;margin-top:1.3em;">@Globalize["MinutesAfter"]</div>
+                    </div>
+                </div>
+                <br />
+                <div class="@("formDialogFooter" + (Embedded || !EnableCancel ? " hide" : null))">
+                    <button type="submit" class="raised btnSubmit block formDialogFooterItem button-submit hide emby-button" @onclick="SaveAsync">
+                        <span>@Globalize["Save"]</span>
+                    </button>
+                    @if (!Embedded && EnableCancel)
+                    {
+                        <button type="button" class="raised btnCancelRecording block formDialogFooterItem button-cancel emby-button" style="white-space:nowrap;" @onclick="CancelAsync">
+                            <span>@Globalize["HeaderCancelRecording"]</span>
+                        </button>
+                    }
+                </div>
+            </form>
+        }
+    </div>
+</div>
+
+@code {
+    private JsonObject? _timer;
+    private string? _showType = "all";
+    private string? _channels = "one";
+    private string? _airTime = "original";
+    private string? _keep = "0";
+    private string? _pre;
+    private string? _post;
+    private bool _skip;
+    private bool _deleted;
+    private bool _saving;
+
+    [CascadingParameter]
+    public DialogInstance? Dialog { get; set; }
+
+    /// <summary>The series timer. Empty while embedded until <see cref="Timer"/> arrives.</summary>
+    [Parameter]
+    public string SeriesTimerId { get; set; } = string.Empty;
+
+    /// <summary>The series timer already loaded, for the details page; it is not fetched again.</summary>
+    [Parameter]
+    public JsonObject? Timer { get; set; }
+
+    /// <summary>False hides the cancel button, as the record button's "series settings" link does.</summary>
+    [Parameter]
+    public bool EnableCancel { get; set; } = true;
+
+    /// <summary>True inside the details page: no header, no footer, and a change saves at once.</summary>
+    [Parameter]
+    public bool Embedded { get; set; }
+
+    /// <summary>Opens the editor. The result says whether the series timer was saved or cancelled.</summary>
+    public static async Task<ItemCommandResult> ShowAsync(AppDialogs dialogs, string seriesTimerId, bool enableCancel = true)
+    {
+        var result = await dialogs.ShowAsync<SeriesRecordingEditor>(
+            new Dictionary<string, object?> { ["SeriesTimerId"] = seriesTimerId, ["EnableCancel"] = enableCancel },
+            new AppDialogOptions { Size = "small", Class = "formDialog recordingDialog" });
+        return result as ItemCommandResult ?? ItemCommandResult.None;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Timer is { } given && _timer != given)
+        {
+            Apply(given);
+            return;
+        }
+
+        if (_timer is not null || string.IsNullOrEmpty(SeriesTimerId))
+        {
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            if (await Data.GetSeriesTimerAsync(SeriesTimerId) is { } timer)
+            {
+                Apply(timer);
+            }
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn($"Live TV: loading series timer {SeriesTimerId} failed: {exception.Message}");
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    private void Apply(JsonObject timer)
+    {
+        _timer = timer;
+        _pre = Minutes(timer, "PrePaddingSeconds");
+        _post = Minutes(timer, "PostPaddingSeconds");
+        _channels = timer.Flag("RecordAnyChannel") ? "all" : "one";
+        _airTime = timer.Flag("RecordAnyTime") ? "any" : "original";
+        _showType = timer.Flag("RecordNewOnly") ? "new" : "all";
+        _skip = timer.Flag("SkipEpisodesInLibrary");
+        _keep = ((int)(timer.Number("KeepUpTo") ?? 0)).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private string ChannelOnly => (_timer?.Text("ChannelName") ?? _timer?.Text("ChannelNumber")) is { Length: > 0 } name
+        ? Globalize.Translate("ChannelNameOnly", name)
+        : Globalize["OneChannel"];
+
+    private string AroundTime => _timer?.Text("StartDate") is { Length: > 0 } text && DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var start)
+        ? Globalize.Translate("AroundTime", Dates.GetDisplayTime(start))
+        : Globalize["Anytime"];
+
+    private string KeepText(int count) => count switch
+    {
+        0 => Globalize["AsManyAsPossible"],
+        1 => Globalize["ValueOneEpisode"],
+        _ => Globalize.Translate("ValueEpisodeCount", count)
+    };
+
+    private void Set(ref string? field, string? value)
+    {
+        field = value;
+        if (Embedded)
+        {
+            _ = SaveAsync();
+        }
+    }
+
+    private void Set(ref bool field, bool value)
+    {
+        field = value;
+        if (Embedded)
+        {
+            _ = SaveAsync();
+        }
+    }
+
+    private Task CommitAsync(string? _) => Embedded ? SaveAsync() : Task.CompletedTask;
+
+    private async Task CloseAsync()
+    {
+        if (!_deleted)
+        {
+            await SaveAsync();
+        }
+
+        Dialog?.Close(_deleted ? new ItemCommandResult(Updated: true, Deleted: true) : new ItemCommandResult(Updated: true));
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving || _deleted || _timer is not { } timer)
+        {
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            timer["PrePaddingSeconds"] = Minutes(_pre) * 60;
+            timer["PostPaddingSeconds"] = Minutes(_post) * 60;
+            timer["RecordAnyChannel"] = _channels == "all";
+            timer["RecordAnyTime"] = _airTime == "any";
+            timer["RecordNewOnly"] = _showType == "new";
+            timer["SkipEpisodesInLibrary"] = _skip;
+            timer["KeepUpTo"] = int.TryParse(_keep, NumberStyles.Integer, CultureInfo.InvariantCulture, out var keep) ? keep : 0;
+            await Data.UpdateSeriesTimerAsync(timer);
+            if (!Embedded)
+            {
+                Dialog?.Close(new ItemCommandResult(Updated: true));
+            }
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn($"Live TV: saving series timer {SeriesTimerId} failed: {exception.Message}");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CancelAsync()
+    {
+        var id = _timer?.Text("Id") ?? SeriesTimerId;
+        if (await Recordings.CancelSeriesTimerWithConfirmationAsync(id))
+        {
+            _deleted = true;
+            Dialog?.Close(new ItemCommandResult(Updated: true, Deleted: true));
+        }
+    }
+
+    private static string Minutes(JsonObject timer, string name) =>
+        (timer.Number(name) is { } seconds ? seconds / 60 : 0).ToString(CultureInfo.InvariantCulture);
+
+    private static int Minutes(string? text) => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes) ? minutes : 0;
+}

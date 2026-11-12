@@ -2,7 +2,8 @@
 @*
     The record buttons of a programme (components/recordingcreator/recordingfields.js + template):
     record / do not record, record series / cancel series, and the links to the settings of the
-    timers. Used by the programme dialog and by the details page of a programme.
+    timers. Used by the programme dialog and, without the wrapper, by the details page of a programme
+    (that page already has the .recordingFields element).
 *@
 @implements IDisposable
 @inject LiveTvData Data
@@ -11,33 +12,16 @@
 @inject ServerEvents Events
 @inject Globalize Globalize
 
-<div class="recordingFields">
-    <div class="recordSeriesContainer recordingFields-buttons flex align-items-center @(_isSeries ? null : "hide")">
-        <div>
-            <button type="button" class="emby-button raised recordingButton seriesRecordingButton" disabled="@_busy" @onclick="ToggleSeriesAsync">
-                <span class="material-icons recordingIcon fiber_smart_record @(HasSeriesTimer ? "recordingIcon-active" : null)" aria-hidden="true"></span>
-                <span class="buttonText">@Globalize[HasSeriesTimer ? "CancelSeries" : "RecordSeries"]</span>
-            </button>
-        </div>
-        <button type="button" class="emby-button button-flat secondaryText manageRecordingButton btnManageSeriesRecording @(HasSeriesTimer ? null : "hide")"
-                @onclick="ManageSeriesAsync">
-            <span class="manageButtonText">@Globalize["SeriesSettings"]</span>
-        </button>
+@if (!Bare)
+{
+    <div class="recordingFields">
+        @Buttons
     </div>
-
-    <div class="recordingFields-buttons flex align-items-center">
-        <div>
-            <button type="button" class="emby-button raised recordingButton singleRecordingButton" disabled="@_busy" @onclick="ToggleAsync">
-                <span class="material-icons recordingIcon fiber_manual_record @(HasTimer ? "recordingIcon-active" : null)" aria-hidden="true"></span>
-                <span class="buttonText">@Globalize[!HasTimer ? "Record" : _status == "InProgress" ? "StopRecording" : "DoNotRecord"]</span>
-            </button>
-        </div>
-        <button type="button" class="emby-button button-flat secondaryText manageRecordingButton btnManageRecording @(HasTimer ? null : "hide")"
-                @onclick="ManageAsync">
-            <span class="manageButtonText">@Globalize["Settings"]</span>
-        </button>
-    </div>
-</div>
+}
+else
+{
+    @Buttons
+}
 
 @code {
     private static readonly string[] TimerMessages = ["TimerCreated", "TimerCancelled"];
@@ -60,12 +44,43 @@
     [Parameter]
     public EventCallback OnChanged { get; set; }
 
+    /// <summary>True on the details page, which already wraps these buttons in <c>.recordingFields</c>.</summary>
+    [Parameter]
+    public bool Bare { get; set; }
+
     /// <summary>Whether anything was changed with these buttons (<c>hasChanged()</c>).</summary>
     public bool HasChanged { get; private set; }
 
     private bool HasTimer => !string.IsNullOrEmpty(_timerId) && _status != "Cancelled";
 
     private bool HasSeriesTimer => !string.IsNullOrEmpty(_seriesTimerId);
+
+    /// <summary>The two rows of buttons, drawn once for both the wrapped and the bare form.</summary>
+    private RenderFragment Buttons => __builder =>
+    {
+        <div class="@("recordSeriesContainer recordingFields-buttons flex align-items-center" + (_isSeries ? null : " hide"))">
+            <div>
+                <button type="button" class="raised recordingButton seriesRecordingButton emby-button" disabled="@_busy" @onclick="ToggleSeriesAsync">
+                    <span class="@("material-icons recordingIcon fiber_smart_record" + (HasSeriesTimer ? " recordingIcon-active" : null))" aria-hidden="true"></span>
+                    <span class="buttonText">@Globalize[HasSeriesTimer ? "CancelSeries" : "RecordSeries"]</span>
+                </button>
+            </div>
+            <button type="button" class="@("button-flat secondaryText manageRecordingButton btnManageSeriesRecording emby-button" + (HasSeriesTimer ? null : " hide"))" @onclick="ManageSeriesAsync">
+                <span class="manageButtonText">@Globalize["SeriesSettings"]</span>
+            </button>
+        </div>
+        <div class="recordingFields-buttons flex align-items-center">
+            <div>
+                <button type="button" class="raised recordingButton singleRecordingButton emby-button" disabled="@_busy" @onclick="ToggleAsync">
+                    <span class="@("material-icons recordingIcon fiber_manual_record" + (HasTimer ? " recordingIcon-active" : null))" aria-hidden="true"></span>
+                    <span class="buttonText">@Globalize[HasTimer ? (_status == "InProgress" ? "StopRecording" : "DoNotRecord") : "Record"]</span>
+                </button>
+            </div>
+            <button type="button" class="@("button-flat secondaryText manageRecordingButton btnManageRecording emby-button" + (HasTimer ? null : " hide"))" @onclick="ManageAsync">
+                <span class="manageButtonText">@Globalize["Settings"]</span>
+            </button>
+        </div>
+    };
 
     protected override void OnInitialized()
     {

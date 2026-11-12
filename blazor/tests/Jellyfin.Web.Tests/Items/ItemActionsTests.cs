@@ -213,8 +213,10 @@ public class ItemActionsTests : ItemsTestContext
         await Actions.ExecuteAsync(Movie(), ItemAction.Record);
         Assert.Empty(Toasts);
 
+        // A programme's record button is answered by Live TV. There is no timer yet, so nothing is posted.
         await Actions.ExecuteAsync(program, ItemAction.Record);
-        Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);
+        Assert.Empty(Toasts);
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Post);
     }
 
     [Fact]

@@ -516,9 +516,9 @@ public class ItemContextMenuExecutionTests : ItemsTestContext
     {
         SignIn(admin: true);
 
-        var result = await Menu.ExecuteAsync("record", new ItemMenuOptions { Item = Movie() });
+        var result = await Menu.ExecuteAsync("playmenu", new ItemMenuOptions { Item = Movie() });
 
-        Assert.Equal(new ItemMenuResult("record"), result);
+        Assert.Equal(new ItemMenuResult("playmenu"), result);
         Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);
     }
 
@@ -600,8 +600,9 @@ public class ItemCommandHandlerTests : ItemsTestContext
 
         Assert.True(handlers.CanHandle("edit", item));
         Assert.True(handlers.CanHandle("share", item));
-        Assert.False(handlers.CanHandle("record", item));
-        Assert.Equal(ItemCommandResult.None, await handlers.ExecuteAsync("record", item));
+        // Live TV now answers "record", so a command nobody owns is the one that stays unanswered.
+        Assert.False(handlers.CanHandle("playmenu", item));
+        Assert.Equal(ItemCommandResult.None, await handlers.ExecuteAsync("playmenu", item));
         Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);
     }
 

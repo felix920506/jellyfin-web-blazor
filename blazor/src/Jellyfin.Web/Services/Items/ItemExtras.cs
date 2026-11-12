@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json.Nodes;
 
 using Jellyfin.Sdk.Generated.Models;
 
@@ -31,6 +32,13 @@ public sealed class ItemExtras
     public bool? RecordAnyTime { get; set; }
 
     public bool? RecordAnyChannel { get; set; }
+
+    /// <summary>
+    /// The series timer as the server sent it. The details page embeds the editor with this object,
+    /// so the editor does not ask for the timer again (<c>reload</c> of <c>seriesrecordingeditor.js</c>
+    /// renders an item it was given).
+    /// </summary>
+    public JsonObject? SeriesTimer { get; set; }
 
     /// <summary>Offline sync progress (0–100) where the host supports downloads.</summary>
     public double? SyncPercent { get; set; }
