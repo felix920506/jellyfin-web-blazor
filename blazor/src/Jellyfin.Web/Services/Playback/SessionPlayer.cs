@@ -30,7 +30,7 @@ public sealed class SessionPlayer(JellyfinApi api, ServerEvents events, IPlaybac
     private JsonObject? _sessionJson;
     private List<BaseItemDto> _playlist = [];
     private string? _queueKey;
-    private bool _isUpdatingPlaylist;
+    private int _queueVersion;
 
     /// <inheritdoc />
     public event Action<IMediaPlayer, PlayerEvent>? Event;
@@ -626,6 +626,7 @@ public sealed class SessionPlayer(JellyfinApi api, ServerEvents events, IPlaybac
         _sessionJson = null;
         _playlist = [];
         _queueKey = null;
+        _queueVersion++;
     }
 
     private void OnConnectionChanged()
@@ -645,41 +646,51 @@ public sealed class SessionPlayer(JellyfinApi api, ServerEvents events, IPlaybac
         // loaded last does the same and does not load again and again when the server returns
         // fewer items than the queue has (an item that is in it twice, or one that was deleted).
         var key = string.Join('|', queue.Select(i => $"{i.Id:N}:{i.PlaylistItemId}"));
-        if (_isUpdatingPlaylist || key == _queueKey)
+        if (key == _queueKey)
         {
             return;
         }
 
         _queueKey = key;
-        _isUpdatingPlaylist = true;
-        _ = UpdatePlaylistAsync(queue);
+        _ = UpdatePlaylistAsync(queue, ++_queueVersion);
     }
 
-    private async Task UpdatePlaylistAsync(List<QueueItem> queue)
+    private async Task UpdatePlaylistAsync(List<QueueItem> queue, int version)
     {
         try
         {
             var ids = queue.Select(i => i.Id?.ToString("N") ?? string.Empty).Where(id => id.Length > 0).ToList();
             var items = ids.Count == 0 || _manager is null ? [] : await _manager.GetPlaylistItemsAsync(ids);
-            for (var i = 0; i < items.Count && i < queue.Count; i++)
+            if (version != _queueVersion)
             {
-                items[i].PlaylistItemId = queue[i].PlaylistItemId;
+                return;
             }
 
-            _playlist = items;
+            // /Items deduplicates ids and can omit deleted/inaccessible items. Reconstruct from
+            // the wire queue instead of assigning playlist ids by the response index.
+            _playlist = [];
+            foreach (var entry in queue)
+            {
+                if (items.FirstOrDefault(item => item.Id == entry.Id) is { } item)
+                {
+                    var copy = KiotaJson.Parse(KiotaJson.Serialize(item), BaseItemDto.CreateFromDiscriminatorValue)!;
+                    copy.PlaylistItemId = entry.PlaylistItemId;
+                    _playlist.Add(copy);
+                }
+            }
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or Microsoft.Kiota.Abstractions.ApiException)
         {
             AppLog.Warn($"[sessionPlayer] loading the queue failed: {ex.Message}");
-            _queueKey = null;
-        }
-        finally
-        {
-            _isUpdatingPlaylist = false;
+            if (version == _queueVersion)
+            {
+                _queueKey = null;
+            }
         }
 
-        // The original shows the queue with the next state change; here it is shown as soon as it is known.
-        if (_subscription is not null)
+        // Unlike the legacy promise-based getPlaylist, Blazor needs an event after the load, also
+        // when the target is paused and its subsequent websocket state does not change.
+        if (_subscription is not null && version == _queueVersion)
         {
             Raise(PlaybackEvents.StateChange);
         }

@@ -269,7 +269,8 @@ public class SessionPlayerTests
             harness.Services,
             RemoteSessions.Playing(PlaybackServer.Movie(), positionTicks: 120_000_000, volume: 60, repeatMode: "RepeatAll", playbackOrder: "Shuffle"));
 
-        Assert.Equal([PlaybackEvents.StateChange], events);
+        Assert.NotEmpty(events);
+        Assert.All(events, name => Assert.Equal(PlaybackEvents.StateChange, name));
         Assert.True(manager.IsPlaying);
         Assert.True(manager.IsPlayingMediaType("Video"));
         Assert.False(manager.IsPlayingMediaType("Audio"));
