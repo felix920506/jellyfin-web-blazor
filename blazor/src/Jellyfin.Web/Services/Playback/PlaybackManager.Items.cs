@@ -110,9 +110,22 @@ public sealed partial class PlaybackManager
             return;
         }
 
-        // PORT-TODO(playback): remote trailers are web URLs (mostly YouTube) played by the YouTube player
-        // of the original; that player belongs to a later workstream.
-        AppLog.Warn("[playback] remote trailers are not supported yet");
+        if (item.RemoteTrailers is { Count: > 0 } trailers)
+        {
+            var remoteItems = trailers
+                .Where(t => !string.IsNullOrWhiteSpace(t.Url))
+                .Select(t => new BaseItemDto
+                {
+                    Name = string.IsNullOrWhiteSpace(t.Name) ? item.Name : t.Name,
+                    Path = t.Url,
+                    MediaType = BaseItemDto_MediaType.Video,
+                })
+                .ToList();
+            if (remoteItems.Count > 0)
+            {
+                await PlayAsync(new PlayOptions { Items = remoteItems });
+            }
+        }
     }
 
     /// <summary>
@@ -624,8 +637,31 @@ public sealed partial class PlaybackManager
 
         var firstItem = items[playStartIndex];
 
-        // PORT-TODO(playback): photos and books go to their own players in the original (playOther());
-        // those players belong to later workstreams, so such items end in "ErrorPlayerNotFound".
+        if (firstItem.MediaType is BaseItemDto_MediaType.Photo or BaseItemDto_MediaType.Book || firstItem.Id is null)
+        {
+            // playOther(): these players manage their own DOM and do not use PlaybackInfo.
+            _pendingOtherItems = items;
+            try
+            {
+                _itemOptions.AddOrUpdate(firstItem, options.ToItemOptions());
+                await PlayInternalAsync(
+                    firstItem,
+                    options.ToItemOptions(),
+                    () =>
+                    {
+                        _playQueue.SetPlaylist(items);
+                        SetPlaylistState(firstItem.PlaylistItemId, playStartIndex);
+                        _loading.Hide();
+                    },
+                    prevSource: null);
+            }
+            finally
+            {
+                _pendingOtherItems = null;
+            }
+            return;
+        }
+
         var intros = await GetIntrosAsync(firstItem, options);
         var firstItemOptions = options.ToItemOptions();
         _itemOptions.AddOrUpdate(firstItem, firstItemOptions);
@@ -718,6 +754,7 @@ public sealed partial class PlaybackManager
             SubtitleStreamIndex = SubtitleStreamIndex,
             SecondarySubtitleStreamIndex = SecondarySubtitleStreamIndex,
             StartPositionTicks = StartPositionTicks,
+            StartIndex = StartIndex ?? 0,
         };
     }
 
