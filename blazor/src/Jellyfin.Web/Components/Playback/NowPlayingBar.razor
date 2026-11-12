@@ -1,7 +1,7 @@
 @namespace Jellyfin.Web.Components
 @* The bar at the bottom of the screen while something plays in the background. Port of
    components/nowPlayingBar/nowPlayingBar.js with the original markup.
-   Not ported: the item context menu (only its playback entries are offered), AirPlay. *@
+   Not ported: AirPlay. *@
 @attribute [ShellSlot(ShellSlot.Footer)]
 @implements IDisposable
 @inject PlaybackManager Playback
@@ -9,7 +9,7 @@
 @inject Globalize Globalize
 @inject AppRouter Router
 @inject AppHost AppHost
-@inject AppDialogs Dialogs
+@inject ItemActions ItemActions
 @inject JellyfinApi Api
 @inject IPlaybackTimers Timers
 
@@ -298,25 +298,23 @@
 
     private async Task ShowContextMenuAsync()
     {
-        // PORT-TODO(playback): the full item context menu belongs to the shared item components;
-        // only the two entries the bar adds to it are offered here.
-        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        if (_item is null)
         {
-            Items =
-            [
-                new ActionSheetItem { Id = "stopPlayback", Name = Globalize["StopPlayback"], Icon = "stop" },
-                new ActionSheetItem { Id = "clearQueue", Name = Globalize["ClearQueue"], Icon = "clear_all" },
-            ],
-        });
-
-        switch (id)
-        {
-            case "stopPlayback":
-                await Playback.StopAsync();
-                break;
-            case "clearQueue":
-                Playback.ClearQueue();
-                break;
+            return;
         }
+
+        await ItemActions.ShowContextMenuAsync(_item, new ItemActionContext
+        {
+            ConfigureMenu = options => options with
+            {
+                Play = false,
+                Queue = false,
+                Shuffle = false,
+                InstantMix = false,
+                StopPlayback = true,
+                ClearQueue = true,
+                OpenAlbum = false
+            }
+        }, playOptions: false);
     }
 }

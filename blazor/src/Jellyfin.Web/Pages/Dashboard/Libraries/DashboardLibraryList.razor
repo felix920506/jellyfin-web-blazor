@@ -47,7 +47,7 @@
                         @foreach (var folder in _folders)
                         {
                             <div @key="@(folder.ItemId ?? folder.Name)" class="jf-dashboard-libraries-item">
-                                <DashboardLibraryCard Folder="folder" OnChanged="ReloadAsync" />
+                                 <DashboardLibraryCard @key="((folder.ItemId ?? folder.Name, _cardVersion))" Folder="folder" OnChanged="ReloadAsync" />
                             </div>
                         }
                     </div>
@@ -63,6 +63,7 @@
     private LiveFeed? _feed;
     private bool _loading = true;
     private bool _failed;
+    private int _cardVersion;
 
     // The task that scans all libraries; the page shows its progress as the server reports it.
     private TaskInfo? LibrariesTask => _tasks?.FirstOrDefault(task => task.Key == "RefreshLibrary");
@@ -111,6 +112,10 @@
 
     private async Task ReloadAsync()
     {
+        // A rename refreshes the folder list asynchronously. Remount cards so MudMenu cannot keep
+        // an activator/portal from the pre-refresh card under the new name.
+        _cardVersion++;
+        StateHasChanged();
         await LoadFoldersAsync();
         StateHasChanged();
     }

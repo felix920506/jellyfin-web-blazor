@@ -16,6 +16,8 @@ public sealed class FakeBrowser : IBrowser
         Origin = "http://localhost"
     };
 
+    public double? ConnectionDownlinkMax { get; set; }
+
     public Dictionary<string, string> LocalStorage { get; } = [];
 
     public Dictionary<string, string> SessionStorage { get; } = [];

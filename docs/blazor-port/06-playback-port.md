@@ -137,18 +137,15 @@ Remove the hook once item pages have play buttons and the script can click them.
 Marked in the code with `// PORT-TODO(playback): …`.
 
 - Session remote control and synced lyrics are now ported; see `15-playback-extras.md`. Cast/AirPlay, SyncPlay (also its OSD icon and statistics category),
-  live TV specifics of the OSD (programme info, record button), media segments (skip
-  intro), photo/book/PDF/YouTube players and with them remote trailers and items that are plain URLs.
-- ASS/SSA and PGS renderers, secondary subtitles, subtitle offset (settings entry and G/H keys),
+  live TV specifics of the OSD (programme info, record button), photo/book/PDF/YouTube players and with them remote trailers and items that are plain URLs.
+- ASS/SSA and PGS renderers,
   subtitle appearance settings.
 - Brightness gestures, TV-layout key handling, iOS forced-fullscreen back navigation, iOS HLS live
-  prefetch, flv.js, the `navigator.connection.downlinkMax` clamp of the detected bitrate, refresh
-  of live-stream media info while playing, playback interceptors.
-- Queue page: drag reordering (replaced by Up/Down buttons), saving the queue as a playlist, remote
-  backdrop, played/favourite buttons of the entries. Remote control sections are ported. Bar and queue page offer a
-  reduced context menu (stop playback, clear queue) until the shared item menu exists.
+  prefetch, flv.js, playback interceptors.
+- Queue page: drag reordering (replaced by Up/Down buttons), remote backdrop. Remote control sections
+  are ported.
 - OSD: buttons are not focused when it appears; the slider bubble is not clamped to the track's
-  edges; the up-next dialog shows a simplified media-info line.
+  edges.
 
 ## 7. Deviations from the original
 

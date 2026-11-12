@@ -222,7 +222,20 @@ public sealed class ItemActions(
     public async Task ShowContextMenuAsync(BaseItemDto item, ItemActionContext? context = null, bool playOptions = true)
     {
         context ??= new ItemActionContext();
-        var fullItem = await queries.GetFullItemAsync(item);
+        BaseItemDto? fullItem;
+        try
+        {
+            fullItem = await queries.GetFullItemAsync(item);
+        }
+        catch (HttpRequestException exception)
+        {
+            // The now-playing item is already the best available representation when a refresh
+            // races a stream stop (or a test/remote target does not expose GET /Items). The menu
+            // can still offer its local commands instead of making the More button fail.
+            AppLog.Warn("Loading the context-menu item failed: " + exception.Message);
+            fullItem = item;
+        }
+
         if (fullItem is null)
         {
             return;

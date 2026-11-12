@@ -55,13 +55,12 @@ now-playing bar and `/queue` expose the lyrics action for audio items with lyric
   from the detail page, check remote pause/state, volume/mute, navigation, text and message, then
   stop/disconnect. It then temporarily uploads synced lyrics, checks autoscroll, click/keyboard
   seeking and desktop/400px layouts, and restores the server state. Desktop and 400px screenshots
-  are inspected. This scenario does not use the playback test hook.
+  are inspected. This scenario uses the public playback UI.
 
 ## Remaining priorities
 
-- OSD media segments, subtitle offset/secondary subtitles, Live TV-specific controls, additional
+- Live TV-specific controls, additional
   settings entries and the requested Playing/Ping policy (the original itself sends no such ping).
-- Remove `PlaybackTestHook`/`testCommand` and rewrite the older `e2e/playback.py` around public UI.
 - SyncPlay is not started. `PORT-TODO(syncplay)` belongs at its future integration points.
 
 ### SyncPlay design (not implemented)

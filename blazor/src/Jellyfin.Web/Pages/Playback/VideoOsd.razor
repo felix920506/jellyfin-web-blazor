@@ -63,6 +63,8 @@
 
     <PlayerStatsOverlay Visible="_statsVisible" OnClose="() => _statsVisible = false" />
 
+    <SubtitleSync @ref="_subtitleSync" Visible="_subtitleSyncVisible" OnClose="() => _subtitleSyncVisible = false" />
+
     @if (_skipSegment is not null)
     {
         <div class="skip-button-container">
@@ -260,6 +262,8 @@
     private bool _upNextVisible;
     private BaseItemDto? _nextItem;
     private bool _statsVisible;
+    private bool _subtitleSyncVisible;
+    private SubtitleSync? _subtitleSync;
 
     // Leaving because playback ended: nothing to stop.
     private bool _leaving;
@@ -451,6 +455,14 @@
                     await Playback.NextTrackAsync();
                 }
 
+                break;
+            case "KeyG":
+                _subtitleSyncVisible = true;
+                Playback.SetSubtitleOffset(Playback.SubtitleOffset - 0.1);
+                break;
+            case "KeyH":
+                _subtitleSyncVisible = true;
+                Playback.SetSubtitleOffset(Playback.SubtitleOffset + 0.1);
                 break;
             case "Home":
                 await Playback.SeekPercentAsync(0);
@@ -930,6 +942,10 @@
         if (result == "stats")
         {
             _statsVisible = !_statsVisible;
+        }
+        else if (result == "suboffset")
+        {
+            _subtitleSyncVisible = true;
         }
     }
 

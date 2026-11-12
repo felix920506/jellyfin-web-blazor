@@ -84,8 +84,7 @@ public sealed class PlayerSettingsMenu(PlaybackManager playback, AppDialogs dial
             case "stats":
                 return "stats";
             case "suboffset":
-                await ShowSubtitleOffsetAsync();
-                break;
+                return "suboffset";
         }
 
         return null;
@@ -187,12 +186,4 @@ public sealed class PlayerSettingsMenu(PlaybackManager playback, AppDialogs dial
         }
     }
 
-    private async Task ShowSubtitleOffsetAsync()
-    {
-        var value = await dialogs.PromptAsync(globalize["SubtitleOffset"], value: playback.SubtitleOffset.ToString("0.##", CultureInfo.InvariantCulture));
-        if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var offset))
-        {
-            playback.SetSubtitleOffset(offset);
-        }
-    }
 }

@@ -4,12 +4,9 @@
 
    Differences from the original:
    - the playlist is reordered with an "Up" and a "Down" button per entry instead of by dragging;
-   - the context menu offers the two entries the page adds to the item menu (stop playback, clear
-     queue); the item menu itself belongs to the shared item components.
    With a remote play target (see RemotePlayButton) the same page is the remote control: the state
    and the queue are those of the target, and the navigation, message and text sections appear.
-   PORT-TODO(playback): saving the queue as a playlist, the page backdrop and the played/favourite
-   buttons of the playlist entries are not ported. *@
+   AirPlay, recording controls and the TV layout remain outside this port. *@
 @attribute [Route("/queue")]
 @attribute [Access(AccessLevel.User)]
 @using System.Globalization
@@ -24,6 +21,8 @@
 @inject JellyfinApi Api
 @inject ShellState Shell
 @inject IPlaybackTimers Timers
+@inject ItemActions ItemActions
+@inject Backdrop Backdrops
 
 @{
     var item = Playback.CurrentItem;
@@ -286,8 +285,8 @@
                 {
                     @volumeControl
                 }
-                @* PORT-TODO(playback): saving the queue as a playlist needs the playlist editor; the button stays hidden. *@
-                <button type="button" class="btnSavePlaylist paper-icon-button-light hide" title="@Globalize["Save"]">
+                <button type="button" class="btnSavePlaylist paper-icon-button-light @(mobile && !_playlistOpen ? "hide" : null)" title="@Globalize["Save"]"
+                        @onclick="SavePlaylistAsync">
                     <span class="material-icons save" aria-hidden="true"></span>
                 </button>
                 <button type="button" id="toggleContextMenu" class="btnToggleContextMenu paper-icon-button-light" title="@Globalize["ButtonMore"]"
@@ -332,6 +331,14 @@
                             }
                         </div>
                         <div class="listViewUserDataButtons">
+                            @if (ItemHelper.CanMarkPlayed(entry))
+                            {
+                                <PlayStateButton Item="entry" Class="listItemButton itemAction paper-icon-button-light" />
+                            }
+                            @if (ItemHelper.CanRate(entry))
+                            {
+                                <RatingButton Item="entry" Class="listItemButton itemAction paper-icon-button-light" />
+                            }
                             <button type="button" class="listItemButton itemAction paper-icon-button-light jf-playlistMoveUp" title="@Globalize["Up"]"
                                     disabled="@(index == 0)" @onclick="() => Move(playlistItemId, index - 1)">
                                 <span class="material-icons keyboard_arrow_up" aria-hidden="true"></span>
@@ -344,6 +351,10 @@
                         <button type="button" class="listItemButton itemAction paper-icon-button-light" data-action="custom" data-customaction="remove"
                                 title="@Globalize["ButtonRemove"]" @onclick="() => RemoveAsync(playlistItemId)">
                             <span class="material-icons remove_circle_outline" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="listItemButton itemAction paper-icon-button-light" title="@Globalize["ButtonMore"]"
+                                @onclick="() => ShowItemContextMenuAsync(entry)" @onclick:stopPropagation="true">
+                            <span class="material-icons more_vert" aria-hidden="true"></span>
                         </button>
                     </div>
                 }
@@ -372,6 +383,7 @@
     protected override void OnInitialized()
     {
         Shell.SetTransparentHeader(true);
+        Backdrops.Clear();
         Playback.Event += OnPlaybackEvent;
         Playback.PlaybackStopped += OnPlaybackStopped;
         AppHost.LayoutChanged += Refresh;
@@ -385,6 +397,7 @@
         Playback.PlaybackStopped -= OnPlaybackStopped;
         AppHost.LayoutChanged -= Refresh;
         Globalize.LanguageChanged -= Refresh;
+        Backdrops.Clear();
     }
 
     /// <summary>Port of cardBuilder.getDefaultBackgroundClass(): a colour chosen by the name.</summary>
@@ -481,6 +494,23 @@
 
     private void Refresh() => _ = InvokeAsync(StateHasChanged);
 
+    private async Task SavePlaylistAsync()
+    {
+        var ids = Playback.GetPlaylist()
+            .Where(entry => entry.Id is not null && !string.IsNullOrEmpty(entry.ServerId))
+            .Select(entry => entry.Id!.Value.ToString("N"))
+            .ToList();
+        if (ids.Count > 0)
+        {
+            await PlaylistEditor.ShowAsync(Dialogs, ids, enableAddToPlayQueue: false, defaultValue: "new");
+        }
+    }
+
+    private Task ShowItemContextMenuAsync(BaseItemDto entry) => ItemActions.ShowContextMenuAsync(entry, new ItemActionContext
+    {
+        ConfigureMenu = options => options with { StopPlayback = true, ClearQueue = true }
+    });
+
     private string PositionBubbleText(double value) =>
         RuntimeTicks is { } runtime ? Text.RunningTime((long)(runtime / 100d * value)) : "--:--";
 
@@ -572,25 +602,14 @@
 
     private async Task ShowContextMenuAsync()
     {
-        // PORT-TODO(playback): the full item context menu belongs to the shared item components;
-        // only the two entries this page adds to it are offered here.
-        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        if (Playback.CurrentItem is not { } item)
         {
-            Items =
-            [
-                new ActionSheetItem { Id = "stopPlayback", Name = Globalize["StopPlayback"], Icon = "stop" },
-                new ActionSheetItem { Id = "clearQueue", Name = Globalize["ClearQueue"], Icon = "clear_all" },
-            ],
-        });
-
-        switch (id)
-        {
-            case "stopPlayback":
-                await Playback.StopAsync();
-                break;
-            case "clearQueue":
-                Playback.ClearQueue();
-                break;
+            return;
         }
+
+        await ItemActions.ShowContextMenuAsync(item, new ItemActionContext
+        {
+            ConfigureMenu = options => options with { StopPlayback = true, ClearQueue = true }
+        });
     }
 }
