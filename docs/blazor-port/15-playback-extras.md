@@ -26,6 +26,15 @@ SendKey, PageUp/Down and ToggleContextMenu). Navigation focus scopes use the top
 or popover rather than legacy focuscontainer classes, which ported pages do not consistently have.
 DisplayMessage with TimeoutMs uses the existing toast duration, not a custom timeout.
 
+## Delivered: synced lyrics
+
+`/lyrics` loads the current audio item's lyrics from `/Audio/{id}/Lyrics`. Plain lyrics remain
+read-only; synced lines are classified from server ticks, autoscroll to the active line, pause-aware
+click/Enter/Space seeking, and resume playback when a seek was made while paused. Wheel, touch and
+arrow-key input temporarily suppresses automatic scrolling, while the small
+`wwwroot/js/playback/lyrics.js` module is limited to DOM scrolling and input listeners. The
+now-playing bar and `/queue` expose the lyrics action for audio items with lyrics.
+
 ### Extension points and deviations
 
 - Implement/register `IRemotePlayer` for another self-managing target; session-specific HTTP and
@@ -40,16 +49,16 @@ DisplayMessage with TimeoutMs uses the existing toast duration, not a custom tim
 
 ### Verification
 
-- `./dev check`: 1,886 tests pass, zero build warnings/errors (remote logic and bUnit interactions
+- `./dev check`: 1,890 tests pass, zero build warnings/errors (remote logic, lyrics timeline and bUnit interactions
   live in `tests/Jellyfin.Web.Tests/PlaybackExtras/`).
 - `./dev e2e playback_extras.py`: two isolated browser contexts select a target and start audio
   from the detail page, check remote pause/state, volume/mute, navigation, text and message, then
-  stop/disconnect. Desktop and 400px screenshots are inspected. This scenario does not use the
-  playback test hook.
+  stop/disconnect. It then temporarily uploads synced lyrics, checks autoscroll, click/keyboard
+  seeking and desktop/400px layouts, and restores the server state. Desktop and 400px screenshots
+  are inspected. This scenario does not use the playback test hook.
 
 ## Remaining priorities
 
-- `/lyrics`, its now-playing/queue buttons, synced scrolling and click-to-seek.
 - OSD media segments, subtitle offset/secondary subtitles, Live TV-specific controls, additional
   settings entries and the requested Playing/Ping policy (the original itself sends no such ping).
 - Remove `PlaybackTestHook`/`testCommand` and rewrite the older `e2e/playback.py` around public UI.

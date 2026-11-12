@@ -136,8 +136,8 @@ Remove the hook once item pages have play buttons and the script can click them.
 
 Marked in the code with `// PORT-TODO(playback): …`.
 
-- Session remote control is now ported; see `15-playback-extras.md`. Cast/AirPlay, SyncPlay (also its OSD icon and statistics category),
-  lyrics, live TV specifics of the OSD (programme info, record button), media segments (skip
+- Session remote control and synced lyrics are now ported; see `15-playback-extras.md`. Cast/AirPlay, SyncPlay (also its OSD icon and statistics category),
+  live TV specifics of the OSD (programme info, record button), media segments (skip
   intro), photo/book/PDF/YouTube players and with them remote trailers and items that are plain URLs.
 - ASS/SSA and PGS renderers, secondary subtitles, subtitle offset (settings entry and G/H keys),
   subtitle appearance settings.

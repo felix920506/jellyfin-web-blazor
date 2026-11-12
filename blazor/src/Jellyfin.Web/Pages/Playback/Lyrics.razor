@@ -1,0 +1,172 @@
+@attribute [Route("/lyrics")]
+@attribute [Access(AccessLevel.User)]
+@implements IAsyncDisposable
+@using Microsoft.JSInterop
+@inject PlaybackManager Playback
+@inject PlaybackLyrics Timeline
+@inject IPlaybackLyricsUi Ui
+@inject Globalize Globalize
+@inject AppRouter Router
+
+<Page Id="lyricPage" Class="lyricPage" Title="@Globalize["Lyrics"]">
+    <div>
+        <div class="lyricsContainer padded-bottom-page" dir="auto" @ref="_container">
+            @if (!_loading && _lines.Count == 0)
+            {
+                <h1>@Globalize["HeaderNoLyrics"]</h1>
+            }
+            @for (var i = 0; i < _lines.Count; i++)
+            {
+                var index = i;
+                var line = _lines[index];
+                <div class="@LineClass(index)" id="@($"lyricPosition{index}")" data-lyrictime="@line.Start"
+                     tabindex="@(_dynamic && line.Start.HasValue ? "0" : null)"
+                     role="@(_dynamic && line.Start.HasValue ? "button" : null)"
+                     @onclick="() => SeekLineAsync(index)" @onkeydown="e => OnLineKeyAsync(e, index)">@line.Text</div>
+            }
+        </div>
+    </div>
+</Page>
+
+@code {
+    private ElementReference _container;
+    private DotNetObjectReference<Lyrics>? _reference;
+    private IReadOnlyList<PlaybackLyricLine> _lines = [];
+    private Guid? _itemId;
+    private int _generation;
+    private int _current = -1;
+    private int? _scrollIndex;
+    private bool _smooth;
+    private bool _autoScroll = true;
+    private bool _dynamic;
+    private bool _loading;
+    private bool _disposed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Playback.Event += OnPlaybackEvent;
+        Playback.PlaybackStopped += OnStopped;
+        await UpdateItemAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _reference = DotNetObjectReference.Create(this);
+            await Ui.AttachAsync(_container, _reference);
+        }
+
+        if (_scrollIndex is { } index)
+        {
+            _scrollIndex = null;
+            await Ui.ScrollAsync(_container, index, _smooth);
+            _smooth = true;
+        }
+    }
+
+    private async Task UpdateItemAsync()
+    {
+        var item = Playback.CurrentItem;
+        if (item?.Id is not { } id)
+        {
+            Router.GoHome();
+            return;
+        }
+
+        if (_itemId == id)
+        {
+            UpdatePosition();
+            return;
+        }
+
+        _itemId = id;
+        var generation = ++_generation;
+        _lines = [];
+        _loading = true;
+        _current = -1;
+        _dynamic = false;
+        var lines = await Timeline.LoadAsync(id.ToString("N"));
+        if (_disposed || generation != _generation)
+        {
+            return;
+        }
+
+        _lines = lines;
+        _loading = false;
+        _dynamic = lines.Count > 0 && lines[0].Start.HasValue;
+        UpdatePosition();
+    }
+
+    private void UpdatePosition()
+    {
+        if (!_dynamic)
+        {
+            return;
+        }
+
+        var index = PlaybackLyrics.CurrentIndex(_lines, Playback.CurrentTimeTicks);
+        if (_current != index)
+        {
+            _current = index;
+            if (_autoScroll && index >= 0)
+            {
+                _scrollIndex = index;
+            }
+        }
+    }
+
+    private string LineClass(int index) => "lyricsLine" + (!_dynamic ? null : " dynamicLyric" +
+        (index < _current ? " pastLyric" : index > _current ? " futureLyric" : null));
+
+    private async Task SeekLineAsync(int index)
+    {
+        if (!_dynamic || _lines[index].Start is not { } ticks)
+        {
+            return;
+        }
+
+        _autoScroll = true;
+        _smooth = true;
+        await Playback.SeekAsync(ticks);
+        if (Playback.IsPaused)
+        {
+            await Playback.PlayPauseAsync();
+        }
+    }
+
+    private Task OnLineKeyAsync(KeyboardEventArgs e, int index) =>
+        e.Key is "Enter" or " " ? SeekLineAsync(index) : Task.CompletedTask;
+
+    [JSInvokable]
+    public void OnManualScroll() => _autoScroll = false;
+
+    private void OnPlaybackEvent(string name) => _ = InvokeAsync(async () =>
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        await UpdateItemAsync();
+        StateHasChanged();
+    });
+
+    private void OnStopped(PlaybackStoppedInfo info)
+    {
+        if (string.IsNullOrEmpty(info.NextMediaType))
+        {
+            Router.GoHome();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        _generation++;
+        Playback.Event -= OnPlaybackEvent;
+        Playback.PlaybackStopped -= OnStopped;
+        await Ui.DetachAsync(_container);
+        _reference?.Dispose();
+    }
+}

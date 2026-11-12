@@ -1,7 +1,7 @@
 @namespace Jellyfin.Web.Components
 @* The bar at the bottom of the screen while something plays in the background. Port of
    components/nowPlayingBar/nowPlayingBar.js with the original markup.
-   Not ported: the item context menu (only its playback entries are offered), lyrics, AirPlay. *@
+   Not ported: the item context menu (only its playback entries are offered), AirPlay. *@
 @attribute [ShellSlot(ShellSlot.Footer)]
 @implements IDisposable
 @inject PlaybackManager Playback
@@ -81,11 +81,12 @@
                                 Class="slider-medium-thumb nowPlayingBarVolumeSlider" Step="1" Value="Playback.Volume"
                                 OnInput="value => Playback.SetVolume((int)value)" OnChange="value => Playback.SetVolume((int)value)" />
 
-                @* PORT-TODO(playback): AirPlay and the lyrics page are not ported; their buttons stay hidden. *@
+                @* PORT-TODO(playback): AirPlay is not ported; its button stays hidden. *@
                 <button type="button" class="btnAirPlay mediaButton paper-icon-button-light hide" title="@Globalize["AirPlay"]">
                     <span class="material-icons airplay" aria-hidden="true"></span>
                 </button>
-                <button type="button" class="openLyricsButton mediaButton paper-icon-button-light hide" title="@Globalize["Lyrics"]">
+                <button type="button" class="openLyricsButton mediaButton paper-icon-button-light @(item.Type.ToApiString() == "Audio" && item.HasLyrics == true ? null : "hide")" title="@Globalize["Lyrics"]"
+                        @onclick='() => Router.Navigate("/lyrics")' @onclick:stopPropagation="true">
                     <span class="material-icons lyrics" style="top:0.1em" aria-hidden="true"></span>
                 </button>
 

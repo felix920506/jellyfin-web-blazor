@@ -6,6 +6,8 @@ Uses only the public UI to select a target and start/control playback; no Playba
 import json
 import sys
 import urllib.request
+import urllib.error
+import urllib.parse
 
 from playwright.sync_api import sync_playwright
 from lib import PASSWORD, SERVER, USER, finish, go, new_page, shot, sign_in
@@ -18,6 +20,68 @@ def media(page):
     }""")
 
 
+def lyrics_scenario(page, token, user_id, song):
+    """Temporarily add synced song lyrics, then restore the original (or absence)."""
+    url = f"{SERVER}/Audio/{song['Id']}/Lyrics?ApiKey={token}"
+    try:
+        original = json.load(urllib.request.urlopen(url))
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+        original = None
+    original_lines = (original or {}).get("Lyrics", [])
+    restore = "\n".join(
+        (f"[{int(line['Start'] // 600000000):02d}:{(line['Start'] / 10000000) % 60:06.3f}]" if "Start" in line else "")
+        + line.get("Text", "") for line in original_lines)
+    test_lyrics = "\n".join(f"[00:{i:02d}.00]Line {i:02d}: playback lyrics" for i in range(30))
+
+    def upload(text):
+        filename = song["Path"].rsplit("/", 1)[-1].rsplit(".", 1)[0] + ".lrc"
+        request = urllib.request.Request(url + "&fileName=" + urllib.parse.quote(filename), data=text.encode(),
+                                         headers={"Content-Type": "text/plain"}, method="POST")
+        urllib.request.urlopen(request).close()
+
+    try:
+        upload(test_lyrics)
+        go(page, f"/details?id={song['Id']}")
+        page.wait_for_selector(".btnPlay:not(.hide)")
+        page.locator(".btnPlay:not(.hide)").first.click()
+        page.wait_for_function("document.querySelector('audio')?.currentTime > 0.5")
+        go(page, "/queue")
+        page.wait_for_selector(".btnLyrics:not(.hide)")
+        page.click(".btnLyrics")
+        page.wait_for_selector("#lyricPage .dynamicLyric")
+        page.wait_for_function("document.querySelectorAll('.pastLyric').length > 0")
+        page.locator("#lyricPosition12").click()
+        page.wait_for_function("document.querySelector('audio')?.currentTime >= 12")
+        page.wait_for_function("document.activeElement?.id === 'lyricPosition12' || document.activeElement?.id === 'lyricPosition13'")
+        shot(page, "playback-extras-lyrics-desktop")
+        page.set_viewport_size({"width": 400, "height": 800})
+        page.wait_for_timeout(500)
+        shot(page, "playback-extras-lyrics-phone")
+        page.mouse.wheel(0, -500)
+        page.wait_for_timeout(400)
+        # Seek using keyboard activation; manual scrolling is re-enabled by an explicit seek.
+        page.locator("#lyricPosition5").focus()
+        page.keyboard.press("Enter")
+        page.wait_for_function("document.querySelector('audio')?.currentTime >= 5 && document.querySelector('audio')?.currentTime < 10")
+        print("ok   synced lyrics, autoscroll, click and keyboard seek, phone layout")
+        page.set_viewport_size({"width": 1366, "height": 768})
+        go(page, "/queue")
+        page.wait_for_selector(".btnLyrics:not(.hide)")
+        page.click(".btnLyrics")
+        page.wait_for_selector("#lyricPage")
+        go(page, "/queue")
+        page.wait_for_selector(".btnStop:visible")
+        page.click(".btnStop")
+        page.wait_for_function("!document.querySelector('audio')?.getAttribute('src')")
+    finally:
+        if original_lines:
+            upload(restore)
+        else:
+            urllib.request.urlopen(urllib.request.Request(url, method="DELETE")).close()
+
+
 def main():
     request = urllib.request.Request(SERVER + "/Users/AuthenticateByName",
         data=json.dumps({"Username": USER, "Pw": PASSWORD}).encode(),
@@ -26,8 +90,10 @@ def main():
     auth = json.load(urllib.request.urlopen(request))
     token, user_id = auth["AccessToken"], auth["User"]["Id"]
     songs = json.load(urllib.request.urlopen(
-        f"{SERVER}/Items?UserId={user_id}&Recursive=true&IncludeItemTypes=Audio&ApiKey={token}"))["Items"]
+        f"{SERVER}/Items?UserId={user_id}&Recursive=true&IncludeItemTypes=Audio&Fields=Path&ApiKey={token}"))["Items"]
     song = next(s for s in songs if s.get("Album") == "First Album")
+    saved_data = {s["Id"]: json.load(urllib.request.urlopen(
+        f"{SERVER}/Users/{user_id}/Items/{s['Id']}?ApiKey={token}"))["UserData"] for s in songs}
     with sync_playwright() as p:
         browser = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
         controller = new_page(browser)
@@ -90,9 +156,19 @@ def main():
             controller.click(".jf-remote-play-disconnect")
             controller.wait_for_selector(".jf-remote-play-button:not(.jf-remote-play-button-active)")
             print("ok   stop and disconnect")
+            lyrics_scenario(controller, token, user_id, song)
             return max(finish(controller, "remote controller"), finish(target, "remote target"))
         finally:
             browser.close()
+            for item_id, data in saved_data.items():
+                body = {key: data.get(key, False if key in ("Played", "IsFavorite") else 0)
+                        for key in ("Played", "IsFavorite", "PlaybackPositionTicks", "PlayCount")}
+                if data.get("LastPlayedDate"):
+                    body["LastPlayedDate"] = data["LastPlayedDate"]
+                request = urllib.request.Request(
+                    f"{SERVER}/UserItems/{item_id}/UserData?UserId={user_id}&ApiKey={token}",
+                    data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+                urllib.request.urlopen(request).close()
 
 
 if __name__ == "__main__":

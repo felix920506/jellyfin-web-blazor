@@ -200,8 +200,7 @@
                                 title="@Globalize["ButtonFullscreen"]" @onclick="Playback.ToggleFullscreen">
                             <span class="material-icons fullscreen" aria-hidden="true"></span>
                         </button>
-                        @* PORT-TODO(playback): the lyrics page is not ported; the button stays hidden. *@
-                        <button type="button" class="btnLyrics autoSize paper-icon-button-light hide" title="@Globalize["Lyrics"]">
+                        <button type="button" class="btnLyrics autoSize paper-icon-button-light @(type == "Audio" && !mobile ? null : "hide")" title="@Globalize["Lyrics"]" @onclick='() => Router.Navigate("/lyrics")'>
                             <span class="material-icons lyrics" style="top:0.05em" aria-hidden="true"></span>
                         </button>
                         <button type="button" class="btnShuffleQueue autoSize paper-icon-button-light @(shuffled ? "buttonActive" : null) @(showSecondaryToggles ? null : "hide")"
