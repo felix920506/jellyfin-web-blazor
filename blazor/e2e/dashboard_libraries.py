@@ -183,10 +183,17 @@ def library_lifecycle(page, token):
     page.locator(".jf-dashboard-library-rename").click()
     page.fill("#jf-dashboard-dialog-input", "E2E Renamed")
     page.locator(".jf-dashboard-dialog-form button[type=submit]").click()
+    page.wait_for_selector(".jf-dashboard-dialog-form", state="detached")
     page.wait_for_selector('[data-name="E2E Renamed"]')
     assert any(item.get("Name") == "E2E Renamed" for item in api(page, "GET", "/Library/VirtualFolders", token).json())
 
     card = page.locator('[data-name="E2E Renamed"]')
+    card.wait_for(state="visible")
+    page.wait_for_function("""name => {
+        const card = document.querySelector(`[data-name="${name}"]`);
+        return card && card.querySelector('.jf-dashboard-library-menu button') &&
+            !card.querySelector('.mud-progress-circular');
+    }""", arg="E2E Renamed")
     card.locator(".jf-dashboard-library-menu button").click()
     page.locator(".jf-dashboard-library-manage").click()
     page.wait_for_selector(".dlg-libraryeditor")
