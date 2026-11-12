@@ -35,9 +35,11 @@ unchanged.
 
 ## Tests and browser coverage
 
-- bUnit: `tests/Jellyfin.Web.Tests/DashboardLiveTv/DashboardLiveTvTests.razor` and
-  `tests/Jellyfin.Web.Tests/Metadata/MetadataTests.razor` cover payload and parsing rules, DVR
-  saving, reset endpoint construction, tree item labels and manager startup.
+- bUnit: the Live TV tests cover tuner visibility and payloads, XMLTV validation, Schedules Direct
+  country shaping, channel mapping, DVR padding, reset endpoint construction and manager startup.
+  Metadata tests cover lazy media/Live TV roots, selected ancestors, tree labels, embedded versus
+  dialog editor headers, and editor reloads. The existing metadata-editor suite also continues to
+  cover its full field visibility and save payload contract.
 - Browser: `e2e/dashboard_livetv.py` is intended for the private `livetvadmin` server. Create
   `/media/livetv-e2e.m3u` and `/media/livetv-e2e.xml` in that instance before running it, then
   reset the instance immediately afterwards. `e2e/metadata.py` is safe against the shared server
@@ -58,3 +60,9 @@ server. The test server has no hardware tuner; the Live TV browser test uses M3U
 - The tuner reset request is ported as `POST /LiveTv/Tuners/{id}/Reset`; the original client
   exposes this API but has no dashboard control for it. The port exposes it from the tuner card
   menu for complete administration.
+- The port uses MudBlazor controls for the DVR page and Razor-rendered controls elsewhere instead
+  of the original jQuery widgets. Labels, visibility rules, confirmation text, request paths and
+  JSON members are retained; minor typography and popup positioning can therefore differ.
+- The browser Live TV test creates its fixtures after the private server starts. This is required
+  because the test-server seed step may recreate the mounted media directory; it is test setup,
+  not a product deviation.
