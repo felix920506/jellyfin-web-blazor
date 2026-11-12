@@ -11,4 +11,10 @@ Everything runs in Docker through `./dev` (run it without arguments for the comm
 scripts/test-server.sh up   # a throwaway Jellyfin server with sample media on http://localhost:18096 (admin / jellyfin)
 ./dev serve                 # the app on http://localhost:5080
 ./dev e2e smoke.py          # browser smoke test (Playwright in Docker)
+./dev e2e --publish smoke.py # smoke test the trimmed publish output
+./dev image                 # build jellyfin-web-blazor:local (nginx on port 8080)
 ```
+
+The production image serves the hash-routed static app on port 8080. `index.html` and
+`config.json` are not cached; fingerprinted framework files are served with immutable cache
+headers and the precompressed Brotli/gzip assets are selected from `Accept-Encoding`.

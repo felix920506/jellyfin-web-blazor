@@ -1,0 +1,24 @@
+name: Blazor WebAssembly port
+
+on:
+  pull_request:
+    paths:
+      - 'blazor/**'
+      - '.github/workflows/blazor.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check-and-publish:
+    name: Blazor check and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Build and test
+        working-directory: blazor
+        run: ./dev check
+      - name: Verify release publish
+        working-directory: blazor
+        run: ./dev publish

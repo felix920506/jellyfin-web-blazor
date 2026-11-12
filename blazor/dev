@@ -7,8 +7,9 @@
 #   ./dev prepare          compile SCSS, copy strings/assets, fetch vendor libs
 #   ./dev serve            dev server on http://localhost:${PORT:-5080} (foreground; `./dev stop` ends it)
 #   ./dev stop             stop the dev server started from this checkout with the same PORT
-#   ./dev e2e <script.py> [args]   serve the app, run a Playwright script from e2e/ against it, stop
+#   ./dev e2e [--publish] <script.py> [args]   serve the app (or publish output), run Playwright
 #   ./dev publish          release publish to blazor/artifacts/publish
+#   ./dev image            build the production container image
 #   ./dev api <type-rx> [member-rx]   look up SDK / MudBlazor API signatures
 #   ./dev dotnet <args>    arbitrary dotnet command
 #   ./dev sh [-c cmd]      shell in the toolchain container
@@ -61,15 +62,34 @@ do_publish() {
         -o artifacts/publish -nodeReuse:false -p:UseSharedCompilation=false "$@"
 }
 
+do_image() {
+    do_publish
+    docker build -t jellyfin-web-blazor:local -f "$BLAZOR_DIR/docker/Dockerfile" "$ROOT"
+}
+
 do_e2e() {
     local port="${E2E_PORT:-5090}" name="jfweb-e2e-serve"
+    local publish=false
+    if [ "${1:-}" = "--publish" ]; then
+        publish=true
+        shift
+    fi
     do_prepare
+    if $publish; then
+        do_publish
+    fi
     mkdir -p "$BLAZOR_DIR/artifacts"
     docker rm -f "$name" >/dev/null 2>&1 || true
     trap "docker rm -f '$name' >/dev/null 2>&1 || true" EXIT
-    run_in --name "$name" -p "$port:$port" -- dotnet run --project src/Jellyfin.Web --no-launch-profile \
-        --urls "http://0.0.0.0:$port" -p:UseSharedCompilation=false \
-        > "$BLAZOR_DIR/artifacts/e2e-serve.log" 2>&1 < /dev/null &
+    if $publish; then
+        run_in --name "$name" -p "$port:$port" -v "$BLAZOR_DIR/artifacts/publish/wwwroot:/site:ro" -- \
+            dotnet run --project scripts/StaticServer --no-launch-profile -- \
+            /site "http://0.0.0.0:$port" > "$BLAZOR_DIR/artifacts/e2e-serve.log" 2>&1 < /dev/null &
+    else
+        run_in --name "$name" -p "$port:$port" -- dotnet run --project src/Jellyfin.Web --no-launch-profile \
+            --urls "http://0.0.0.0:$port" -p:UseSharedCompilation=false \
+            > "$BLAZOR_DIR/artifacts/e2e-serve.log" 2>&1 < /dev/null &
+    fi
     local i
     for i in $(seq 1 240); do
         if curl -fs -o /dev/null "http://localhost:$port/"; then break; fi
@@ -88,7 +108,7 @@ if [ "${1:-}" = "__locked" ]; then shift; "$@"; exit $?; fi
 
 cmd="${1:-help}"; [ "$#" -gt 0 ] && shift
 case "$cmd" in
-    build|test|check|prepare|publish|e2e)
+    build|test|check|prepare|publish|e2e|image)
         ensure_image
         locked "$0" __locked "do_$cmd" "$@" ;;
     serve)
