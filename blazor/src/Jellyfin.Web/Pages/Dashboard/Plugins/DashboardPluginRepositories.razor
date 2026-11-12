@@ -1,0 +1,69 @@
+@attribute [Route("/dashboard/plugins/repositories")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject Globalize Globalize
+@inject AppDialogs Dialogs
+
+<Page Id="repositories" Title="@Globalize["TabRepositories"]" Class="mainAnimatedPage type-interior">
+    @if (_loading) { <DashboardLoading /> }
+    else
+    {
+        <div class="content-primary jf-dashboard-plugins">
+            @if (_failed) { <MudAlert Severity="Severity.Error">@Globalize["RepositoriesPageLoadError"]</MudAlert> }
+            else
+            {
+                <MudText Typo="Typo.h1">@Globalize["TabRepositories"]</MudText>
+                <MudButton Class="jf-dashboard-repository-add" Disabled="_busy" StartIcon="@MdIcon.Of("add")" OnClick="AddAsync">@Globalize["HeaderNewRepository"]</MudButton>
+                @if (_changeFailed) { <MudAlert Severity="Severity.Error">@Globalize["ErrorDefault"]</MudAlert> }
+                @if (_repositories.Count == 0)
+                {
+                    <div class="jf-dashboard-plugin-empty"><MudText Typo="Typo.h2">@Globalize["MessageNoRepositories"]</MudText><MudText>@Globalize["MessageAddRepository"]</MudText></div>
+                }
+                <MudPaper Class="jf-dashboard-plugin-list">
+                    @foreach (var repository in _repositories)
+                    {
+                        <div class="jf-dashboard-plugin-list-row" data-repository="@repository.Name">
+                            <MudIconButton Icon="@MdIcon.Of("open_in_new")" Href="@SafeUrl(repository.Url)" Target="_blank" rel="noopener noreferrer" aria-label="@repository.Name" />
+                            <div class="jf-dashboard-plugin-list-text"><MudText Typo="Typo.h3">@repository.Name</MudText><MudText>@repository.Url</MudText></div>
+                            <MudIconButton Icon="@MdIcon.Of("delete")" Class="jf-dashboard-repository-remove" Disabled="_busy" aria-label="@Globalize["ButtonRemove"]" OnClick="@(() => RemoveAsync(repository))" />
+                        </div>
+                    }
+                </MudPaper>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private List<RepositoryInfo> _repositories = [];
+    private bool _loading = true, _failed, _busy, _changeFailed;
+    private static string? SafeUrl(string? url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? url : null;
+    protected override async Task OnInitializedAsync()
+    {
+        try { _repositories = await Api.Client.Repositories.GetAsync() ?? []; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { AppLog.Warn("[Repositories] load failed: " + ex.Message); _failed = true; }
+        finally { _loading = false; }
+    }
+    private async Task AddAsync()
+    {
+        if (await Dialogs.ShowAsync<DashboardPluginRepositoryDialog>(options: DashboardDialogs.Options) is RepositoryInfo repository)
+            await SaveAsync([.. _repositories, repository]);
+    }
+    private async Task RemoveAsync(RepositoryInfo repository)
+    {
+        if (await Dialogs.MuiConfirmAsync(Globalize["ConfirmDeleteRepository"], Globalize["DeleteRepositoryConfirmation"], Globalize["Delete"], destructive: true))
+            await SaveAsync(_repositories.Where(r => r.Url != repository.Url).ToList());
+    }
+    private async Task SaveAsync(List<RepositoryInfo> repositories)
+    {
+        _busy = true; _changeFailed = false;
+        try
+        {
+            await Api.Client.Repositories.PostAsync(repositories);
+            _repositories = await Api.Client.Repositories.GetAsync() ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { AppLog.Warn("[Repositories] save failed: " + ex.Message); _changeFailed = true; }
+        finally { _busy = false; }
+    }
+}

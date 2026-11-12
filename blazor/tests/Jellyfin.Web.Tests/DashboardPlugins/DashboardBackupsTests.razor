@@ -1,0 +1,146 @@
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard.Backups
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private static object Backup(string path, int daysAgo = 0) => new { Path = path, DateCreated = Now.AddDays(-daysAgo), ServerVersion = "10.11.0", Options = new { Database = true, Metadata = true, Subtitles = false, Trickplay = true } };
+    private void Script()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Backup", new[] { Backup("old.zip", 1), Backup("new.zip") });
+        App.Server.OnGet("/ScheduledTasks", new[] { new { Id = "task", Name = "Scan library", State = "Idle", IsHidden = false } });
+    }
+    private IRenderedComponent<DashboardBackups> Page()
+    {
+        var cut = Render<DashboardBackups>();
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll(".jf-dashboard-backup-create")));
+        return cut;
+    }
+    private async Task OptionsAsync(IRenderedComponent<DialogHost> dialogs, IRenderedComponent<DashboardBackups> cut)
+    {
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-backup-create"));
+        Assert.True(Box(dialogs, "jf-dashboard-backup-database").HasAttribute("disabled"));
+        Assert.True(Box(dialogs, "jf-dashboard-backup-database").HasAttribute("checked"));
+    }
+
+    [Fact]
+    public async Task Backups_are_sorted_newest_first_and_details_show_options_and_copy_path()
+    {
+        Script(); var dialogs = this.RenderDialogs(); var cut = Page();
+        Assert.Equal(["new.zip", "old.zip"], cut.FindAll("[data-backup]").Select(e => e.GetAttribute("data-backup")));
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-backup-info"));
+        Assert.Contains("new.zip", dialogs.Markup, StringComparison.Ordinal);
+        Assert.Contains("10.11.0", dialogs.Markup, StringComparison.Ordinal);
+        Assert.True(Box(dialogs, "jf-dashboard-backup-metadata").HasAttribute("checked"));
+        Assert.False(Box(dialogs, "jf-dashboard-backup-subtitles").HasAttribute("checked"));
+        Assert.True(Box(dialogs, "jf-dashboard-backup-trickplay").HasAttribute("checked"));
+        Module.Setup<bool>("copyText", _ => true).SetResult(true);
+        await dialogs.Find(".jf-dashboard-backup-copy").ClickAsync(new MouseEventArgs());
+        await ConfirmDialogAsync(dialogs);
+        Assert.Empty(this.Dialogs().Dialogs);
+    }
+
+    [Fact]
+    public void Empty_backups_keep_create_action_and_failed_list_shows_error()
+    {
+        Script(); App.Server.OnGet("/Backup", Array.Empty<object>());
+        var cut = Page(); Assert.Empty(cut.FindAll("[data-backup]")); cut.Dispose();
+        App.Server.On(HttpMethod.Get, "/Backup", _ => FakeHttp.Status(System.Net.HttpStatusCode.InternalServerError));
+        var failed = Render<DashboardBackups>();
+        failed.Eventually(() => Assert.Contains(this.T("BackupsPageLoadError"), failed.Markup, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Creation_options_default_false_and_database_is_not_sent()
+    {
+        Script(); App.Server.OnPost("/Backup/Create", Backup("created.zip"));
+        var dialogs = this.RenderDialogs(); var cut = Page();
+        await OptionsAsync(dialogs, cut);
+        Assert.False(Box(dialogs, "jf-dashboard-backup-metadata").HasAttribute("checked"));
+        Assert.False(Box(dialogs, "jf-dashboard-backup-subtitles").HasAttribute("checked"));
+        Assert.False(Box(dialogs, "jf-dashboard-backup-trickplay").HasAttribute("checked"));
+        await Box(dialogs, "jf-dashboard-backup-metadata").ChangeAsync(new ChangeEventArgs { Value = true });
+        await Box(dialogs, "jf-dashboard-backup-trickplay").ChangeAsync(new ChangeEventArgs { Value = true });
+        App.Server.OnGet("/Backup", new[] { Backup("created.zip") });
+        await ConfirmDialogAsync(dialogs);
+        cut.Eventually(() => Assert.Equal("created.zip", cut.Find("[data-backup]").GetAttribute("data-backup")));
+        var body = Assert.Single(BodiesTo("/Backup/Create"));
+        Assert.True(body.GetProperty("Metadata").GetBoolean());
+        Assert.False(body.GetProperty("Subtitles").GetBoolean());
+        Assert.True(body.GetProperty("Trickplay").GetBoolean());
+        Assert.False(body.TryGetProperty("Database", out _));
+    }
+
+    [Fact]
+    public async Task Cancelling_options_never_creates_backup()
+    {
+        Script(); var dialogs = this.RenderDialogs(); var cut = Page();
+        await OptionsAsync(dialogs, cut); await CancelDialogAsync(dialogs);
+        Assert.Empty(BodiesTo("/Backup/Create"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Live_running_tasks_warn_before_creation_and_cancellation_is_safe(bool confirm)
+    {
+        Script(); App.Server.OnPost("/Backup/Create", Backup("created.zip"));
+        var dialogs = this.RenderDialogs(); var cut = Page();
+        Push("ScheduledTasksInfo", new[] { new { Name = "Live scan", State = "Running", IsHidden = false } });
+        await OptionsAsync(dialogs, cut); await ConfirmDialogAsync(dialogs);
+        dialogs.Eventually(() => Assert.Contains(this.T("HeaderBackupWarning"), dialogs.Markup, StringComparison.Ordinal));
+        Assert.Contains("Live scan", dialogs.Markup, StringComparison.Ordinal);
+        Assert.Empty(BodiesTo("/Backup/Create"));
+        if (confirm) { await ConfirmDialogAsync(dialogs); cut.Eventually(() => Assert.Single(BodiesTo("/Backup/Create"))); }
+        else { await CancelDialogAsync(dialogs); Assert.Empty(BodiesTo("/Backup/Create")); }
+    }
+
+    [Fact]
+    public async Task Create_failure_closes_progress_and_reports_unknown_error()
+    {
+        Script(); var dialogs = this.RenderDialogs(); var cut = Page();
+        await OptionsAsync(dialogs, cut); await ConfirmDialogAsync(dialogs);
+        dialogs.Eventually(() => Assert.Contains(this.T("UnknownError"), dialogs.Markup, StringComparison.Ordinal));
+        Assert.Empty(dialogs.FindAll("[role=status]"));
+        Assert.Equal(2, cut.FindAll("[data-backup]").Count);
+        await ConfirmDialogAsync(dialogs);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Restore_cancel_is_safe_and_failure_is_visible(bool confirm)
+    {
+        Script(); var dialogs = this.RenderDialogs(); var cut = Page();
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-backup-restore"));
+        Assert.Contains(this.T("MessageRestoreDisclaimer"), dialogs.Find(".jf-dashboard-dialog-text").TextContent, StringComparison.Ordinal);
+        if (!confirm) { await CancelDialogAsync(dialogs); Assert.Empty(BodiesTo("/Backup/Restore")); return; }
+        await ConfirmDialogAsync(dialogs);
+        dialogs.Eventually(() => Assert.Contains(this.T("UnknownError"), dialogs.Markup, StringComparison.Ordinal));
+        Assert.Equal("new.zip", Assert.Single(BodiesTo("/Backup/Restore")).GetProperty("ArchiveFileName").GetString());
+        await ConfirmDialogAsync(dialogs);
+    }
+
+    [Fact]
+    public async Task Restore_waits_for_server_then_reports_success_and_reloads()
+    {
+        Script(); App.Server.OnPost("/Backup/Restore");
+        var probes = 0;
+        App.Server.On(HttpMethod.Get, "/System/Info/Public", _ => ++probes < 2
+            ? FakeHttp.Status(System.Net.HttpStatusCode.ServiceUnavailable)
+            : FakeHttp.Json(new { Id = "server", Version = "10.11.0" }));
+        var dialogs = this.RenderDialogs(); var cut = Page();
+        cut.Instance.RestoreCheckInterval = TimeSpan.FromMilliseconds(10);
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-backup-restore"));
+        await this.Settle(() => ConfirmDialogAsync(dialogs));
+        dialogs.Eventually(() => Assert.Contains(this.T("MessageRestoreSuccess"), dialogs.Markup, StringComparison.Ordinal));
+        Assert.True(probes >= 2);
+        Assert.Equal(2, App.Server.RequestsTo("/Backup").Count);
+        await ConfirmDialogAsync(dialogs);
+    }
+}

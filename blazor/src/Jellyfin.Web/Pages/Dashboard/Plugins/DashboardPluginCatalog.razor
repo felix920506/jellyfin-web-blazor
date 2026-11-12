@@ -1,0 +1,7 @@
+@attribute [Route("/dashboard/plugins/catalog")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject AppRouter Router
+@code {
+    protected override void OnInitialized() => Router.Navigate("/dashboard/plugins", replace: true);
+}

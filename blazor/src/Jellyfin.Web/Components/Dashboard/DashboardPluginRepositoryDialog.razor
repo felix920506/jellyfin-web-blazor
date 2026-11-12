@@ -1,0 +1,29 @@
+@namespace Jellyfin.Web.Components
+@inject Globalize Globalize
+
+<form class="jf-dashboard-dialog-form" @onsubmit="Submit" @onsubmit:preventDefault="true">
+    <h2 class="jf-dashboard-dialog-title">@Globalize["HeaderNewRepository"]</h2>
+    <div class="jf-dashboard-dialog-content jf-dashboard-plugin-dialog-fields">
+        <MudTextField T="string" @bind-Value="_name" Immediate="true" Required="true" Label="@Globalize["LabelRepositoryName"]" HelperText="@Globalize["LabelRepositoryNameHelp"]" InputId="jf-dashboard-repository-name" />
+        <MudTextField T="string" @bind-Value="_url" Immediate="true" InputType="InputType.Url" Label="@Globalize["LabelRepositoryUrl"]" HelperText="@Globalize["LabelRepositoryUrlHelp"]" InputId="jf-dashboard-repository-url" />
+        @if (_invalid) { <MudAlert Severity="Severity.Error">@Globalize["LabelRepositoryUrlHelp"]</MudAlert> }
+    </div>
+    <div class="jf-dashboard-dialog-actions">
+        <MudButton data-id="cancel" OnClick="@(() => Dialog.Cancel())">@Globalize["ButtonCancel"]</MudButton>
+        <MudButton data-id="ok" ButtonType="ButtonType.Submit" Color="Color.Primary">@Globalize["Add"]</MudButton>
+    </div>
+</form>
+
+@code {
+    [CascadingParameter] public DialogInstance Dialog { get; set; } = default!;
+    private string? _name;
+    private string? _url;
+    private bool _invalid;
+    private void Submit()
+    {
+        if (string.IsNullOrWhiteSpace(_name)) { _invalid = true; return; }
+        // Like the original type=url input: an empty URL is permitted, an invalid nonempty URL is not.
+        if (!string.IsNullOrEmpty(_url) && !Uri.TryCreate(_url, UriKind.Absolute, out _)) { _invalid = true; return; }
+        Dialog.Close(new RepositoryInfo { Name = _name, Url = _url ?? string.Empty, Enabled = true });
+    }
+}

@@ -1,0 +1,113 @@
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard.Plugins
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private void Script() { SignIn(admin: true); App.Server.OnGet("/Repositories", new[] { new { Name = "Official", Url = "https://repo.jellyfin.org/manifest.json", Enabled = false } }); }
+    private IRenderedComponent<DashboardPluginRepositories> Page()
+    {
+        var cut = Render<DashboardPluginRepositories>();
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll(".jf-dashboard-repository-add")));
+        return cut;
+    }
+
+    [Fact]
+    public void List_and_empty_state_match_the_original()
+    {
+        Script();
+        var cut = Page();
+        Assert.Contains("Official", cut.Find(".jf-dashboard-plugin-list").TextContent, StringComparison.Ordinal);
+        Assert.Equal("https://repo.jellyfin.org/manifest.json", cut.Find("a").GetAttribute("href"));
+        cut.Dispose();
+        App.Server.OnGet("/Repositories", Array.Empty<object>());
+        var empty = Page();
+        Assert.Contains(this.T("MessageNoRepositories"), empty.Markup, StringComparison.Ordinal);
+        Assert.Contains(this.T("MessageAddRepository"), empty.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Failed_load_is_visible()
+    {
+        SignIn(admin: true);
+        var cut = Render<DashboardPluginRepositories>();
+        cut.Eventually(() => Assert.Contains(this.T("RepositoriesPageLoadError"), cut.Markup, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Add_validates_name_and_url_and_posts_whole_repository_list()
+    {
+        Script(); App.Server.OnPost("/Repositories");
+        var dialogs = this.RenderDialogs(); var cut = Page();
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-repository-add"));
+        await ConfirmDialogAsync(dialogs);
+        Assert.NotEmpty(dialogs.FindAll("#jf-dashboard-repository-name"));
+        await dialogs.Find("#jf-dashboard-repository-name").InputAsync(new ChangeEventArgs { Value = "Community" });
+        await dialogs.Find("#jf-dashboard-repository-url").InputAsync(new ChangeEventArgs { Value = "not a url" });
+        await ConfirmDialogAsync(dialogs);
+        Assert.Empty(BodiesTo("/Repositories"));
+        await dialogs.Find("#jf-dashboard-repository-url").InputAsync(new ChangeEventArgs { Value = "https://example.org/manifest.json" });
+        await ConfirmDialogAsync(dialogs);
+        cut.Eventually(() => Assert.Single(BodiesTo("/Repositories")));
+        var body = BodiesTo("/Repositories")[0];
+        Assert.Equal(2, body.GetArrayLength());
+        Assert.False(body[0].GetProperty("Enabled").GetBoolean());
+        Assert.Equal("Community", body[1].GetProperty("Name").GetString());
+        Assert.Equal("https://example.org/manifest.json", body[1].GetProperty("Url").GetString());
+        Assert.True(body[1].GetProperty("Enabled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Add_cancel_does_not_post()
+    {
+        Script(); var dialogs = this.RenderDialogs(); var cut = Page();
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-repository-add"));
+        await CancelDialogAsync(dialogs);
+        Assert.Empty(BodiesTo("/Repositories"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Remove_requires_confirmation_and_failure_keeps_existing_list(bool confirm)
+    {
+        Script(); var dialogs = this.RenderDialogs(); var cut = Page();
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-repository-remove"));
+        Assert.Contains(this.T("DeleteRepositoryConfirmation"), dialogs.Markup, StringComparison.Ordinal);
+        if (confirm)
+        {
+            await ConfirmDialogAsync(dialogs);
+            cut.Eventually(() => Assert.NotEmpty(cut.FindAll(".mud-alert")));
+            Assert.Equal(0, Assert.Single(BodiesTo("/Repositories")).GetArrayLength());
+            Assert.Single(cut.FindAll("[data-repository]"));
+        }
+        else { await CancelDialogAsync(dialogs); Assert.Empty(BodiesTo("/Repositories")); }
+    }
+
+    [Fact]
+    public async Task Successful_remove_refreshes_the_list()
+    {
+        Script(); App.Server.OnPost("/Repositories");
+        var dialogs = this.RenderDialogs(); var cut = Page();
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-repository-remove"));
+        App.Server.OnGet("/Repositories", Array.Empty<object>());
+        await ConfirmDialogAsync(dialogs);
+        cut.Eventually(() => Assert.Empty(cut.FindAll("[data-repository]")));
+        Assert.Empty(cut.FindAll(".mud-alert"));
+    }
+
+    [Fact]
+    public async Task Failed_add_shows_error_without_inventing_a_saved_repository()
+    {
+        Script(); var dialogs = this.RenderDialogs(); var cut = Page();
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-repository-add"));
+        await dialogs.Find("#jf-dashboard-repository-name").InputAsync(new ChangeEventArgs { Value = "New" });
+        await ConfirmDialogAsync(dialogs);
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll(".mud-alert")));
+        Assert.Single(cut.FindAll("[data-repository]"));
+    }
+}

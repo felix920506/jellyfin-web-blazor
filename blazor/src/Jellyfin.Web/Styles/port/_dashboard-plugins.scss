@@ -1,0 +1,43 @@
+.jf-dashboard-plugins {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+}
+
+.jf-dashboard-plugin-heading {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    h1 { flex-grow: 1; }
+}
+
+.jf-dashboard-plugin-filters { display: flex; align-items: center; overflow-x: auto; white-space: nowrap; }
+.jf-dashboard-plugin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1rem; }
+.jf-dashboard-plugin-card { color: inherit; text-decoration: none; overflow: hidden; border-radius: var(--mud-default-borderradius); }
+.jf-dashboard-plugin-card-text { padding: 1rem; }
+.jf-dashboard-plugin-image { aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; background: var(--mud-palette-background-gray); overflow: hidden; }
+.jf-dashboard-plugin-image img { width: 100%; height: 100%; object-fit: cover; }
+.jf-dashboard-plugin-placeholder { width: 80px; height: 80px; font-size: 80px; }
+.jf-dashboard-plugin-empty { text-align: center; padding: 2rem 1rem; }
+.jf-dashboard-plugin-list-row { display: flex; gap: 1rem; align-items: center; padding: 1rem; }
+.jf-dashboard-plugin-list-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.jf-dashboard-plugin-dialog-fields { display: flex; flex-direction: column; gap: 1.5rem; }
+.jf-dashboard-plugin-details { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 2rem; }
+.jf-dashboard-plugin-description { display: flex; flex-direction: column; gap: 1rem; }
+.jf-dashboard-plugin-sidebar { display: flex; flex-direction: column; gap: 1rem; }
+.jf-dashboard-plugin-changelog { margin-bottom: 1rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jf-dashboard-plugin-info td { overflow-wrap: anywhere; }
+.jf-dashboard-backup-info { background: transparent; color: inherit; border: 0; text-align: start; cursor: pointer; padding: .5rem; }
+
+@media (max-width: 1199px) {
+    .jf-dashboard-plugin-details { grid-template-columns: minmax(0, 1fr); }
+    .jf-dashboard-plugin-details-image { display: none; }
+    .jf-dashboard-plugin-sidebar { grid-row: 2; }
+}
+@media (max-width: 599px) {
+    .jf-dashboard-plugin-grid { grid-template-columns: minmax(0, 1fr); }
+    .jf-dashboard-plugin-heading .mud-input-control { width: 100%; }
+    .jf-dashboard-plugin-list-row { padding: .5rem; gap: .5rem; }
+}

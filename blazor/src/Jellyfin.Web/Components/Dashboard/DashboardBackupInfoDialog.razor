@@ -1,0 +1,28 @@
+@namespace Jellyfin.Web.Components
+@inject Globalize Globalize
+@inject IDashboardInterop Interop
+@inject ToastService Toasts
+
+<form class="jf-dashboard-dialog-form" @onsubmit="@(() => Dialog.Close())" @onsubmit:preventDefault="true">
+    <h2 class="jf-dashboard-dialog-title">@DashboardFormat.DateTime(Globalize, Backup.DateCreated)</h2>
+    <div class="jf-dashboard-dialog-content">
+        <div class="jf-dashboard-plugin-list-row">
+            <strong>@Globalize["LabelPath"]</strong><span class="jf-dashboard-plugin-list-text">@Backup.Path</span>
+            <MudIconButton Icon="@MdIcon.Of("content_copy")" Class="jf-dashboard-backup-copy" aria-label="@Globalize["Copy"]" OnClick="CopyAsync" />
+        </div>
+        <MudText>@Globalize["LabelVersion"] @Backup.ServerVersion</MudText>
+        <MudCheckBox T="bool" Value="true" Disabled="true" Label="@Globalize["LabelDatabase"]" Class="jf-dashboard-backup-database" />
+        <MudCheckBox T="bool" Value="@(Backup.Options?.Metadata == true)" Disabled="true" Label="@Globalize["LabelMetadata"]" Class="jf-dashboard-backup-metadata" />
+        <MudCheckBox T="bool" Value="@(Backup.Options?.Subtitles == true)" Disabled="true" Label="@Globalize["Subtitles"]" Class="jf-dashboard-backup-subtitles" />
+        <MudCheckBox T="bool" Value="@(Backup.Options?.Trickplay == true)" Disabled="true" Label="@Globalize["Trickplay"]" Class="jf-dashboard-backup-trickplay" />
+    </div>
+    <div class="jf-dashboard-dialog-actions"><MudButton data-id="ok" ButtonType="ButtonType.Submit">@Globalize["ButtonOk"]</MudButton></div>
+</form>
+@code {
+    [CascadingParameter] public DialogInstance Dialog { get; set; } = default!;
+    [Parameter, EditorRequired] public BackupManifestDto Backup { get; set; } = default!;
+    private async Task CopyAsync()
+    {
+        if (Backup.Path is { Length: > 0 } path && await Interop.CopyTextAsync(path)) Toasts.Show(Globalize["Copied"]);
+    }
+}
