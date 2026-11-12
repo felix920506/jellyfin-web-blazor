@@ -82,6 +82,46 @@ public sealed record ActionSheetOptions
     public string? Title { get; init; }
     public string? Text { get; init; }
     public bool ShowCancel { get; init; }
+
+    /// <summary>
+    /// The element the sheet opens at (<c>positionTo</c>): its middle is put on the middle of the element and
+    /// kept inside the window. Null (the default) leaves the sheet in the middle of the window.
+    /// </summary>
+    public ActionSheetAnchor? PositionTo { get; init; }
+
+    /// <summary>"top" lines the sheet's middle up with the top edge of the anchor instead of its middle (<c>positionY</c>).</summary>
+    public string? PositionY { get; init; }
+
+    /// <summary>Pixels added to the computed position (<c>offsetLeft</c>).</summary>
+    public double OffsetLeft { get; init; }
+
+    /// <summary>Pixels added to the computed position (<c>offsetTop</c>).</summary>
+    public double OffsetTop { get; init; }
+
+    /// <summary>
+    /// Ids of items whose command must start inside the click itself (<c>resolveOnClick</c>), such as Web
+    /// Share. Kept for parity with the original: here <see cref="AppDialogs.ActionSheetAsync"/> completes
+    /// inside the click handler for every item, so nothing further depends on it.
+    /// </summary>
+    public IReadOnlyCollection<string>? ResolveOnClick { get; init; }
+}
+
+/// <summary>Where an action sheet opens (<c>positionTo</c> of <c>actionSheet.ts</c>).</summary>
+public sealed record ActionSheetAnchor
+{
+    private ActionSheetAnchor(ElementReference? element) => Element = element;
+
+    /// <summary>The element, or null for the element the user clicked last.</summary>
+    public ElementReference? Element { get; }
+
+    /// <summary>
+    /// The button or link the user clicked (or opened the context menu on) last: what
+    /// <c>shortcuts.js</c> passes for the menu of a card or list row.
+    /// </summary>
+    public static ActionSheetAnchor LastClicked { get; } = new((ElementReference?)null);
+
+    /// <summary>A given element, e.g. the <c>@ref</c> of the button that opens the menu.</summary>
+    public static ActionSheetAnchor At(ElementReference element) => new(element);
 }
 
 /// <summary>Options for a dialog opened with <see cref="AppDialogs.ShowAsync{TComponent}"/>.</summary>

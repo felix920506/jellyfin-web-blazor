@@ -1,0 +1,257 @@
+@namespace Jellyfin.Web.Components
+@* "Add to playlist" / "New playlist" / "Edit playlist". Port of components/playlisteditor/playlisteditor.ts. *@
+@using System.Text.Json.Nodes
+@inject ItemDialogApi Api
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+@inject AppRouter Router
+@inject UserViews UserViews
+@inject UserSettings UserSettings
+@inject IPlaybackManager Playback
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize[ItemIds.Count > 0 ? "HeaderAddToPlaylist" : IsEdit ? "HeaderEditPlaylist" : "HeaderNewPlaylist"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY" style="padding-top:2em;">
+    <div class="dialogContentInner dialog-content-centered">
+        <form style="margin:auto;" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <EditorSelect Id="selectPlaylistToAddTo" ContainerClass="fldSelectPlaylist" Hidden="@(ItemIds.Count == 0)" Label="@Globalize["LabelPlaylist"]"
+                          @bind-Value="_playlistId" autofocus="@(ItemIds.Count > 0)">
+                @if (_offerQueue)
+                {
+                    <option value="queue">@Globalize["AddToPlayQueue"]</option>
+                }
+                <option value="">@Globalize["OptionNew"]</option>
+                @foreach (var playlist in _playlists)
+                {
+                    <option value="@playlist.Id">@playlist.Name</option>
+                }
+            </EditorSelect>
+            <div class="@("newPlaylistInfo" + (IsNew && !_loading ? null : " hide"))">
+                <EditorInput Id="txtNewPlaylistName" Label="@Globalize["LabelName"]" Required="@IsNew" @bind-Value="_name" autofocus="@(ItemIds.Count == 0)" />
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <EmbyCheckbox Id="chkPlaylistPublic" Label="@Globalize["PlaylistPublic"]" @bind-Value="_isPublic" />
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["PlaylistPublicDescription"]</div>
+                </div>
+            </div>
+            <div class="formDialogFooter">
+                <button type="submit" class="emby-button raised btnSubmit block formDialogFooterItem button-submit">@Globalize[IsEdit ? "Save" : "Add"]</button>
+            </div>
+            <input type="hidden" class="fldSelectedItemIds" value="@string.Join(',', ItemIds)" />
+        </form>
+    </div>
+</div>
+
+@code {
+    private const string LastPlaylistSetting = "playlisteditor-lastplaylistid";
+
+    private readonly List<(string Id, string Name)> _playlists = [];
+    private string? _playlistId = string.Empty;
+    private string? _name;
+    private bool _isPublic;
+    private bool _offerQueue;
+    private bool _loading;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The ids of the items to add to a playlist (<c>items</c>).</summary>
+    [Parameter]
+    public IReadOnlyList<string> ItemIds { get; set; } = [];
+
+    /// <summary>The playlist to edit when there are no items (<c>id</c>).</summary>
+    [Parameter]
+    public string? PlaylistId { get; set; }
+
+    /// <summary>False keeps "Add to play queue" out of the list even while something plays (<c>enableAddToPlayQueue</c>).</summary>
+    [Parameter]
+    public bool EnableAddToPlayQueue { get; set; } = true;
+
+    /// <summary>The playlist selected at first instead of the one used last; "new" for a new playlist (<c>defaultValue</c>).</summary>
+    [Parameter]
+    public string? DefaultValue { get; set; }
+
+    private bool IsEdit => ItemIds.Count == 0 && !string.IsNullOrEmpty(PlaylistId);
+
+    private bool IsNew => string.IsNullOrEmpty(_playlistId);
+
+    /// <summary>
+    /// Adds items to a playlist, the play queue or a new playlist
+    /// (<c>new PlaylistEditor().show({ items, serverId })</c>). True when submitted.
+    /// </summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, IReadOnlyList<string> itemIds, bool enableAddToPlayQueue = true, string? defaultValue = null) =>
+        await dialogs.ShowAsync<PlaylistEditor>(new Dictionary<string, object?>
+        {
+            [nameof(ItemIds)] = itemIds,
+            [nameof(EnableAddToPlayQueue)] = enableAddToPlayQueue,
+            [nameof(DefaultValue)] = defaultValue
+        }) is true;
+
+    /// <summary>Edits the name and public access of a playlist (<c>show({ id, serverId })</c>). True when saved.</summary>
+    public static async Task<bool> ShowEditAsync(AppDialogs dialogs, string playlistId) =>
+        await dialogs.ShowAsync<PlaylistEditor>(new Dictionary<string, object?> { [nameof(PlaylistId)] = playlistId }) is true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (ItemIds.Count > 0)
+        {
+            _loading = true;
+            Loading.Show();
+            try
+            {
+                await PopulatePlaylistsAsync();
+            }
+            catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+            {
+                AppLog.Warn("Loading the playlists failed: " + exception.Message);
+            }
+            finally
+            {
+                _loading = false;
+                Loading.Hide();
+            }
+        }
+        else if (IsEdit)
+        {
+            try
+            {
+                var item = Api.GetObjectAsync($"Items/{PlaylistId}");
+                var playlist = Api.GetObjectAsync($"Playlists/{PlaylistId}");
+                _name = (await item).Text("Name") ?? string.Empty;
+                _isPublic = (await playlist).Flag("OpenAccess");
+            }
+            catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+            {
+                AppLog.Warn("Loading the playlist failed: " + exception.Message);
+            }
+        }
+    }
+
+    private async Task PopulatePlaylistsAsync()
+    {
+        var result = await Api.GetAsync(
+            "Items",
+            ("userId", Api.UserId),
+            ("includeItemTypes", "Playlist"),
+            ("sortBy", "SortName"),
+            ("recursive", true),
+            ("enableUserData", false));
+
+        var playlists = result.List("Items");
+        var permissions = await Task.WhenAll(playlists.Select(playlist => CanEditAsync(playlist.Text("Id"))));
+        for (var i = 0; i < playlists.Count; i++)
+        {
+            if (permissions[i])
+            {
+                _playlists.Add((playlists[i].Text("Id") ?? string.Empty, playlists[i].Text("Name") ?? string.Empty));
+            }
+        }
+
+        // PORT-TODO(itemdialogs): the original also offers the queue while a SyncPlay group is active; SyncPlay is not ported.
+        _offerQueue = EnableAddToPlayQueue && Playback.IsPlaying;
+
+        var defaultValue = string.IsNullOrEmpty(DefaultValue) ? UserSettings.Get(LastPlaylistSetting) ?? string.Empty : DefaultValue;
+        if (defaultValue == "new")
+        {
+            defaultValue = string.Empty;
+        }
+
+        // A playlist used last that is gone, or the queue when nothing plays, falls back to "New".
+        var known = _playlists.Any(playlist => playlist.Id == defaultValue) || (defaultValue == "queue" && _offerQueue);
+        _playlistId = known ? defaultValue : string.Empty;
+    }
+
+    private async Task<bool> CanEditAsync(string? playlistId)
+    {
+        if (string.IsNullOrEmpty(playlistId) || string.IsNullOrEmpty(Api.UserId))
+        {
+            return false;
+        }
+
+        try
+        {
+            return (await Api.GetObjectAsync($"Playlists/{playlistId}/Users/{Api.UserId}")).Flag("CanEdit");
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            // A playlist the user has no access to answers with 404.
+            return false;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        Loading.Show();
+        var failure = "PlaylistError.CreateFailed";
+        try
+        {
+            if (!IsNew)
+            {
+                failure = "PlaylistError.AddFailed";
+                UserSettings.Set(LastPlaylistSetting, _playlistId);
+                await AddToPlaylistAsync(_playlistId!);
+            }
+            else if (IsEdit)
+            {
+                failure = "PlaylistError.UpdateFailed";
+                if (string.IsNullOrWhiteSpace(_name))
+                {
+                    throw new HttpRequestException("Playlist name should not be blank");
+                }
+
+                await Api.PostAsync(Api.GetUrl($"Playlists/{PlaylistId}"), new JsonObject { ["Name"] = _name, ["IsPublic"] = _isPublic });
+                Dialog.Close(true);
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(_name))
+                {
+                    throw new HttpRequestException("Playlist name should not be blank");
+                }
+
+                var body = new JsonObject { ["Name"] = _name, ["IsPublic"] = _isPublic };
+                if (ItemIds.Count > 0)
+                {
+                    body["Ids"] = new JsonArray([.. ItemIds.Select(id => (JsonNode?)id)]);
+                }
+
+                body["UserId"] = Api.UserId;
+                var created = await Api.PostAsync(Api.GetUrl("Playlists"), body);
+                Dialog.Close(true);
+
+                // The playlists view only exists once there is a playlist.
+                UserViews.Invalidate();
+                if (created.Text("Id") is { Length: > 0 } id)
+                {
+                    Router.ShowItem(id);
+                }
+            }
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Saving the playlist failed: " + exception.Message);
+            Toasts.Show(Globalize.Translate(failure));
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    private async Task AddToPlaylistAsync(string playlistId)
+    {
+        if (playlistId == "queue")
+        {
+            Dialog.Close(true);
+            await Playback.QueueAsync(new PlayOptions { Ids = [.. ItemIds] });
+            return;
+        }
+
+        // The SDK repeats the parameter for every id.
+        var ids = string.Concat(ItemIds.Select(id => "ids=" + Uri.EscapeDataString(id) + "&"));
+        await Api.PostAsync(Api.GetUrl($"Playlists/{playlistId}/Items") + "?" + ids + "userId=" + Api.UserId);
+        Dialog.Close(true);
+    }
+}

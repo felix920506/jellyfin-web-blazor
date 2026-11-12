@@ -1,0 +1,619 @@
+@namespace Jellyfin.Web.Components
+@* The metadata editor. Port of components/metadataEditor/metadataEditor.js and its template. *@
+@using System.Text.Json.Nodes
+@inject ItemDialogApi Api
+@inject JellyfinApi JellyfinApi
+@inject AppDialogs Dialogs
+@inject AppHost AppHost
+@inject AppRouter Router
+@inject ItemContextMenu ContextMenu
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="@("btnCancel btnBack autoSize" + (IsDesktop ? " hide" : null))" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["Edit"]</h3>
+    <div class="dialogHeader flex align-items-center justify-content-center">
+        <button @ref="_btnMore" type="button" class="paper-icon-button-light btnMore autoSize" tabindex="-1" title="@Globalize["ButtonMore"]"
+                aria-label="@Globalize["ButtonMore"]" @onclick="ShowMoreMenuAsync">
+            <Icon Name="more_vert" />
+        </button>
+        <IconButton Icon="close" Class="@("btnCancel btnClose autoSize" + (IsDesktop ? null : " hide"))" Title="@Globalize["ButtonClose"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    </div>
+</div>
+
+<div class="formDialogContent smoothScrollY" style="padding-top:2em;">
+    <form class="editItemMetadataForm editMetadataForm dialogContentInner dialog-content-centered" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+        <div class="metadataFormFields">
+            <div style="padding: 0 0 10px;">
+                <EditorSelect Id="selectContentType" ContainerId="fldContentType" Hidden="@(_contentTypes.Count == 0)" Label="@Globalize["LabelContentType"]" @bind-Value="_contentType">
+                    @foreach (var option in _contentTypes)
+                    {
+                        <option value="@option.Text("Value")">@option.Text("Name")</option>
+                    }
+                </EditorSelect>
+                <div id="fldPath" class="@Css("inputContainer", "fldPath")">
+                    <div class="align-items-center flex">
+                        <div class="flex-grow">
+                            <label class="inputLabel inputLabelUnfocused" for="txtPath">@Globalize["LabelPath"]</label>
+                            <input id="txtPath" type="text" class="emby-input flex-grow" readonly dir="ltr" value="@Field("txtPath")" />
+                        </div>
+                    </div>
+                </div>
+                <EditorInput Id="txtName" Store="_fields" Label="@Label("txtName")" Required="true" />
+                <EditorInput Id="txtOriginalName" Store="_fields" ContainerId="fldOriginalName" Hidden="@Hides("fldOriginalName")" Label="@Label("txtOriginalName")" />
+                <EditorSelect Id="selectOriginalLanguage" Store="_fields" ContainerId="fldOriginalLanguage" Hidden="@Hides("fldOriginalLanguage")" Label="@Globalize["LabelOriginalLanguage"]">
+                    <option value=""></option>
+                    @foreach (var culture in _info.List("Cultures"))
+                    {
+                        <option value="@culture.Text("TwoLetterISOLanguageName")">@culture.Text("DisplayName")</option>
+                    }
+                </EditorSelect>
+                <EditorInput Id="txtSortName" Store="_fields" Label="@Label("txtSortName")" />
+                <EditorInput Id="txtDateAdded" Store="_fields" Type="date" ContainerId="fldDateAdded" Hidden="@Hides("fldDateAdded")" Label="@Globalize["LabelDateAdded"]"
+                             Description="@Globalize["ConfigureDateAdded"]" />
+                <EditorSelect Id="selectStatus" Store="_fields" ContainerId="fldStatus" Hidden="@Hides("fldStatus")" Label="@Globalize["LabelStatus"]">
+                    <option value=""></option>
+                    <option value="Continuing">@Globalize["Continuing"]</option>
+                    <option value="Ended">@Globalize["Ended"]</option>
+                    <option value="Unreleased">@Globalize["Unreleased"]</option>
+                </EditorSelect>
+                <EditorInput Id="txtArtist" Store="_fields" ContainerId="fldArtist" Hidden="@Hides("fldArtist")" Label="@Globalize["LabelArtists"]"
+                             Description="@Globalize["LabelArtistsHelp"]" />
+                <EditorInput Id="txtAlbumArtist" Store="_fields" ContainerId="fldAlbumArtist" Hidden="@Hides("fldAlbumArtist")" Label="@Globalize["LabelAlbumArtists"]"
+                             Description="@Globalize["LabelArtistsHelp"]" />
+                <EditorInput Id="txtseriesName" Store="_fields" ContainerId="seriesName" Hidden="@Hides("seriesName")" Label="@Globalize["SeriesName"]"
+                             aria-label="@Globalize["SeriesName"]" />
+                <EditorInput Id="txtAlbum" Store="_fields" ContainerId="fldAlbum" Hidden="@Hides("fldAlbum")" Label="@Globalize["LabelAlbum"]" />
+                <div class="inlineForm">
+                    <EditorInput Id="txtParentIndexNumber" Store="_fields" Type="number" ContainerId="fldParentIndexNumber" Hidden="@Hides("fldParentIndexNumber")"
+                                 Label="@Label("txtParentIndexNumber")" />
+                    <EditorInput Id="txtIndexNumber" Store="_fields" Type="number" ContainerId="fldIndexNumber" Hidden="@Hides("fldIndexNumber")"
+                                 Label="@Label("txtIndexNumber")" pattern="[0-9]*" />
+                </div>
+                <EditorInput Id="txtCommunityRating" Store="_fields" Type="number" ContainerId="fldCommunityRating" Hidden="@Hides("fldCommunityRating")"
+                             Label="@Globalize["LabelCommunityRating"]" step="any" min="0" max="10" />
+                <EditorInput Id="txtCriticRating" Store="_fields" Type="number" ContainerId="fldCriticRating" Hidden="@Hides("fldCriticRating")"
+                             Label="@Globalize["LabelCriticRating"]" step=".1" />
+                <EditorInput Id="txtTagline" Store="_fields" ContainerId="fldTagline" Hidden="@Hides("fldTagline")" Label="@Globalize["LabelTagline"]" />
+                <div class="@Css("inputContainer overviewContainer", "overviewContainer")">
+                    <label class="textareaLabel textareaLabelUnfocused" for="txtOverview">@Globalize["LabelOverview"]</label>
+                    <textarea id="txtOverview" class="emby-textarea" rows="4" value="@Field("txtOverview")" @oninput="OnOverviewInput"></textarea>
+                </div>
+                <EditorInput Id="txtPremiereDate" Store="_fields" Type="date" ContainerId="fldPremiereDate" Hidden="@Hides("fldPremiereDate")" Label="@Label("txtPremiereDate")" />
+                <EditorInput Id="txtProductionYear" Store="_fields" Type="number" ContainerId="fldYear" Hidden="@Hides("fldYear")" Label="@Label("txtProductionYear")" />
+                <EditorInput Id="txtPlaceOfBirth" Store="_fields" ContainerId="fldPlaceOfBirth" Hidden="@Hides("fldPlaceOfBirth")" Label="@Globalize["LabelPlaceOfBirth"]" />
+                <EditorInput Id="txtEndDate" Store="_fields" Type="date" ContainerId="fldEndDate" Hidden="@Hides("fldEndDate")" Label="@Label("txtEndDate")" />
+                <div id="fldAirDays" class="@Css(null, "fldAirDays")">
+                    <p>@Globalize["LabelAirDays"]</p>
+                    <div class="checkboxList">
+                        @foreach (var day in MetadataEditorLogic.AirDays)
+                        {
+                            <EmbyCheckbox @key="day" Class="chkAirDay" data-day="@day" Label="@Globalize[day]" Value="@_airDays.Contains(day)"
+                                          ValueChanged="value => Toggle(_airDays, day, value)" />
+                        }
+                    </div>
+                    <br />
+                </div>
+                <EditorInput Id="txtAirTime" Store="_fields" ContainerId="fldAirTime" Hidden="@Hides("fldAirTime")" Label="@Globalize["LabelAirTime"]" />
+                <EditorInput Id="txtSeriesRuntime" Store="_fields" Type="number" ContainerId="fldSeriesRuntime" Hidden="@Hides("fldSeriesRuntime")" Label="@Globalize["LabelRuntimeMinutes"]" />
+                <div class="inlineForm">
+                    <EditorSelect Id="selectOfficialRating" Store="_fields" ContainerId="fldOfficialRating" Hidden="@Hides("fldOfficialRating")" Label="@Globalize["LabelParentalRating"]">
+                        <option value=""></option>
+                        @foreach (var rating in _officialRatings)
+                        {
+                            <option value="@rating">@rating</option>
+                        }
+                    </EditorSelect>
+                    <EditorSelect Id="selectCustomRating" Store="_fields" ContainerId="fldCustomRating" Hidden="@Hides("fldCustomRating")" Label="@Globalize["LabelCustomRating"]">
+                        <option value=""></option>
+                        @foreach (var rating in _customRatings)
+                        {
+                            <option value="@rating">@rating</option>
+                        }
+                    </EditorSelect>
+                </div>
+                <EditorSelect Id="selectHeight" Store="_fields" ContainerId="fldHeight" Hidden="@Hides("fldHeight")" Label="@Globalize["MediaInfoResolution"]">
+                    <option value="0"></option>
+                    <option value="480">@Globalize["ChannelResolutionSD"]</option>
+                    <option value="576">@Globalize["ChannelResolutionSDPAL"]</option>
+                    <option value="720">@Globalize["ChannelResolutionHD"]</option>
+                    <option value="1080">@Globalize["ChannelResolutionFullHD"]</option>
+                    <option value="2160">@Globalize["ChannelResolutionUHD4K"]</option>
+                </EditorSelect>
+                <div class="inlineForm">
+                    <EditorInput Id="txtOriginalAspectRatio" Store="_fields" ContainerId="fldOriginalAspectRatio" Hidden="@Hides("fldOriginalAspectRatio")"
+                                 Label="@Globalize["LabelOriginalAspectRatio"]" />
+                    <EditorSelect Id="select3dFormat" Store="_fields" ContainerId="fld3dFormat" Hidden="@Hides("fld3dFormat")" Label="@Globalize["Label3DFormat"]">
+                        <option value=""></option>
+                        <option value="HalfSideBySide">HSBS</option>
+                        <option value="HalfTopAndBottom">HTAB</option>
+                        <option value="FullSideBySide">FSBS</option>
+                        <option value="FullTopAndBottom">FTAB</option>
+                        <option value="MVC">MVC</option>
+                    </EditorSelect>
+                </div>
+                <EditorSelect Id="selectDisplayOrder" Store="_fields" ContainerId="fldDisplayOrder" ContainerClass="fldDisplaySetting" Hidden="@Hides("fldDisplayOrder")"
+                              Label="@Globalize["LabelDisplayOrder"]" Description="@Globalize["SeriesDisplayOrderHelp"]"
+                              DescriptionClass="@Css("seriesDisplayOrderDescription", "seriesDisplayOrderDescription")">
+                    @foreach (var option in _layout.DisplayOrderOptions)
+                    {
+                        <option value="@option.Value">@option.Text</option>
+                    }
+                </EditorSelect>
+            </div>
+
+            <div id="collapsibleSpecialEpisodeInfo" class="@Css("detailSection", "collapsibleSpecialEpisodeInfo")">
+                <h2>@Globalize["HeaderSpecialEpisodeInfo"]</h2>
+                <div class="inlineForm">
+                    <EditorInput Id="txtAirsBeforeSeason" Store="_fields" Type="number" Label="@Globalize["LabelAirsBeforeSeason"]" pattern="[0-9]*" />
+                    <EditorInput Id="txtAirsAfterSeason" Store="_fields" Type="number" Label="@Globalize["LabelAirsAfterSeason"]" pattern="[0-9]*" />
+                    <EditorInput Id="txtAirsBeforeEpisode" Store="_fields" Type="number" Label="@Globalize["LabelAirsBeforeEpisode"]" pattern="[0-9]*" />
+                </div>
+            </div>
+
+            <div class="@("detailSection externalIdsSection" + (_externalIds.Count == 0 ? " hide" : null))">
+                <h2>@Globalize["HeaderExternalIds"]</h2>
+                <div class="externalIds editorFieldset">
+                    @foreach (var idInfo in _externalIds)
+                    {
+                        var key = idInfo.Text("Key") ?? string.Empty;
+                        <div class="inputContainer" @key="key">
+                            <div class="flex align-items-center">
+                                <div class="flex-grow">
+                                    <label class="inputLabel inputLabelUnfocused" for="@("txt1" + key)">@Globalize.Translate("LabelDynamicExternalId", MetadataEditorLogic.ExternalIdName(idInfo, Globalize))</label>
+                                    <input id="@("txt1" + key)" type="text" class="emby-input txtExternalId" data-providerkey="@key" value="@ProviderId(key)"
+                                           @oninput="args => _providerIds[key] = args.Value?.ToString()" />
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div id="genresCollapsible" class="@Css("editableListviewContainer", "genresCollapsible")" style="margin-top: 3em;">
+                <h2 style="margin:.6em 0;vertical-align:middle;display:inline-block;">@Globalize["Genres"]</h2>
+                <button type="button" class="emby-button fab btnAddTextItem submit marginStart" title="@Globalize["Add"]" @onclick="() => AddTextItemAsync(_genres)">
+                    <Icon Name="add" />
+                </button>
+                <div class="paperList" id="listGenres">@TextList(_genres)</div>
+            </div>
+            <div id="peopleCollapsible" style="margin-top: 3em;" class="@Css(null, "peopleCollapsible")">
+                <h2 style="margin:.6em 0;vertical-align:middle;display:inline-block;">@Globalize["People"]</h2>
+                <button type="button" id="btnAddPerson" class="emby-button fab btnAddPerson marginStart" title="@Globalize["Add"]" @onclick="AddPersonAsync">
+                    <Icon Name="add" />
+                </button>
+                <div id="peopleList" class="paperList">
+                    @for (var i = 0; i < _people.Count; i++)
+                    {
+                        var index = i;
+                        var person = _people[i];
+                        <div class="listItem">
+                            <span class="material-icons listItemIcon person" style="background-color:#333;"></span>
+                            <div class="listItemBody">
+                                <button style="text-align:left;" type="button" class="btnEditPerson clearButton" data-index="@index" @onclick="() => EditPersonAsync(index)">
+                                    <div class="textValue">@person.Text("Name")</div>
+                                    <div class="secondary">@(person.Text("Role") is { Length: > 0 } role ? role : Globalize.Translate(person.Text("Type") ?? string.Empty))</div>
+                                </button>
+                            </div>
+                            <button type="button" class="paper-icon-button-light btnDeletePerson autoSize" data-index="@index" @onclick="() => _people.RemoveAt(index)">
+                                <Icon Name="delete" />
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+            <div id="studiosCollapsible" class="@Css("editableListviewContainer", "studiosCollapsible")" style="margin-top: 3em;">
+                <h2 style="margin:.6em 0;vertical-align:middle;display:inline-block;">@Globalize["Studios"]</h2>
+                <button type="button" class="emby-button fab btnAddTextItem submit marginStart" title="@Globalize["Add"]" @onclick="() => AddTextItemAsync(_studios)">
+                    <Icon Name="add" />
+                </button>
+                <div class="paperList" id="listStudios">@TextList(_studios)</div>
+            </div>
+            <div id="tagsCollapsible" class="@Css("editableListviewContainer", "tagsCollapsible")" style="margin-top: 3em;">
+                <h2 style="margin:.6em 0;vertical-align:middle;display:inline-block;">@Globalize["Tags"]</h2>
+                <button type="button" class="emby-button fab btnAddTextItem submit marginStart" title="@Globalize["Add"]" @onclick="() => AddTextItemAsync(_tags)">
+                    <Icon Name="add" />
+                </button>
+                <div class="paperList" id="listTags">@TextList(_tags)</div>
+            </div>
+            <div id="metadataSettingsCollapsible" style="margin-top: 3em;" class="@Css(null, "metadataSettingsCollapsible")">
+                <h2>@Globalize["HeaderMetadataSettings"]</h2>
+                <div>
+                    <EditorSelect Id="selectLanguage" Store="_fields" Label="@Globalize["LabelMetadataDownloadLanguage"]"
+                                  Description="@Globalize["MessageLeaveEmptyToInherit"]" DescriptionClass="editorfieldDescription">
+                        <option value=""></option>
+                        @foreach (var culture in _info.List("Cultures"))
+                        {
+                            <option value="@culture.Text("TwoLetterISOLanguageName")">@culture.Text("DisplayName")</option>
+                        }
+                    </EditorSelect>
+                    <EditorSelect Id="selectCountry" Store="_fields" Label="@Globalize["LabelCountry"]">
+                        <option value=""></option>
+                        @foreach (var country in _info.List("Countries"))
+                        {
+                            <option value="@country.Text("TwoLetterISORegionName")">@country.Text("DisplayName")</option>
+                        }
+                    </EditorSelect>
+                    <div class="fieldDescription editorfieldDescription">@Globalize["MessageLeaveEmptyToInherit"]</div>
+                    <br /><br />
+                    <EmbyCheckbox Id="chkLockData" LabelClass="checkboxContainer" Label="@Globalize["LabelLockItemToPreventChanges"]" @bind-Value="_lockData" />
+                    <div class="@("providerSettingsContainer checkboxList" + (_lockData ? " hide" : null))">
+                        <h2>@Globalize["HeaderEnabledFields"]</h2>
+                        <p>@Globalize["HeaderEnabledFieldsHelp"]</p>
+                        @foreach (var field in MetadataEditorLogic.LockableFields(_item.Text("Type")))
+                        {
+                            <EmbyCheckbox @key="field.Value" Class="selectLockedField" data-value="@field.Value" Label="@Globalize[field.Key]"
+                                          Value="@(!_lockedFields.Contains(field.Value))" ValueChanged="value => Toggle(_lockedFields, field.Value, !value)" />
+                        }
+                    </div>
+                </div>
+            </div>
+            <br />
+            <div class="formDialogFooter formDialogFooter-justifyEnd">
+                <button type="button" class="emby-button raised button-cancel block btnCancel formDialogFooterItem" @onclick="() => Dialog.Cancel()">
+                    <span>@Globalize["ButtonCancel"]</span>
+                </button>
+                <button type="button" class="emby-button raised button-reset block btnReset formDialogFooterItem" @onclick="Reset">
+                    <span>@Globalize["Reset"]</span>
+                </button>
+                <button type="submit" class="emby-button raised button-submit block btnSave formDialogFooterItem">
+                    <span>@Globalize["Save"]</span>
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+@code {
+    private readonly Dictionary<string, string?> _providerIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _airDays = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _lockedFields = new(StringComparer.Ordinal);
+    private Dictionary<string, string?> _fields = new(StringComparer.Ordinal);
+    private MetadataEditorLayout _layout = new();
+    private JsonObject? _item;
+    private JsonObject? _info;
+    private IReadOnlyList<JsonNode?> _contentTypes = [];
+    private IReadOnlyList<JsonNode?> _externalIds = [];
+    private List<string> _officialRatings = [];
+    private List<string> _customRatings = [];
+    private List<string> _genres = [];
+    private List<string> _studios = [];
+    private List<string> _tags = [];
+    private List<JsonObject> _people = [];
+    private string? _contentType = string.Empty;
+    private bool _lockData;
+    private ElementReference _btnMore;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The id of the item to edit.</summary>
+    [Parameter, EditorRequired]
+    public string ItemId { get; set; } = string.Empty;
+
+    private bool IsDesktop => AppHost.Layout == LayoutMode.Desktop;
+
+    /// <summary>
+    /// Opens the editor (<c>metadataEditor.show(itemId, serverId)</c>) and completes when it closes,
+    /// saved or not, like the original.
+    /// </summary>
+    public static Task ShowAsync(AppDialogs dialogs, string itemId) =>
+        dialogs.ShowAsync<MetadataEditor>(new Dictionary<string, object?> { [nameof(ItemId)] = itemId });
+
+    protected override Task OnInitializedAsync() => ReloadAsync(ItemId);
+
+    private async Task ReloadAsync(string itemId)
+    {
+        Loading.Show();
+        try
+        {
+            var itemTask = Api.GetItemAsync(itemId);
+            var infoTask = Api.GetObjectAsync($"Items/{itemId}/MetadataEditor");
+            await Task.WhenAll(itemTask, infoTask);
+            _info = await infoTask;
+            _item = await itemTask;
+            Fill();
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Loading the metadata editor failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    // Port of renderContentTypeOptions(), loadExternalIds(), setFieldVisibilities() and fillItemInfo().
+    private void Fill()
+    {
+        _contentTypes = _info.List("ContentTypeOptions");
+        _contentType = _info.Text("ContentType") ?? string.Empty;
+        _externalIds = _info.List("ExternalIdInfos");
+        _providerIds.Clear();
+        foreach (var idInfo in _externalIds)
+        {
+            var key = idInfo.Text("Key") ?? string.Empty;
+            _providerIds[key] = _item.Child("ProviderIds").Text(key) ?? string.Empty;
+        }
+
+        _layout = MetadataEditorLogic.Layout(_item, Globalize);
+        _fields = MetadataEditorLogic.FieldValues(_item);
+        _officialRatings = Ratings(_fields["selectOfficialRating"]);
+        _customRatings = Ratings(_fields["selectCustomRating"]);
+
+        _airDays.Clear();
+        _airDays.UnionWith(_item.Strings("AirDays"));
+
+        _genres = _item.Strings("Genres");
+        _tags = _item.Strings("Tags");
+        _studios = [.. _item.List("Studios").Select(studio => studio.Text("Name") ?? string.Empty)];
+        MetadataEditorLogic.Sort(_genres);
+        MetadataEditorLogic.Sort(_tags);
+        MetadataEditorLogic.Sort(_studios);
+        _people = [.. _item.List("People").OfType<JsonObject>().Select(person => (JsonObject)person.DeepClone())];
+
+        _lockData = _item.Flag("LockData");
+        _lockedFields.Clear();
+        _lockedFields.UnionWith(_item.Strings("LockedFields"));
+    }
+
+    // Port of populateRatings(): the server's ratings, and the item's own when it is not one of them.
+    private List<string> Ratings(string? current)
+    {
+        var ratings = _info.List("ParentalRatingOptions").Select(rating => rating.Text("Name") ?? string.Empty).ToList();
+        if (!string.IsNullOrEmpty(current) && !ratings.Contains(current))
+        {
+            ratings.Add(current);
+        }
+
+        return ratings;
+    }
+
+    private string Field(string id) => _fields.TryGetValue(id, out var value) ? value ?? string.Empty : string.Empty;
+
+    private void OnOverviewInput(ChangeEventArgs args) => _fields["txtOverview"] = args.Value?.ToString();
+
+    private string ProviderId(string key) => _providerIds.TryGetValue(key, out var value) ? value ?? string.Empty : string.Empty;
+
+    private bool Hides(string container) => !_layout.Shows(container);
+
+    private string? Css(string? classes, string container) =>
+        Hides(container) ? (classes is null ? "hide" : classes + " hide") : classes;
+
+    private string Label(string input) => _layout.LabelKey(input) is { } key ? Globalize.Translate(key) : string.Empty;
+
+    private static void Toggle(HashSet<string> set, string value, bool member)
+    {
+        if (member)
+        {
+            set.Add(value);
+        }
+        else
+        {
+            set.Remove(value);
+        }
+    }
+
+    // Port of populateListView().
+    private RenderFragment TextList(List<string> values) => builder =>
+    {
+        for (var i = 0; i < values.Count; i++)
+        {
+            var index = i;
+            builder.OpenElement(0, "div");
+            builder.AddAttribute(1, "class", "listItem");
+            builder.OpenElement(2, "span");
+            builder.AddAttribute(3, "class", "material-icons listItemIcon live_tv");
+            builder.AddAttribute(4, "aria-hidden", "true");
+            builder.AddAttribute(5, "style", "background-color:#333;");
+            builder.CloseElement();
+            builder.OpenElement(6, "div");
+            builder.AddAttribute(7, "class", "listItemBody");
+            builder.OpenElement(8, "div");
+            builder.AddAttribute(9, "class", "textValue");
+            builder.AddContent(10, values[i]);
+            builder.CloseElement();
+            builder.CloseElement();
+            builder.OpenElement(11, "button");
+            builder.AddAttribute(12, "type", "button");
+            builder.AddAttribute(13, "class", "paper-icon-button-light btnRemoveFromEditorList autoSize");
+            builder.AddAttribute(14, "data-index", index);
+            builder.AddAttribute(15, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, () => values.RemoveAt(index)));
+            builder.OpenElement(16, "span");
+            builder.AddAttribute(17, "class", "material-icons delete");
+            builder.AddAttribute(18, "aria-hidden", "true");
+            builder.CloseElement();
+            builder.CloseElement();
+            builder.CloseElement();
+        }
+    };
+
+    // Port of addElementToList(): the prompt's label is not translated in the original.
+    private async Task AddTextItemAsync(List<string> values)
+    {
+        var text = await Dialogs.PromptAsync(null, "Value:");
+        if (text is null)
+        {
+            return;
+        }
+
+        values.Add(text);
+        MetadataEditorLogic.Sort(values);
+    }
+
+    private async Task AddPersonAsync()
+    {
+        var person = new JsonObject();
+        if (await PersonEditor.ShowAsync(Dialogs, person))
+        {
+            _people.Add(person);
+        }
+    }
+
+    private Task EditPersonAsync(int index) => PersonEditor.ShowAsync(Dialogs, _people[index]);
+
+    // Port of onResetClick().
+    private void Reset()
+    {
+        foreach (var id in MetadataEditorLogic.ResetFields)
+        {
+            _fields[id] = string.Empty;
+        }
+
+        _genres.Clear();
+        _tags.Clear();
+        _studios.Clear();
+        _people.Clear();
+        _airDays.Clear();
+        foreach (var key in _providerIds.Keys.ToList())
+        {
+            _providerIds[key] = string.Empty;
+        }
+
+        _lockData = false;
+        _lockedFields.Clear();
+    }
+
+    // Port of showMoreMenu() and afterDeleted().
+    private async Task ShowMoreMenuAsync()
+    {
+        if (_item is not { } item || KiotaJson.Parse(item.ToJsonString(), BaseItemDto.CreateFromDiscriminatorValue) is not { } dto)
+        {
+            return;
+        }
+
+        var result = await ContextMenu.ShowAsync(new ItemMenuOptions
+        {
+            Item = dto,
+            User = JellyfinApi.User,
+            PositionTo = ActionSheetAnchor.At(_btnMore),
+            Edit = false,
+            EditImages = true,
+            EditSubtitles = true,
+            Share = false,
+            Play = false,
+            Queue = false
+        });
+
+        if (result?.Deleted == true)
+        {
+            var parentId = new[] { "ParentId", "SeasonId", "SeriesId" }.Select(name => item.Text(name)).FirstOrDefault(id => !string.IsNullOrEmpty(id));
+            if (parentId is not null)
+            {
+                await ReloadAsync(parentId);
+            }
+            else
+            {
+                Dialog.Cancel();
+                Router.GoHome();
+            }
+        }
+        else if (result?.Updated == true)
+        {
+            await ReloadAsync(item.Text("Id") ?? ItemId);
+        }
+    }
+
+    // Port of onSubmit() and submitUpdatedItem(). Like the original, the fields are sent as the texts of the inputs.
+    private async Task SubmitAsync()
+    {
+        if (_item is not { } current)
+        {
+            return;
+        }
+
+        Loading.Show();
+        var id = current.Text("Id") ?? ItemId;
+        var type = current.Text("Type");
+        JsonNode? Value(string field) => Field(field);
+        JsonNode? ValueOrNull(string field) => Field(field) is { Length: > 0 } value ? value : null;
+        JsonArray Texts(IEnumerable<string> values) => new([.. values.Select(value => (JsonNode?)value)]);
+
+        var providerIds = current.Child("ProviderIds")?.DeepClone() as JsonObject ?? [];
+        foreach (var idInfo in _externalIds)
+        {
+            var key = idInfo.Text("Key") ?? string.Empty;
+            providerIds[key] = ProviderId(key);
+        }
+
+        var item = new JsonObject
+        {
+            ["Id"] = id,
+            ["Name"] = Value("txtName"),
+            ["OriginalTitle"] = Value("txtOriginalName"),
+            ["OriginalLanguage"] = Value("selectOriginalLanguage"),
+            ["ForcedSortName"] = Value("txtSortName"),
+            ["CommunityRating"] = Value("txtCommunityRating"),
+            ["CriticRating"] = Value("txtCriticRating"),
+            ["IndexNumber"] = ValueOrNull("txtIndexNumber"),
+            ["AirsBeforeSeasonNumber"] = Value("txtAirsBeforeSeason"),
+            ["AirsAfterSeasonNumber"] = Value("txtAirsAfterSeason"),
+            ["AirsBeforeEpisodeNumber"] = Value("txtAirsBeforeEpisode"),
+            ["ParentIndexNumber"] = ValueOrNull("txtParentIndexNumber"),
+            ["DisplayOrder"] = Value("selectDisplayOrder"),
+            ["Album"] = Value("txtAlbum"),
+            ["AlbumArtists"] = MetadataEditorLogic.SplitNames(Field("txtAlbumArtist")),
+            ["ArtistItems"] = MetadataEditorLogic.SplitNames(Field("txtArtist")),
+            ["SeriesName"] = Value("txtseriesName"),
+            ["Overview"] = Value("txtOverview"),
+            ["Status"] = Value("selectStatus"),
+            ["AirDays"] = Texts(MetadataEditorLogic.AirDays.Where(_airDays.Contains)),
+            ["AirTime"] = Value("txtAirTime"),
+            ["Genres"] = Texts(_genres),
+            ["Tags"] = Texts(_tags),
+            ["Studios"] = new JsonArray([.. _studios.Select(name => (JsonNode?)new JsonObject { ["Name"] = name })]),
+            ["PremiereDate"] = MetadataEditorLogic.DateToSave(Field("txtPremiereDate"), current.Text("PremiereDate")),
+            ["DateCreated"] = MetadataEditorLogic.DateToSave(Field("txtDateAdded"), current.Text("DateCreated")),
+            ["EndDate"] = MetadataEditorLogic.DateToSave(Field("txtEndDate"), current.Text("EndDate")),
+            ["ProductionYear"] = Value("txtProductionYear"),
+            ["Height"] = Value("selectHeight"),
+            ["AspectRatio"] = Value("txtOriginalAspectRatio"),
+            ["Video3DFormat"] = Value("select3dFormat"),
+            ["OfficialRating"] = Value("selectOfficialRating"),
+            ["CustomRating"] = Value("selectCustomRating"),
+            ["People"] = new JsonArray([.. _people.Select(person => person.DeepClone())]),
+            ["LockData"] = _lockData,
+            ["LockedFields"] = Texts(MetadataEditorLogic.LockableFields(type).Select(field => field.Value).Where(_lockedFields.Contains)),
+            ["ProviderIds"] = providerIds,
+            ["PreferredMetadataLanguage"] = Value("selectLanguage"),
+            ["PreferredMetadataCountryCode"] = Value("selectCountry")
+        };
+
+        if (type == "Person")
+        {
+            item["ProductionLocations"] = Field("txtPlaceOfBirth") is { Length: > 0 } placeOfBirth ? Texts([placeOfBirth]) : [];
+        }
+
+        if (type == "Series")
+        {
+            item["RunTimeTicks"] = double.TryParse(Field("txtSeriesRuntime"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var minutes)
+                ? JsonValue.Create((long)(minutes * 600000000))
+                : null;
+        }
+
+        item["Taglines"] = Field("txtTagline") is { Length: > 0 } tagline ? Texts([tagline]) : [];
+
+        try
+        {
+            await Api.PostAsync(Api.GetUrl($"Items/{id}"), item);
+            var newContentType = _contentType ?? string.Empty;
+            if ((_info.Text("ContentType") ?? string.Empty) != newContentType)
+            {
+                await Api.PostAsync(Api.GetUrl($"Items/{id}/ContentType", ("ContentType", newContentType)));
+            }
+
+            Toasts.Show(Globalize.Translate("MessageItemSaved"));
+            Loading.Hide();
+            Dialog.Close(true);
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            // The original leaves the spinner up; the editor stays open here so the user can retry.
+            AppLog.Warn("Saving the item failed: " + exception.Message);
+            Loading.Hide();
+        }
+    }
+}

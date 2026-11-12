@@ -1,0 +1,78 @@
+@namespace Jellyfin.Web.Components
+@* An emby-input of an item dialog: like EmbyInput, but the container can carry the id and classes the
+   original gives it (#fldYear…), be hidden with "hide", and the value can live in a store keyed by the
+   input's id so that an editor with many fields keeps them in one place. *@
+<div id="@ContainerId" class="@ContainerCss">
+    <label class="inputLabel @(_focused ? "inputLabelFocused" : "inputLabelUnfocused")" for="@Id">@Label</label>
+    <input id="@Id" class="emby-input @Class" type="@Type" value="@Current" required="@Required"
+           @oninput="OnInputAsync" @onfocus="() => _focused = true" @onblur="() => _focused = false" @attributes="Attributes" />
+    @if (Description is not null)
+    {
+        <div class="fieldDescription">@Description</div>
+    }
+</div>
+
+@code {
+    private bool _focused;
+
+    [Parameter, EditorRequired]
+    public string Id { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Label { get; set; }
+
+    [Parameter]
+    public string Type { get; set; } = "text";
+
+    /// <summary>The values of the editor's fields by element id; when set, <see cref="Value"/> is not used.</summary>
+    [Parameter]
+    public IDictionary<string, string?>? Store { get; set; }
+
+    [Parameter]
+    public string? Value { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    [Parameter]
+    public string? Description { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? ContainerId { get; set; }
+
+    [Parameter]
+    public string? ContainerClass { get; set; }
+
+    /// <summary>Hides the container the way the original does (class "hide").</summary>
+    [Parameter]
+    public bool Hidden { get; set; }
+
+    [Parameter]
+    public bool Required { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private string? Current => Store is null ? Value : Store.TryGetValue(Id, out var value) ? value : null;
+
+    private string ContainerCss =>
+        "inputContainer" + (string.IsNullOrEmpty(ContainerClass) ? null : " " + ContainerClass) + (Hidden ? " hide" : null);
+
+    private Task OnInputAsync(ChangeEventArgs args)
+    {
+        var value = args.Value?.ToString();
+        if (Store is not null)
+        {
+            Store[Id] = value;
+        }
+        else
+        {
+            Value = value;
+        }
+
+        return ValueChanged.InvokeAsync(value);
+    }
+}

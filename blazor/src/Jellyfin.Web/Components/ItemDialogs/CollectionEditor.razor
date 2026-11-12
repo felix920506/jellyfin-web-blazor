@@ -1,0 +1,134 @@
+@namespace Jellyfin.Web.Components
+@* "Add to collection" / "New collection". Port of components/collectionEditor/collectionEditor.js. *@
+@inject ItemDialogApi Api
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+@inject AppRouter Router
+@inject UserViews UserViews
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize[ItemIds.Count > 0 ? "HeaderAddToCollection" : "NewCollection"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY" style="padding-top:2em;">
+    <div class="dialogContentInner dialog-content-centered">
+        <form class="newCollectionForm" style="margin:auto;" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <div>@Globalize["NewCollectionHelp"]</div>
+            <div class="@("fldSelectCollection" + (ItemIds.Count == 0 ? " hide" : null))">
+                <br />
+                <br />
+                <EditorSelect Id="selectCollectionToAddTo" Label="@Globalize["LabelCollection"]" @bind-Value="_collectionId" autofocus>
+                    <option value="">@Globalize["OptionNew"]</option>
+                    @foreach (var collection in _collections)
+                    {
+                        <option value="@collection.Id">@collection.Name</option>
+                    }
+                </EditorSelect>
+            </div>
+            <div class="@("newCollectionInfo" + (IsNew && !_loading ? null : " hide"))">
+                <EditorInput Id="txtNewCollectionName" Label="@Globalize["LabelName"]" Required="@IsNew" @bind-Value="_name"
+                             Description="@Globalize["NewCollectionNameExample"]" />
+                <EmbyCheckbox Id="chkEnableInternetMetadata" LabelClass="checkboxContainer" Label="@Globalize["SearchForCollectionInternetMetadata"]"
+                              @bind-Value="_enableInternetMetadata" />
+            </div>
+            <div class="formDialogFooter">
+                <button type="submit" class="emby-button raised btnSubmit block formDialogFooterItem button-submit">@Globalize["ButtonOk"]</button>
+            </div>
+            <input type="hidden" class="fldSelectedItemIds" value="@string.Join(',', ItemIds)" />
+        </form>
+    </div>
+</div>
+
+@code {
+    private readonly List<(string Id, string Name)> _collections = [];
+    private string? _collectionId = string.Empty;
+    private string? _name;
+    private bool _enableInternetMetadata;
+    private bool _loading;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The ids of the items to add; none to only create a collection.</summary>
+    [Parameter]
+    public IReadOnlyList<string> ItemIds { get; set; } = [];
+
+    private bool IsNew => string.IsNullOrEmpty(_collectionId);
+
+    /// <summary>
+    /// Opens the editor (<c>new CollectionEditor().show({ items, serverId })</c>). True when the items were
+    /// added to a collection or a collection was created; false when the dialog was closed.
+    /// </summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, IReadOnlyList<string> itemIds) =>
+        await dialogs.ShowAsync<CollectionEditor>(new Dictionary<string, object?> { [nameof(ItemIds)] = itemIds }) is true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (ItemIds.Count == 0)
+        {
+            return;
+        }
+
+        _loading = true;
+        Loading.Show();
+        try
+        {
+            var result = await Api.GetAsync(
+                $"Users/{Api.UserId}/Items",
+                ("Recursive", true),
+                ("IncludeItemTypes", "BoxSet"),
+                ("SortBy", "SortName"),
+                ("EnableTotalRecordCount", false));
+            foreach (var collection in result.List("Items"))
+            {
+                _collections.Add((collection.Text("Id") ?? string.Empty, collection.Text("Name") ?? string.Empty));
+            }
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Loading the collections failed: " + exception.Message);
+        }
+        finally
+        {
+            _loading = false;
+            Loading.Hide();
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        Loading.Show();
+        var ids = string.Join(',', ItemIds);
+        try
+        {
+            if (!IsNew)
+            {
+                await Api.PostAsync(Api.GetUrl($"Collections/{_collectionId}/Items", ("Ids", ids)));
+                Loading.Hide();
+                Dialog.Close(true);
+                Toasts.Show(Globalize.Translate("MessageItemsAdded"));
+                return;
+            }
+
+            // The original always sends Ids, empty when there are none.
+            var url = Api.GetUrl("Collections", ("Name", _name), ("IsLocked", !_enableInternetMetadata)) + "&Ids=" + Uri.EscapeDataString(ids);
+            var created = await Api.PostAsync(url);
+            Loading.Hide();
+            Dialog.Close(true);
+
+            // The collections view only exists once there is a collection.
+            UserViews.Invalidate();
+            if (created.Text("Id") is { Length: > 0 } id)
+            {
+                Router.ShowItem(id);
+            }
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            // The original leaves the spinner up; the dialog stays open here so the user can retry.
+            AppLog.Warn("Saving the collection failed: " + exception.Message);
+            Loading.Hide();
+        }
+    }
+}

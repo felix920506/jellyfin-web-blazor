@@ -1,0 +1,68 @@
+@namespace Jellyfin.Web.Components
+@* A person of the metadata editor's people list. Port of components/metadataEditor/personEditor.js. *@
+@using System.Text.Json.Nodes
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["Edit"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY" style="padding-top:2em;">
+    <form class="popupEditPersonForm dialogContentInner dialog-content-centered" @onsubmit="Submit" @onsubmit:preventDefault="true">
+        <EditorInput Id="@_nameId" Class="txtPersonName" Label="@Globalize["LabelName"]" Required="true" @bind-Value="_name" />
+        <EditorSelect Id="selectPersonType" Class="selectPersonType" Label="@Globalize["LabelType"]" @bind-Value="_type">
+            @foreach (var type in PersonTypes)
+            {
+                <option value="@type">@Globalize[type]</option>
+            }
+        </EditorSelect>
+        <EditorInput Id="@_roleId" Class="txtPersonRole" ContainerClass="fldRole" Hidden="@(_type is not ("Actor" or "GuestStar"))"
+                     Label="@Globalize["LabelPersonRole"]" Description="@Globalize["LabelPersonRoleHelp"]" @bind-Value="_role" />
+        <div class="formDialogFooter">
+            <button type="submit" class="emby-button raised button-submit block formDialogFooterItem">
+                <span>@Globalize["Save"]</span>
+            </button>
+        </div>
+    </form>
+</div>
+
+@code {
+    /// <summary>The kinds of people that can be chosen: every PersonKind but Unknown.</summary>
+    public static readonly IReadOnlyList<string> PersonTypes =
+        [.. Enum.GetValues<BaseItemPerson_Type>().Where(type => type != BaseItemPerson_Type.Unknown).Select(type => type.ToApiString())];
+
+    private readonly string _nameId = ElementIds.Next("txtPersonName");
+    private readonly string _roleId = ElementIds.Next("txtPersonRole");
+    private string? _name;
+    private string? _type;
+    private string? _role;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The person to edit, as in the item's <c>People</c>; changed in place when saved.</summary>
+    [Parameter, EditorRequired]
+    public JsonObject Person { get; set; } = default!;
+
+    /// <summary>Edits the person in place (<c>personEditor.show(person)</c>). False when the dialog was closed without saving.</summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, JsonObject person) =>
+        await dialogs.ShowAsync<PersonEditor>(new Dictionary<string, object?> { [nameof(Person)] = person }) is true;
+
+    protected override void OnInitialized()
+    {
+        _name = Person.Text("Name") ?? string.Empty;
+        _role = Person.Text("Role") ?? string.Empty;
+
+        // A select shows its first option when the person has no (known) type.
+        var type = Person.Text("Type");
+        _type = type is not null && PersonTypes.Contains(type) ? type : PersonTypes[0];
+    }
+
+    private void Submit()
+    {
+        Person["Name"] = _name;
+        Person["Type"] = _type;
+        Person["Role"] = string.IsNullOrEmpty(_role) ? null : _role;
+        Dialog.Close(true);
+    }
+}

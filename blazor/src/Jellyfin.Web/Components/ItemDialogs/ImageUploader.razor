@@ -1,0 +1,157 @@
+@namespace Jellyfin.Web.Components
+@* Uploading an image of an item. Port of components/imageUploader/imageUploader.js and its template. *@
+@using System.Net.Http.Headers
+@inject ItemDialogApi Api
+@inject IItemDialogsInterop Interop
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["HeaderUploadImage"]</h3>
+</div>
+
+<div class="formDialogContent smoothScrollY">
+    <div class="dialogContentInner">
+        <form class="uploadItemImageForm" style="max-width: 100%;" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <div class="flex align-items-center" style="margin:1.5em 0;">
+                <h2 style="margin:0;">@Globalize["HeaderAddUpdateImage"]</h2>
+                <button type="button" class="emby-button raised raised-mini btnBrowse" @onclick="BrowseAsync">
+                    <Icon Name="folder" />
+                    <span>@Globalize["Browse"]</span>
+                </button>
+            </div>
+            <div>
+                <div class="imageEditor-dropZone fieldDescription">
+                    <div id="dropImageText" class="@(_previewUrl is null ? null : "hide")">@Globalize["LabelDropImageHere"]</div>
+                    <output id="imageOutput" class="flex align-items-center justify-content-center" style="position: absolute;top:0;left:0;right:0;bottom:0;width:100%;">
+                        @if (_previewUrl is not null)
+                        {
+                            <img style="max-width:100%;max-height:100%;" src="@_previewUrl" title="@_fileName" />
+                        }
+                    </output>
+                    <InputFile @ref="_input" OnChange="OnFileChangedAsync" accept="image/*" id="uploadImage" name="uploadImage"
+                               style="position: absolute;top:0;left:0;right:0;bottom:0;width:100%;opacity:0;" />
+                </div>
+                <div id="fldUpload" class="@(_data is null ? "hide" : null)">
+                    <br />
+                    <EditorSelect Id="selectImageType" name="selectImageType" Label="@Globalize["LabelImageType"]" @bind-Value="_imageType">
+                        <option value="None"></option>
+                        @foreach (var type in ImageEditorLogic.BrowsableTypes)
+                        {
+                            <option value="@type">@Globalize[type]</option>
+                        }
+                    </EditorSelect>
+                    <button type="submit" class="emby-button raised button-submit block">
+                        <span>@Globalize["Upload"]</span>
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private InputFile? _input;
+    private byte[]? _data;
+    private string? _contentType;
+    private string? _fileName;
+    private string? _previewUrl;
+    private string? _imageType = "Primary";
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The item the image is for.</summary>
+    [Parameter, EditorRequired]
+    public string ItemId { get; set; } = string.Empty;
+
+    /// <summary>The image type selected at first; "Primary" when null.</summary>
+    [Parameter]
+    public string? ImageType { get; set; }
+
+    /// <summary>Opens the uploader (<c>imageUploader.show({ itemId, serverId, imageType })</c>). True when an image was uploaded.</summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, string itemId, string? imageType = null) =>
+        await dialogs.ShowAsync<ImageUploader>(new Dictionary<string, object?>
+        {
+            [nameof(ItemId)] = itemId,
+            [nameof(ImageType)] = imageType
+        }) is true;
+
+    protected override void OnInitialized() =>
+        _imageType = string.IsNullOrEmpty(ImageType) ? "Primary" : ImageType;
+
+    private async Task BrowseAsync()
+    {
+        if (_input?.Element is { } element)
+        {
+            await Interop.ClickAsync(element);
+        }
+    }
+
+    // Port of setFiles(): an image is read for the preview; anything else clears the form.
+    private async Task OnFileChangedAsync(InputFileChangeEventArgs args)
+    {
+        var file = args.FileCount > 0 ? args.File : null;
+        _data = null;
+        _previewUrl = null;
+        if (file is null || !file.ContentType.StartsWith("image", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            _data = await ItemDialogApi.ReadFileAsync(file);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or JSException)
+        {
+            AppLog.Warn("Reading the image failed: " + exception.Message);
+            Loading.Hide();
+            Toasts.Show(Globalize.Translate("MessageFileReadError"));
+            return;
+        }
+
+        _contentType = file.ContentType;
+        _fileName = file.Name;
+        _previewUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(_data)}";
+    }
+
+    // Port of onSubmit() and apiClient.uploadItemImage(): the image goes up as base64 text with the image's content type.
+    private async Task SubmitAsync()
+    {
+        if (_data is null || _contentType is null)
+        {
+            return;
+        }
+
+        if (!_contentType.StartsWith("image/", StringComparison.Ordinal))
+        {
+            Toasts.Show(Globalize.Translate("MessageImageFileTypeAllowed"));
+            return;
+        }
+
+        if (_imageType == "None")
+        {
+            Toasts.Show(Globalize.Translate("MessageImageTypeNotSelected"));
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            using var content = new StringContent(Convert.ToBase64String(_data));
+            content.Headers.ContentType = MediaTypeHeaderValue.Parse(_contentType);
+            await Api.PostContentAsync(Api.GetUrl($"Items/{ItemId}/Images/{_imageType}"), content);
+            Loading.Hide();
+            Dialog.Close(true);
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception) || exception is FormatException)
+        {
+            AppLog.Warn("Uploading the image failed: " + exception.Message);
+            Loading.Hide();
+            Toasts.Show(Globalize.Translate("ImageUploadFailed"));
+        }
+    }
+}

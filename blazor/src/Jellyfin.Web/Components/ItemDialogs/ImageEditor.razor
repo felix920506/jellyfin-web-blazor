@@ -1,0 +1,260 @@
+@namespace Jellyfin.Web.Components
+@* "Edit images". Port of components/imageeditor/imageeditor.js and its template. *@
+@using System.Text.Json.Nodes
+@inject ItemDialogApi Api
+@inject AppDialogs Dialogs
+@inject IBrowser Browser
+@inject LoadingService Loading
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["HeaderEditImages"]</h3>
+</div>
+
+<div class="formDialogContent smoothScrollY">
+    <div class="dialogContentInner">
+        <div id="imagesContainer">
+            <div class="imageEditor-buttons first-imageEditor-buttons">
+                <h2 style="margin:0;">@Globalize["Images"]</h2>
+                <button type="button" class="@("emby-button btnBrowseAllImages fab mini autoSize" + (_providers.Count == 0 ? " hide" : null))"
+                        @onclick="@(() => BrowseAsync("Primary"))">
+                    <Icon Name="search" />
+                </button>
+                <button type="button" class="emby-button btnOpenUploadMenu fab mini" @onclick="() => UploadAsync(null)">
+                    <Icon Name="add" />
+                </button>
+            </div>
+            <div id="images" class="itemsContainer vertical-wrap">
+                @Cards(_images)
+            </div>
+            <br />
+        </div>
+
+        <div id="backdropsContainer" class="@(_backdrops.Count == 0 ? "hide" : null)">
+            <div class="imageEditor-buttons">
+                <h2 style="margin:0;">@Globalize["Backdrops"]</h2>
+                <button type="button" class="@("emby-button btnBrowseAllImages fab mini autoSize" + (_providers.Count == 0 ? " hide" : null))"
+                        data-imagetype="Backdrop" @onclick="@(() => BrowseAsync("Backdrop"))">
+                    <Icon Name="search" />
+                </button>
+                <button type="button" class="emby-button btnOpenUploadMenu fab mini" data-imagetype="Backdrop" @onclick="@(() => UploadAsync("Backdrop"))">
+                    <Icon Name="add" />
+                </button>
+            </div>
+            <div id="backdrops" class="itemsContainer vertical-wrap">
+                @Cards(_backdrops)
+            </div>
+            <br />
+        </div>
+    </div>
+</div>
+
+@code {
+    private JsonObject? _item;
+    private IReadOnlyList<JsonNode?> _providers = [];
+    private IReadOnlyList<JsonNode?> _images = [];
+    private IReadOnlyList<JsonNode?> _backdrops = [];
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The id of the item whose images are edited.</summary>
+    [Parameter, EditorRequired]
+    public string ItemId { get; set; } = string.Empty;
+
+    /// <summary>Told whether an image was added, moved or deleted.</summary>
+    [Parameter]
+    public DialogChanges Changes { get; set; } = new();
+
+    /// <summary>
+    /// Opens the editor (<c>imageEditor.show({ itemId, serverId })</c>). True when images were changed,
+    /// which is when the original resolves.
+    /// </summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, string itemId)
+    {
+        var changes = new DialogChanges();
+        await dialogs.ShowAsync<ImageEditor>(new Dictionary<string, object?>
+        {
+            [nameof(ItemId)] = itemId,
+            [nameof(Changes)] = changes
+        });
+        return changes.HasChanges;
+    }
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    // Port of reload() and reloadItem().
+    private async Task ReloadAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var item = await Api.GetItemAsync(ItemId);
+            var providers = await Api.GetArrayAsync($"Items/{ItemId}/RemoteImages/Providers");
+            var imageInfos = await Api.GetArrayAsync($"Items/{ItemId}/Images");
+            _item = item;
+            _providers = [.. providers];
+            _images = ImageEditorLogic.StandardImages(imageInfos);
+            _backdrops = ImageEditorLogic.Backdrops(imageInfos);
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Loading the images failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+
+        StateHasChanged();
+    }
+
+    // Port of renderImages() and getCardHtml().
+    private RenderFragment Cards(IReadOnlyList<JsonNode?> images) =>
+        @<text>
+            @{
+                var imageSize = ImageEditorLogic.ImageSize(Browser.ViewportWidth);
+            }
+            @for (var i = 0; i < images.Count; i++)
+            {
+                var position = i;
+                var image = images[i];
+                var type = image.Text("ImageType") ?? string.Empty;
+                var imageIndex = image.Number("ImageIndex") is { } number ? (int)number : (int?)null;
+                var width = image.Number("Width") ?? 0;
+                var height = image.Number("Height") ?? 0;
+                <div class="card scalableCard imageEditorCard backdropCard backdropCard-scalable" data-id="@_item.Text("Id")" data-serverid="@_item.Text("ServerId")"
+                     data-index="@position" data-numimages="@images.Count" data-imagetype="@type" data-providers="@_providers.Count" @key="@(type + "/" + imageIndex)">
+                    <div class="cardBox visualCardBox">
+                        <div class="cardScalable visualCardBox-cardScalable" style="background-color:transparent;">
+                            <div class="cardPadder-backdrop"></div>
+                            <div class="cardContent">
+                                <div class="cardImageContainer" style="@($"background-image:url('{ImageUrl(type, imageIndex, imageSize)}');background-position:center center;background-size:contain;")"></div>
+                            </div>
+                        </div>
+                        <div class="cardFooter visualCardBox-cardFooter">
+                            <h3 class="cardText cardTextCentered" style="margin:0;">@Globalize.Translate(type)</h3>
+                            <div class="cardText cardText-secondary cardTextCentered">
+                                @if (width != 0 && height != 0)
+                                {
+                                    @(image.Text("Width") + " X " + image.Text("Height"))
+                                }
+                                else
+                                {
+                                    @((MarkupString)"&nbsp;")
+                                }
+                            </div>
+                            <div class="cardText cardTextCentered">
+                                @if (type == "Backdrop")
+                                {
+                                    var index = imageIndex ?? 0;
+                                    if (position > 0)
+                                    {
+                                        <IconButton Icon="chevron_left" Class="btnMoveImage autoSize" Title="@Globalize["MoveLeft"]" data-imagetype="@type"
+                                                    data-index="@index" data-newindex="@(index - 1)" OnClick="() => MoveAsync(type, index, index - 1)" />
+                                    }
+                                    else
+                                    {
+                                        <IconButton Icon="chevron_left" Class="autoSize" Title="@Globalize["MoveLeft"]" Disabled="true" />
+                                    }
+
+                                    if (position < images.Count - 1)
+                                    {
+                                        <IconButton Icon="chevron_right" Class="btnMoveImage autoSize" Title="@Globalize["MoveRight"]" data-imagetype="@type"
+                                                    data-index="@index" data-newindex="@(index + 1)" OnClick="() => MoveAsync(type, index, index + 1)" />
+                                    }
+                                    else
+                                    {
+                                        <IconButton Icon="chevron_right" Class="autoSize" Title="@Globalize["MoveRight"]" Disabled="true" />
+                                    }
+                                }
+                                else if (_providers.Count > 0)
+                                {
+                                    <IconButton Icon="search" Class="btnSearchImages autoSize" Title="@Globalize["Search"]" data-imagetype="@type"
+                                                OnClick="() => BrowseAsync(type)" />
+                                }
+                                <IconButton Icon="delete" Class="btnDeleteImage autoSize" Title="@Globalize["Delete"]" data-imagetype="@type"
+                                            data-index="@(imageIndex?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null")"
+                                            OnClick="() => DeleteAsync(type, imageIndex)" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </text>;
+
+    private string ImageUrl(string type, int? index, int imageSize)
+    {
+        var (path, query) = ImageEditorLogic.ImageRequest(_item, type, index, imageSize, Browser.Environment.DevicePixelRatio);
+        return Api.GetUrl(path, query);
+    }
+
+    private static string ImagePath(string itemId, string type, int? index) =>
+        $"Items/{itemId}/Images/{type}" + (index is { } number ? "/" + number.ToString(System.Globalization.CultureInfo.InvariantCulture) : null);
+
+    // Port of deleteImage().
+    private async Task DeleteAsync(string type, int? index)
+    {
+        var confirmed = await Dialogs.ConfirmAsync(
+            Globalize.Translate("ConfirmDeleteImage"),
+            confirmText: Globalize.Translate("Delete"),
+            destructive: true);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.DeleteAsync(Api.GetUrl(ImagePath(ItemId, type, index)));
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Deleting the image failed: " + exception.Message);
+            return;
+        }
+
+        Changes.HasChanges = true;
+        await ReloadAsync();
+    }
+
+    // Port of moveImage().
+    private async Task MoveAsync(string type, int index, int newIndex)
+    {
+        try
+        {
+            await Api.PostAsync(Api.GetUrl(ImagePath(ItemId, type, index) + "/Index", ("newIndex", newIndex)));
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Moving the image failed: " + exception.Message);
+            await Dialogs.AlertAsync(Globalize.Translate("ErrorDefault"));
+            return;
+        }
+
+        Changes.HasChanges = true;
+        await ReloadAsync();
+    }
+
+    // Port of showImageDownloader(): seasons can take the images of their series.
+    private async Task BrowseAsync(string imageType)
+    {
+        var itemType = _item.Text("Type");
+        var parentId = itemType == "Season" ? _item.Text("ParentId") : null;
+        if (await ImageDownloader.ShowAsync(Dialogs, ItemId, itemType, imageType, parentId))
+        {
+            Changes.HasChanges = true;
+            await ReloadAsync();
+        }
+    }
+
+    private async Task UploadAsync(string? imageType)
+    {
+        if (await ImageUploader.ShowAsync(Dialogs, ItemId, imageType))
+        {
+            Changes.HasChanges = true;
+            await ReloadAsync();
+        }
+    }
+}

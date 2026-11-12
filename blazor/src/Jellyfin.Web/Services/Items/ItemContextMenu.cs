@@ -51,6 +51,12 @@ public sealed record ItemMenuOptions
 
     /// <summary>The list the item belongs to, passed on to command handlers.</summary>
     public ItemActionContext? Context { get; init; }
+
+    /// <summary>
+    /// Where the menu opens (<c>positionTo</c>): by default at the button the user clicked last, which is
+    /// the "more" button of the card, row or page. Null opens it in the middle of the window.
+    /// </summary>
+    public ActionSheetAnchor? PositionTo { get; init; } = ActionSheetAnchor.LastClicked;
 }
 
 /// <summary>The command chosen in the menu and what it did (<c>{ command, updated, deleted, itemId }</c>).</summary>
@@ -303,9 +309,12 @@ public sealed class ItemContextMenu(
             return null;
         }
 
-        // PORT-TODO(items): the original opens the menu at the button (positionTo); ActionSheetOptions has no
-        // anchor, so the menu opens in the middle of the window.
-        var id = await dialogs.ActionSheetAsync(new ActionSheetOptions { Items = commands });
+        var id = await dialogs.ActionSheetAsync(new ActionSheetOptions
+        {
+            Items = commands,
+            PositionTo = options.PositionTo,
+            ResolveOnClick = [ItemCommand.Share]
+        });
         return string.IsNullOrEmpty(id) ? null : await ExecuteAsync(id, options);
     }
 
