@@ -219,8 +219,8 @@ Deviations and limits:
 - The Live TV views themselves (section 5) and the dialogs behind add to collection / playlist, refresh metadata
   and download are other workstreams; without a registered handler `ItemCommandHandlers` shows its "not available
   yet" toast.
-- "Download" in the multi-select menu is offered only when a download handler is registered (it is commented out
-  in the original); ctrl/meta-click to start a selection is an addition.
+- As in the original there is no "Download" in the multi-select menu (it is commented out there); ctrl/meta-click
+  to start a selection is an addition.
 - Shuffle of a filtered library view plays the fetched items with `SortBy=Random`.
 - The list page stores the `SeriesStatus` filter but does not send it (as the original), and its view settings
   dialog offers image type and "show title" only.

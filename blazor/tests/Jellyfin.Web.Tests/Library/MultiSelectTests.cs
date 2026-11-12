@@ -255,22 +255,6 @@ public class MultiSelectCommandsTests : ItemsTestContext
     }
 
     [Fact]
-    public async Task Download_is_offered_when_a_handler_downloads()
-    {
-        SignIn();
-        Select(1, 2);
-        _handler.Commands.Add(ItemCommand.Download);
-
-        Assert.Equal(new[] { "selectall", "playlist", "download", "markplayed", "markunplayed" }, await MenuIdsAsync());
-
-        await Commands.ExecuteAsync(MultiSelectCommands.Download);
-
-        Assert.Equal(new[] { "Movie 1", "Movie 2" }, _handler.Calls.Select(call => call.Item.Name));
-        Assert.All(_handler.Calls, call => Assert.Equal(ItemCommand.Download, call.Command));
-        Assert.False(State.IsActive);
-    }
-
-    [Fact]
     public async Task The_menu_survives_a_failing_item_request()
     {
         SignIn();

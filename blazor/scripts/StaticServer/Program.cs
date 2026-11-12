@@ -32,12 +32,9 @@ app.Use(async (context, next) =>
         context.Response.Headers.Vary = "Accept-Encoding";
     }
 
-    var immutable = requested.StartsWith("_framework/", StringComparison.OrdinalIgnoreCase)
-        || requested.Contains('.', StringComparison.Ordinal) && (requested.Contains(".", StringComparison.Ordinal) &&
-            (requested.EndsWith(".wasm", StringComparison.OrdinalIgnoreCase) || requested.EndsWith(".js", StringComparison.OrdinalIgnoreCase)));
-    context.Response.Headers.CacheControl = requested is "" or "index.html" or "config.json"
-        ? "no-cache"
-        : immutable ? "public,max-age=31536000,immutable" : "public,max-age=86400";
+    // Only _framework files carry a fingerprint in their name; everything else is revalidated.
+    var immutable = requested.StartsWith("_framework/", StringComparison.OrdinalIgnoreCase);
+    context.Response.Headers.CacheControl = immutable ? "public,max-age=31536000,immutable" : "no-cache";
     await context.Response.SendFileAsync(compressed.Path);
 });
 

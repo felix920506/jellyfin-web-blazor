@@ -1,0 +1,12 @@
+# Build context of docker/Dockerfile (the repository root): only the original client's sources
+# and this port, without build output.
+*
+!src
+!blazor
+blazor/artifacts
+blazor/**/bin
+blazor/**/obj
+blazor/src/Jellyfin.Web/wwwroot/generated
+blazor/e2e
+blazor/tests
+blazor/tools

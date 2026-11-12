@@ -199,7 +199,6 @@ public sealed class MultiSelectCommands(
     public const string AddToCollection = "addtocollection";
     public const string AddToPlaylist = "playlist";
     public const string Delete = "delete";
-    public const string Download = "download";
     public const string GroupVersions = "groupvideos";
     public const string MarkPlayed = "markplayed";
     public const string MarkUnplayed = "markunplayed";
@@ -208,9 +207,8 @@ public sealed class MultiSelectCommands(
     private static readonly string[] GroupableTypes = ["Movie", "Episode", "MusicVideo", "Video"];
 
     /// <summary>
-    /// The entries of the menu for the current selection, in the original's order. "Download" is commented out
-    /// in the original's menu ("Disabled because there is no callback for this item"); here it is offered when a
-    /// download handler is registered, and then downloads the selected items one by one.
+    /// The entries of the menu for the current selection, in the original's order. As in the original there is
+    /// no "Download" entry ("Disabled because there is no callback for this item").
     /// </summary>
     public async Task<IReadOnlyList<ActionSheetItem>> MenuAsync()
     {
@@ -227,11 +225,6 @@ public sealed class MultiSelectCommands(
         if (policy?.EnableContentDeletion == true)
         {
             menu.Add(Entry(Delete, "Delete", "delete"));
-        }
-
-        if (first is not null && handlers.CanHandle(ItemCommand.Download, first))
-        {
-            menu.Add(Entry(Download, "Download", "file_download"));
         }
 
         if (policy?.IsAdministrator == true && first is not null && GroupableTypes.Contains(first.TypeName()))
@@ -271,14 +264,6 @@ public sealed class MultiSelectCommands(
                 break;
             case Refresh:
                 await ForwardAsync(ItemCommand.Refresh, items);
-                break;
-            case Download:
-                foreach (var item in items)
-                {
-                    await handlers.ExecuteAsync(ItemCommand.Download, item, new ItemActionContext());
-                }
-
-                Finish();
                 break;
             case Delete:
                 await DeleteAsync(items);

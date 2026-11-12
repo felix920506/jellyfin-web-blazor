@@ -5,6 +5,28 @@ body,
     height: 100%;
 }
 
+// MudBlazor's stylesheet is written for a page of its own: it puts the primary text colour on body
+// and resets the margin and padding of every element (`* { margin: 0; padding: 0 }`). The original
+// client's stylesheets and markup expect the theme's text colour (set on html by the theme) and the
+// browser's own margins for paragraphs, headings and lists. Both are put back for everything that
+// is not a MudBlazor element; :where() keeps the weight at zero so every original rule still wins.
+body {
+    color: inherit;
+}
+
+:where(p, h1, h2, h3, h4, h5, h6, ul, ol, menu, dl, dd, blockquote, pre, figure, fieldset, legend, hr):where(:not([class*="mud-"])) {
+    margin: revert;
+    padding: revert;
+}
+
+:where(td, th, button, input, select, textarea, optgroup):where(:not([class*="mud-"])) {
+    padding: revert;
+}
+
+:where(input, select, textarea):where(:not([class*="mud-"])) {
+    margin: revert;
+}
+
 // Port of apps/modern/AppLayout.tsx: a column of app bar offset and page area.
 .jf-layout {
     position: relative;

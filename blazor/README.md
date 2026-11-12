@@ -15,6 +15,5 @@ scripts/test-server.sh up   # a throwaway Jellyfin server with sample media on h
 ./dev image                 # build jellyfin-web-blazor:local (nginx on port 8080)
 ```
 
-The production image serves the hash-routed static app on port 8080. `index.html` and
-`config.json` are not cached; fingerprinted framework files are served with immutable cache
-headers and the precompressed Brotli/gzip assets are selected from `Accept-Encoding`.
+The production image serves the hash-routed static app on port 8080. Only the fingerprinted
+`_framework` files are served with immutable cache headers, everything else is revalidated, and the precompressed Brotli/gzip assets are selected from `Accept-Encoding`.

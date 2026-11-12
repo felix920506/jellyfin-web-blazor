@@ -75,7 +75,9 @@ public sealed class ThemeManager(WebConfig config, UserSettings userSettings, IB
         {
             Typography = new Typography
             {
-                Default = new DefaultTypography { FontFamily = FontFamily },
+                // The original's pages inherit their text from html (93%, line height 1.35): MudBlazor's
+                // own defaults (0.875rem, 1.43, letter spacing) would make that markup 12.5% smaller.
+                Default = new DefaultTypography { FontFamily = FontFamily, FontSize = "1rem", LineHeight = "1.35", LetterSpacing = "normal" },
                 Button = new ButtonTypography { FontFamily = FontFamily, TextTransform = "none" },
                 H1 = new H1Typography { FontFamily = FontFamily, FontSize = "1.8rem" },
                 H2 = new H2Typography { FontFamily = FontFamily, FontSize = "1.5rem" },

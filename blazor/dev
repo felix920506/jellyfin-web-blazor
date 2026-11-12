@@ -63,7 +63,7 @@ do_publish() {
 }
 
 do_image() {
-    do_publish
+    # The Dockerfile prepares the assets and publishes in its own build stage.
     docker build -t jellyfin-web-blazor:local -f "$BLAZOR_DIR/docker/Dockerfile" "$ROOT"
 }
 
