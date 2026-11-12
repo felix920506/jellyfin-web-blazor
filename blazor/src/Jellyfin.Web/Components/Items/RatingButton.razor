@@ -5,7 +5,14 @@
 @inject Globalize Globalize
 
 <button is="emby-ratingbutton" type="button" class="@CssClass" data-action="none" data-id="@Item.IdText()" data-serverid="@Item.ServerId" data-itemtype="@Item.TypeName()" data-likes="@Likes" data-isfavorite="@(Favorite ? "true" : "false")" title="@Title" @onclick="ToggleAsync" @onclick:stopPropagation @attributes="Attributes">
-    <span class="material-icons @IconClass favorite @(Favorite ? "ratingbutton-icon-withrating" : null)" aria-hidden="true"></span>
+    @if (ContentClass is not null)
+    {
+        <div class="@ContentClass"><span class="material-icons @IconClass favorite @(Favorite ? "ratingbutton-icon-withrating" : null)" aria-hidden="true"></span></div>
+    }
+    else
+    {
+        <span class="material-icons @IconClass favorite @(Favorite ? "ratingbutton-icon-withrating" : null)" aria-hidden="true"></span>
+    }
 </button>
 
 @code {
@@ -19,6 +26,10 @@
     /// <summary>Extra classes of the icon.</summary>
     [Parameter]
     public string? IconClass { get; set; }
+
+    /// <summary>Wraps the icon in an element with these classes (the details page: "detailButton-content").</summary>
+    [Parameter]
+    public string? ContentClass { get; set; }
 
     [Parameter(CaptureUnmatchedValues = true)]
     public IReadOnlyDictionary<string, object>? Attributes { get; set; }

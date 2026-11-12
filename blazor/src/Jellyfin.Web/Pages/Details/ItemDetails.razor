@@ -1,0 +1,914 @@
+@namespace Jellyfin.Web.Pages
+@*
+    The item details page: "#/details?id=…&serverId=…", also reached with genre=, musicgenre=,
+    musicartist= or seriesTimerId= instead of id. Port of apps/legacy/controllers/itemDetails
+    (index.html and index.js), with its markup, ids and classes.
+
+    Sections that cannot apply to the item are left out; those that may apply are in the page,
+    hidden ("hide") until they have something to show, as in the original.
+*@
+@attribute [Route("/details")]
+@attribute [Access(AccessLevel.User)]
+@using System.Text.Json
+@implements IDisposable
+@inject DetailsQueries Queries
+@inject DetailsText Text
+@inject Backdrop Backdrops
+@inject DetailsLiveTv LiveTv
+@inject IDetailsInterop Interop
+@inject IPlaybackManager Playback
+@inject ItemContextMenu Menu
+@inject ItemUserData UserData
+@inject ItemQueries Items
+@inject ServerEvents Events
+@inject CardImages Images
+@inject MediaInfo Info
+@inject Globalize Globalize
+@inject AppRouter Router
+@inject AppHost Host
+@inject AppDialogs Dialogs
+@inject JellyfinApi Api
+@inject UserSettings Settings
+@inject ShellState Shell
+@inject LoadingService Loading
+@inject DateTimeText Dates
+@inject IBrowser Browser
+
+<Page Id="itemDetailPage" Class="@PageClass" Title="">
+    <div id="itemBackdrop" @ref="_backdropElement" @key="@(("backdrop", _headerBackdropUrl))"
+         class="@(_headerBackdropUrl is null ? "itemBackdrop" : "itemBackdrop lazy")" data-src="@_headerBackdropUrl"></div>
+    <div @key="@(("logo", _logoUrl))" class="@(_logoUrl is null ? "detailLogo hide" : "detailLogo lazy")" data-src="@_logoUrl"></div>
+
+    <div class="detailPageWrapperContainer">
+        @if (_item is { } item)
+        {
+            <div class="detailPagePrimaryContainer">
+                <DetailImage Item="item" Class="hide-mobile" />
+
+                <div class="detailRibbon padded-left padded-right">
+                    <div class="infoWrapper">
+                        <DetailImage Item="item" Class="hide-desktop hide-tv" />
+                        <div class="nameContainer">@((MarkupString)Text.GetNameHtml(item, Context, Host.IsMobileLayout))</div>
+                        <div class="@InfoClass("itemMiscInfo itemMiscInfo-primary", _primaryInfo)" style="margin-bottom: 0.6em;">@((MarkupString)_primaryInfo)</div>
+                        <div class="@InfoClass("itemMiscInfo itemMiscInfo-secondary", _secondaryInfo)" style="margin-bottom: 0.6em;">@((MarkupString)_secondaryInfo)</div>
+                    </div>
+
+                    <div class="@("mainDetailButtons focuscontainer-x" + (DetailsRules.ShowMainButtons(item, _buttons) ? null : " hide"))">
+                        <DetailButton Name="btnPlay" Title="@Globalize[_buttons.PlayTitleKey]" Icon="play_arrow" Action="resume"
+                                      Visible="_buttons.Play && _collectionPlayable" OnClick="() => PlayAsync(resume: true)" />
+                        <DetailButton Name="btnReplay" Title="@Globalize["Play"]" Icon="replay" Action="play"
+                                      Visible="_buttons.Replay" OnClick="() => PlayAsync(resume: false)" />
+                        <DetailButton Name="btnDownload" Title="@Globalize["Download"]" Icon="get_app"
+                                      Visible="DetailsRules.ShowDownload(item)" OnClick="DownloadAsync" />
+                        <DetailButton Name="btnPlayTrailer" Title="@Globalize["ButtonTrailer"]" Icon="theaters"
+                                      Visible="DetailsRules.ShowTrailerButton(item)" OnClick="() => Playback.PlayTrailersAsync(item)" />
+                        <DetailButton Name="btnInstantMix" Title="@Globalize["HeaderInstantMix"]" Icon="explore"
+                                      Visible="_buttons.InstantMix" OnClick="() => Playback.InstantMixAsync(item)" />
+                        <DetailButton Name="btnShuffle" Title="@Globalize["Shuffle"]" Icon="shuffle"
+                                      Visible="_buttons.Shuffle && _collectionPlayable" OnClick="() => Playback.ShuffleAsync(item)" />
+                        <DetailButton Name="btnCancelSeriesTimer" Title="@Globalize["CancelSeries"]" Icon="delete"
+                                      Visible="DetailsRules.ShowCancelSeriesTimer(item, Api.User)" OnClick="CancelSeriesTimerAsync" />
+                        <DetailButton Name="btnCancelTimer" Title="@Globalize["StopRecording"]" Icon="stop"
+                                      Visible="DetailsRules.ShowCancelTimer(item, Api.User)" OnClick="CancelTimerAsync" />
+                        <PlayStateButton Item="item" Class="@("button-flat btnPlaystate detailButton emby-button" + (ItemHelper.CanMarkPlayed(item) ? null : " hide"))"
+                                         IconClass="detailButton-icon" ContentClass="detailButton-content" />
+                        <RatingButton Item="item" Class="@("button-flat btnUserRating detailButton emby-button" + (ItemHelper.CanRate(item) ? null : " hide"))"
+                                      IconClass="detailButton-icon" ContentClass="detailButton-content" />
+                        <DetailButton Name="btnSplitVersions" Title="@Globalize["ButtonSplit"]" Icon="call_split"
+                                      Visible="DetailsRules.ShowSplitVersions(item, Api.User)" OnClick="SplitVersionsAsync" />
+                        <DetailButton Name="btnMoreCommands" Title="@Globalize["ButtonMore"]" Icon="more_vert"
+                                      Visible="_hasMenu" OnClick="ShowMenuAsync" />
+                    </div>
+                </div>
+
+                <div class="detailPagePrimaryContent padded-right">
+                    <div class="detailSection">
+                        <TrackSelections Selection="_selection" SourceChanged="OnSourceChangedAsync" />
+
+                        @* PORT-TODO(livetv): the record button and its fields come from DetailsLiveTv. *@
+                        <div class="@("recordingFields" + (ShowRecordingFields(item) ? null : " hide"))" style="margin: 0.5em 0 1.5em;">
+                            @if (ShowRecordingFields(item))
+                            {
+                                @LiveTv.RecordingFields(item)
+                            }
+                        </div>
+
+                        <div class="detailSectionContent">
+                            <p class="itemGenres"></p>
+                            <h3 class="@(Tagline(item) is null ? "tagline hide" : "tagline")"><bdi>@Tagline(item)</bdi></h3>
+                            <DetailOverview Text="@item.Overview" />
+                            <p id="itemBirthday" class="@HideWithout(_birthday)">@_birthday</p>
+                            <p id="itemBirthLocation" class="@HideWithout(_birthPlace)">@((MarkupString)(_birthPlace ?? string.Empty))</p>
+                            <p id="itemDeathDate" class="@HideWithout(_deathDate)">@_deathDate</p>
+                            <p id="seriesAirTime" class="@HideWithout(_airTime)">@_airTime</p>
+                            <div class="@("itemTags focuscontainer-x" + (_tags.Length > 0 ? null : " hide"))" style="margin: 0.7em 0; font-size: 92%;">@((MarkupString)_tags)</div>
+                            <div class="@("itemExternalLinks focuscontainer-x" + (_links.Length > 0 ? null : " hide"))" style="margin: 0.7em 0; font-size: 92%;">@((MarkupString)_links)</div>
+                            <div class="seriesRecordingEditor">
+                                @* PORT-TODO(livetv): the editor of a series timer comes from DetailsLiveTv. *@
+                                @if (item.TypeName() == "SeriesTimer")
+                                {
+                                    @LiveTv.SeriesTimerEditor(item)
+                                }
+                            </div>
+                        </div>
+
+                        <DetailMetadataList Item="item" />
+
+                        @if (item.TypeName() == "SeriesTimer")
+                        {
+                            @* PORT-TODO(livetv): the schedule of a series timer comes from DetailsLiveTv. *@
+                            var schedule = LiveTv.SeriesTimerSchedule(item);
+                            <div id="seriesTimerScheduleSection" class="@("verticalSection detailVerticalSection" + (schedule is null ? " hide" : null))" style="margin-top: -3em;">
+                                <h2 class="sectionTitle">@Globalize["Schedule"]</h2>
+                                <div id="seriesTimerSchedule" is="emby-itemscontainer" class="itemsContainer vertical-list padded-right" data-contextmenu="false">@schedule</div>
+                            </div>
+                        }
+
+                        @if (_childrenKind == DetailChildrenKind.Collection)
+                        {
+                            <DetailCollectionItems @key="@((_version, 1))" Item="item" Context="@Context" PlayableChanged="OnCollectionPlayableChanged" />
+                        }
+                        else
+                        {
+                            <div class="collectionItems hide"></div>
+                        }
+
+                        @if (_nextUp is not null)
+                        {
+                            <DetailListSection @key="@((_version, 2))" Class="nextUpSection" Title="@Globalize["NextUp"]" ContentClass="nextUpItems vertical-wrap padded-right"
+                                               Fetch="_nextUp" CardOptions="NextUpCards" Context="@Context" />
+                        }
+
+                        @if (DetailsRules.ShowChannelGuide(item))
+                        {
+                            @* PORT-TODO(livetv): the upcoming programmes of a channel come from DetailsLiveTv. *@
+                            var guide = LiveTv.ChannelGuide(item);
+                            <div class="@("programGuideSection verticalSection detailVerticalSection" + (guide is null ? " hide" : null))">
+                                <div class="programGuide">@guide</div>
+                            </div>
+                        }
+
+                        @if (_childrenKind == DetailChildrenKind.Playlist)
+                        {
+                            <div @key="@((_version, 3))" id="listChildrenCollapsible" class="verticalSection detailVerticalSection">
+                                <h2 class="sectionTitle sectionTitle-cards hide"><span></span></h2>
+                                <div id="childrenContent" class="verticalSection-extrabottompadding">
+                                    <DetailPlaylistItems Item="item" Context="@Context" />
+                                </div>
+                            </div>
+                        }
+                        else if (_childrenKind == DetailChildrenKind.ItemsByName)
+                        {
+                            <div @key="@((_version, 3))" id="listChildrenCollapsible" class="verticalSection detailVerticalSection">
+                                <h2 class="sectionTitle sectionTitle-cards hide"><span></span></h2>
+                                <div id="childrenContent">
+                                    <DetailItemsByName Item="item" Context="@Context" />
+                                </div>
+                            </div>
+                        }
+                        else if (_childrenKind == DetailChildrenKind.Children && DetailsRules.ChildrenInPrimaryColumn(item))
+                        {
+                            <DetailChildren @key="@((_version, 3))" Item="item" Context="@Context" />
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div @key="_version" class="detailPageSecondaryContainer padded-left padded-bottom-page">
+                @if (_childrenKind == DetailChildrenKind.Children && !DetailsRules.ChildrenInPrimaryColumn(item))
+                {
+                    <DetailChildren Item="item" Context="@Context" />
+                }
+
+                @if (_additionalParts is not null)
+                {
+                    <DetailSection Id="additionalPartsCollapsible" Title="@Globalize["HeaderAdditionalParts"]" ContentId="additionalPartsContent"
+                                   Fetch="_additionalParts" CardOptions="VideoCards" Context="@Context" />
+                }
+
+                @if (_moreFromSeason is not null)
+                {
+                    <DetailSection @ref="_moreFromSeasonSection" Class="moreFromSeasonSection" Title="@Globalize.Translate("MoreFromValue", item.SeasonName)"
+                                   Fetch="_moreFromSeason" CardOptions="MoreFromSeasonCards" Context="@Context" MinimumItems="2"
+                                   ItemsChanged="OnMoreFromSeasonChangedAsync" />
+                }
+
+                @if (DetailsRules.ShowLyrics(item))
+                {
+                    <DetailLyrics Item="item" />
+                }
+
+                @if (_moreFromArtist is not null)
+                {
+                    <DetailSection Class="moreFromArtistSection" Title="@MoreFromArtistTitle(item)" Fetch="_moreFromArtist"
+                                   CardOptions="_moreFromArtistCards" Context="@Context" />
+                }
+
+                @if (_cast.Count > 0)
+                {
+                    <DetailSection Id="castCollapsible" Title="@Globalize[DetailsRules.PeopleHeaderKey(item)]" TitleId="peopleHeader" ContentId="castContent"
+                                   Items="_cast" CardOptions="PeopleCards" Context="@Context" />
+                }
+
+                @if (_guestCast.Count > 0)
+                {
+                    <DetailSection Id="guestCastCollapsible" Title="@Globalize["HeaderGuestCast"]" TitleId="guestCastHeader" ContentId="guestCastContent"
+                                   Items="_guestCast" CardOptions="PeopleCards" Context="@Context" />
+                }
+
+                @if (_schedule is not null)
+                {
+                    <DetailListSection Id="seriesScheduleSection" Title="@Globalize["HeaderUpcomingOnTV"]" TitleClass="sectionTitle padded-right"
+                                       ContentId="seriesScheduleList" ContentClass="vertical-list padded-right" Fetch="_schedule"
+                                       ListOptions="ScheduleList" Context="@Context" />
+                }
+
+                @if (_specials is not null)
+                {
+                    <DetailSection Id="specialsCollapsible" Title="@Globalize["SpecialFeatures"]" ContentId="specialsContent"
+                                   Fetch="_specials" CardOptions="VideoCards" Context="@Context" />
+                }
+
+                @if (_musicVideos is not null)
+                {
+                    <DetailSection Id="musicVideosCollapsible" Title="@Globalize["MusicVideos"]" ContentId="musicVideosContent"
+                                   Fetch="_musicVideos" CardOptions="VideoCards" Context="@Context" />
+                }
+
+                @if (DetailsRules.GetScenes(item).Count > 0)
+                {
+                    <DetailScenes Item="item" />
+                }
+
+                @if (_collections is not null)
+                {
+                    <DetailSection Id="collectionsCollapsible" Class="verticalSection-extrabottompadding" Title="@Globalize["Collections"]"
+                                   ContentId="collectionsContent" ContentClass="collectionsContent" Fetch="_collections"
+                                   CardOptions="_collectionCards" Context="@Context" />
+                }
+
+                @if (_similar is not null)
+                {
+                    <DetailSection Id="similarCollapsible" Class="verticalSection-extrabottompadding" Title="@Globalize["HeaderMoreLikeThis"]"
+                                   ContentClass="similarContent" Fetch="_similar" CardOptions="_similarCards" Context="@Context" />
+                }
+            </div>
+        }
+    </div>
+</Page>
+
+@code {
+    // The card and list options below are those of the original's render functions.
+    private static readonly CardOptions NextUpCards = new()
+    {
+        Shape = CardShape.OverflowBackdrop,
+        ShowTitle = true,
+        OverlayText = false,
+        CenterText = true,
+        OverlayPlayButton = true
+    };
+
+    private static readonly CardOptions MoreFromSeasonCards = new()
+    {
+        Shape = CardShape.OverflowBackdrop,
+        ShowTitle = true,
+        OverlayText = false,
+        CenterText = true,
+        IncludeParentInfoInTitle = false
+    };
+
+    // getVideosHtml: special features, additional parts and music videos.
+    private static readonly CardOptions VideoCards = new()
+    {
+        Shape = CardShape.AutoOverflow,
+        ShowTitle = true,
+        Action = ItemAction.Play,
+        OverlayText = false,
+        CenterText = true,
+        ShowRuntime = true,
+        OverlayMoreButton = true
+    };
+
+    private static readonly CardOptions PeopleCards = new()
+    {
+        CardLayout = false,
+        CenterText = true,
+        ShowTitle = true,
+        CardFooterAside = "none",
+        ShowPersonRoleOrType = true,
+        CardCssClass = "personCard",
+        DefaultCardImageIcon = "person",
+        CoverImage = true,
+        Shape = CardShape.OverflowPortrait
+    };
+
+    private static readonly ListViewOptions ScheduleList = new()
+    {
+        EnableUserDataButtons = false,
+        Image = true,
+        ImageSource = "channel",
+        ShowProgramDateTime = true,
+        ShowChannel = false,
+        MediaInfo = true,
+        Action = ItemAction.ProgramDialog,
+        MoreButton = false,
+        RecordButton = false
+    };
+
+    private static readonly MediaInfoOptions PrimaryInfoOptions = new() { Interactive = true, EpisodeTitle = false, Subtitles = false };
+
+    private static readonly MediaInfoOptions SecondaryInfoOptions = new() { Interactive = true };
+
+    /// <summary>The item to show.</summary>
+    [Parameter]
+    public string? Id { get; set; }
+
+    [Parameter]
+    public string? ServerId { get; set; }
+
+    /// <summary>A genre by name, instead of <see cref="Id"/>.</summary>
+    [Parameter]
+    public string? Genre { get; set; }
+
+    /// <summary>A music genre by name, instead of <see cref="Id"/>.</summary>
+    [Parameter]
+    public string? MusicGenre { get; set; }
+
+    /// <summary>An artist by name, instead of <see cref="Id"/>.</summary>
+    [Parameter]
+    public string? MusicArtist { get; set; }
+
+    /// <summary>A Live TV series timer, instead of <see cref="Id"/>.</summary>
+    [Parameter]
+    public string? SeriesTimerId { get; set; }
+
+    /// <summary>The library kind the visitor came from ("tvshows", "music"…); it goes into the links of the page.</summary>
+    [Parameter]
+    public string? Context { get; set; }
+
+    private ElementReference _backdropElement;
+    private DetailSection? _moreFromSeasonSection;
+    private IDisposable? _libraryChanged;
+    private (string?, string?, string?, string?, string?)? _loadedKey;
+    private int _loadId;
+    private int _version;
+    private bool _disposed;
+    private bool _leaving;
+
+    private BaseItemDto? _item;
+    private TrackSelection? _selection;
+    private DetailPlayButtons _buttons = DetailPlayButtons.None;
+    private DetailChildrenKind _childrenKind;
+    private IReadOnlyList<BaseItemDto> _cast = [];
+    private IReadOnlyList<BaseItemDto> _guestCast = [];
+    private bool _hasMenu;
+    private bool _collectionPlayable = true;
+    private bool _noBackdropTransparency;
+    private string? _headerBackdropUrl;
+    private string? _logoUrl;
+    private string _primaryInfo = string.Empty;
+    private string _secondaryInfo = string.Empty;
+    private string _tags = string.Empty;
+    private string _links = string.Empty;
+    private string? _birthday;
+    private string? _birthPlace;
+    private string? _deathDate;
+    private string? _airTime;
+
+    // The loaders of the sections of the item on show; null where a section does not apply. They are
+    // kept so that a render of the page does not make the sections load again.
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _nextUp;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _schedule;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _additionalParts;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _moreFromSeason;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _moreFromArtist;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _specials;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _musicVideos;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _collections;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _similar;
+    private CardOptions _moreFromArtistCards = new();
+    private CardOptions _collectionCards = new();
+    private CardOptions _similarCards = new();
+
+    private string PageClass =>
+        "libraryPage itemDetailPage noSecondaryNavPage selfBackdropPage" + (_noBackdropTransparency ? " noBackdropTransparency" : null);
+
+    protected override void OnInitialized()
+    {
+        // viewshow: the header is see-through above the banner, except on phones.
+        Shell.SetTransparentHeader(!Host.IsMobileLayout);
+
+        // Every item gets its own page instance, like a new view in the original, which starts at the
+        // top; the router only scrolls up when the path changes, not from one item to the next.
+        Browser.ScrollTo(0, 0);
+        UserData.Changed += OnUserDataChanged;
+        Host.LayoutChanged += OnLayoutChanged;
+        Globalize.LanguageChanged += OnLanguageChanged;
+        _libraryChanged = Events.Subscribe("LibraryChanged", OnLibraryChanged);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var key = (Id, SeriesTimerId, Genre, MusicGenre, MusicArtist);
+        if (_loadedKey is { } loaded && loaded == key)
+        {
+            return;
+        }
+
+        _loadedKey = key;
+        await ReloadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_disposed && (_headerBackdropUrl is not null || _logoUrl is not null))
+        {
+            await Interop.LoadSiblingImagesAsync(_backdropElement);
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        UserData.Changed -= OnUserDataChanged;
+        Host.LayoutChanged -= OnLayoutChanged;
+        Globalize.LanguageChanged -= OnLanguageChanged;
+        _libraryChanged?.Dispose();
+
+        // viewbeforehide
+        Shell.SetTransparentHeader(false);
+        Backdrops.Clear();
+    }
+
+    // reload: the item as the parameters name it.
+    private async Task ReloadAsync()
+    {
+        var loadId = ++_loadId;
+        Loading.Show();
+        try
+        {
+            var item = await Queries.GetItemAsync(Id, SeriesTimerId, Genre, MusicGenre, MusicArtist);
+            if (item is not null && loadId == _loadId && !_disposed)
+            {
+                await ShowItemAsync(item, sourceId: null);
+            }
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Loading the item failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    // reloadFromItem. sourceId: the version chosen in the track selection, when the item on show is one
+    // of several versions.
+    private async Task ShowItemAsync(BaseItemDto item, string? sourceId)
+    {
+        var canPlay = Playback.CanPlay(item);
+        var selection = TrackSelection.Create(item, canPlay, Globalize["Off"], sourceId ?? item.IdText());
+        var hasMenu = (await Menu.GetCommandsAsync(GetMenuOptions(item))).Count > 0;
+        if (_disposed)
+        {
+            return;
+        }
+
+        _item = item;
+        _selection = selection;
+        _hasMenu = hasMenu;
+        _collectionPlayable = true;
+        _buttons = DetailsRules.GetPlayButtons(item, canPlay, Dates.Now);
+        _childrenKind = DetailsRules.GetChildrenKind(item);
+        (_cast, _guestCast) = DetailsRules.SplitPeople(item);
+        SetTexts(item);
+        SetSections(item);
+        SetImages(item);
+        _version++;
+    }
+
+    private void SetTexts(BaseItemDto item)
+    {
+        var seriesTimer = item.TypeName() == "SeriesTimer";
+        _primaryInfo = seriesTimer ? string.Empty : Info.GetPrimaryHtml(item, PrimaryInfoOptions);
+        _secondaryInfo = seriesTimer ? string.Empty : Info.GetSecondaryHtml(item, SecondaryInfoOptions);
+        _tags = Text.GetTagsHtml(item);
+        _links = Text.GetExternalLinksHtml(item);
+        _birthday = Text.GetBirthdayText(item, Dates.Now);
+        _birthPlace = Text.GetBirthPlaceHtml(item);
+        _deathDate = Text.GetDeathDateText(item);
+        _airTime = DetailsRules.GetSeriesAirTime(item);
+    }
+
+    private void SetSections(BaseItemDto item)
+    {
+        var id = item.IdText();
+        var type = item.TypeName();
+        var yearTypes = type is "Movie" or "Trailer" or "Series";
+        var music = type is "MusicAlbum" or "MusicArtist";
+
+        _nextUp = DetailsRules.ShowNextUp(item) ? () => Queries.GetNextUpAsync(id) : null;
+        _schedule = DetailsRules.ShowSeriesSchedule(item) ? () => Queries.GetSeriesScheduleAsync(id) : null;
+        _additionalParts = DetailsRules.ShowAdditionalParts(item) ? () => Queries.GetAdditionalPartsAsync(id) : null;
+        _specials = DetailsRules.ShowSpecials(item) ? () => Queries.GetSpecialFeaturesAsync(id) : null;
+        _musicVideos = DetailsRules.ShowMusicVideos(item) ? () => Queries.GetMusicVideosAsync(id) : null;
+        _moreFromSeason = DetailsRules.ShowMoreFromSeason(item)
+            ? () => Queries.GetMoreFromSeasonAsync(item.SeriesId.IdText(), item.SeasonId.IdText())
+            : null;
+        _moreFromArtist = DetailsRules.ShowMoreFromArtist(item) ? () => Queries.GetMoreFromArtistAsync(item) : null;
+        _similar = DetailsRules.ShowSimilar(item) ? () => Queries.GetSimilarAsync(item) : null;
+
+        // The collections an item is in; a series timer is not a library item.
+        _collections = type == "SeriesTimer" ? null : () => Queries.GetCollectionsAsync(id);
+
+        _moreFromArtistCards = new CardOptions
+        {
+            Shape = CardShape.AutoOverflow,
+            CoverImage = music,
+            ShowTitle = true,
+            ShowParentTitle = false,
+            CenterText = true,
+            OverlayText = false,
+            OverlayPlayButton = true,
+            ShowYear = true
+        };
+        _collectionCards = new CardOptions
+        {
+            Shape = CardShape.OverflowPortrait,
+            CenterText = true,
+            ShowTitle = true,
+            ShowParentTitle = false,
+            OverlayText = false,
+            OverlayPlayButton = false,
+            CoverImage = true,
+            ShowYear = yearTypes,
+            Context = Context
+        };
+        _similarCards = new CardOptions
+        {
+            Shape = CardShape.AutoOverflow,
+            ShowParentTitle = type == "MusicAlbum",
+            CenterText = true,
+            ShowTitle = true,
+            Context = Context,
+            CoverImage = music,
+            OverlayPlayButton = true,
+            OverlayText = false,
+            ShowYear = yearTypes
+        };
+    }
+
+    // renderLogo, renderHeaderBackdrop and renderBackdrop.
+    private void SetImages(BaseItemDto item)
+    {
+        var id = item.IdText();
+        var mobile = Host.IsMobileLayout;
+
+        if (item.ImageTag("Logo") is { Length: > 0 } logo)
+        {
+            _logoUrl = Images.GetScaledImageUrl(id, "Logo", logo);
+        }
+        else if (item.ParentLogoItemId is not null && !string.IsNullOrEmpty(item.ParentLogoImageTag))
+        {
+            _logoUrl = Images.GetScaledImageUrl(item.ParentLogoItemId.IdText(), "Logo", item.ParentLogoImageTag);
+        }
+        else
+        {
+            _logoUrl = null;
+        }
+
+        // On phones the banner is the element above the title; elsewhere it is the page backdrop.
+        _headerBackdropUrl = null;
+        if (mobile && Settings.DetailsBanner && item.TypeName() is not ("Person" or "Book"))
+        {
+            _headerBackdropUrl = Backdrops.GetImageUrls(item).FirstOrDefault()
+                ?? (item.ImageTag("Primary") is { Length: > 0 } primary ? Backdrops.GetImageUrl(id, "Primary", primary) : null);
+        }
+
+        if (!mobile && Browser.Environment.InnerWidth >= 1000)
+        {
+            var banner = Settings.DetailsBanner;
+
+            // With the banner on and backdrops off, the page below the banner is opaque.
+            _noBackdropTransparency = banner && !Settings.EnableBackdrops;
+            Backdrops.SetBackdrops([item], banner);
+        }
+        else
+        {
+            _noBackdropTransparency = false;
+            Backdrops.Clear();
+        }
+    }
+
+    // getContextMenuOptions
+    private ItemMenuOptions GetMenuOptions(BaseItemDto item) => new()
+    {
+        Item = item,
+        User = Api.User,
+        Play = false,
+        PlayAllFromHere = false,
+        QueueAllFromHere = false,
+        CancelTimer = false,
+        Record = false,
+        DeleteItem = item.CanDelete == true,
+        Shuffle = false,
+        InstantMix = false,
+        Share = true
+    };
+
+    private static string InfoClass(string classes, string html) => html.Length > 0 ? classes : classes + " hide";
+
+    private static string? HideWithout(string? text) => string.IsNullOrEmpty(text) ? "hide" : null;
+
+    private static string? Tagline(BaseItemDto item) =>
+        item.Taglines is { Count: > 0 } taglines && !string.IsNullOrEmpty(taglines[0]) ? taglines[0] : null;
+
+    private bool ShowRecordingFields(BaseItemDto item) => DetailsRules.ShowRecordingFields(item, Api.User);
+
+    private string MoreFromArtistTitle(BaseItemDto item) => item.TypeName() == "MusicArtist"
+        ? Globalize["HeaderAppearsOn"]
+        : Globalize.Translate("MoreFromValue", item.AlbumArtists is { Count: > 0 } artists ? artists[0].Name : null);
+
+    // playCurrentItem: "resume" continues where the item was left, "play" starts over. A programme
+    // plays its channel.
+    private async Task PlayAsync(bool resume)
+    {
+        if (_item is not { } item)
+        {
+            return;
+        }
+
+        if (item.TypeName() == "Program")
+        {
+            try
+            {
+                if (item.ChannelId is not null && await Queries.GetChannelAsync(item.ChannelId.IdText()) is { } channel)
+                {
+                    await Playback.PlayAsync(new PlayOptions { Items = [channel] });
+                }
+            }
+            catch (HttpRequestException exception)
+            {
+                AppLog.Warn("Loading the channel failed: " + exception.Message);
+            }
+
+            return;
+        }
+
+        var options = new PlayOptions
+        {
+            Items = [item],
+            StartPositionTicks = resume ? item.UserData?.PlaybackPositionTicks ?? 0 : 0
+        };
+        await Playback.PlayAsync(_selection?.Apply(options) ?? options);
+    }
+
+    private async Task DownloadAsync()
+    {
+        if (_item is { } item)
+        {
+            var path = item.Path ?? string.Empty;
+            var name = path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
+            await Interop.DownloadAsync(Queries.GetDownloadUrl(item.IdText()), name);
+        }
+    }
+
+    private async Task SplitVersionsAsync()
+    {
+        if (string.IsNullOrEmpty(Id) || !await Dialogs.ConfirmAsync(Globalize["ConfirmSplitMedia"], Globalize["HeaderSplitMedia"]))
+        {
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            await Queries.SplitVersionsAsync(Id);
+            await ReloadAsync();
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Splitting the versions failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    // onMoreCommandsClick: the menu is that of the version chosen in the track selection.
+    private async Task ShowMenuAsync()
+    {
+        if (_item is not { } item)
+        {
+            return;
+        }
+
+        var target = item;
+        if (_selection?.Source.Value is { Length: > 0 } sourceId && !SameId(sourceId, item.IdText()))
+        {
+            try
+            {
+                target = await Items.GetItemAsync(sourceId) ?? item;
+            }
+            catch (HttpRequestException exception)
+            {
+                AppLog.Warn("Loading the selected version failed: " + exception.Message);
+            }
+        }
+
+        var result = await Menu.ShowAsync(GetMenuOptions(target));
+        if (result is null || _disposed)
+        {
+            return;
+        }
+
+        if (result.Deleted)
+        {
+            await LeaveAsync(target);
+        }
+        else if (result.Updated)
+        {
+            await ReloadAsync();
+            StateHasChanged();
+        }
+    }
+
+    // After the item was deleted: to its season, series or folder, else home.
+    private async Task LeaveAsync(BaseItemDto item)
+    {
+        if (_leaving)
+        {
+            return;
+        }
+
+        _leaving = true;
+        var parentId = (item.SeasonId ?? item.SeriesId ?? item.ParentId).IdText();
+        BaseItemDto? parent = null;
+        if (parentId.Length > 0)
+        {
+            try
+            {
+                parent = await Items.GetItemAsync(parentId);
+            }
+            catch (HttpRequestException exception)
+            {
+                AppLog.Warn("Loading the parent of the deleted item failed: " + exception.Message);
+            }
+        }
+
+        if (parent is not null)
+        {
+            Router.ShowItem(parent);
+        }
+        else
+        {
+            Router.GoHome();
+        }
+    }
+
+    // refreshSelectedVersion: another version becomes the item on show; the selects keep the choice.
+    private async Task OnSourceChangedAsync(string sourceId)
+    {
+        if (_item is not { } item)
+        {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(sourceId) || SameId(sourceId, item.IdText()))
+        {
+            _buttons = DetailsRules.GetPlayButtons(item, Playback.CanPlay(item), Dates.Now);
+            return;
+        }
+
+        BaseItemDto? version;
+        try
+        {
+            version = await Items.GetItemAsync(sourceId);
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Loading the selected version failed: " + exception.Message);
+            return;
+        }
+
+        if (version is null || _disposed || _selection?.Source.Value != sourceId)
+        {
+            return;
+        }
+
+        await ShowItemAsync(version, sourceId);
+    }
+
+    private async Task CancelTimerAsync()
+    {
+        if (_item is { } item && await LiveTv.CancelTimerAsync(item))
+        {
+            await ReloadAsync();
+        }
+    }
+
+    private async Task CancelSeriesTimerAsync()
+    {
+        if (_item is { } item && await LiveTv.CancelSeriesTimerAsync(item))
+        {
+            Router.Navigate(Router.GetLiveTvUrl());
+        }
+    }
+
+    // A collection without playable items has no play and shuffle buttons.
+    private void OnCollectionPlayableChanged(bool playable) => _collectionPlayable = playable;
+
+    // The episode on show comes first in "more from this season".
+    private async Task OnMoreFromSeasonChangedAsync(IReadOnlyList<BaseItemDto> items)
+    {
+        if (_item is not { } item || items.Count < 2)
+        {
+            return;
+        }
+
+        await Task.Delay(100);
+        if (!_disposed && ReferenceEquals(_item, item) && _moreFromSeasonSection is { } section)
+        {
+            await Interop.ScrollToCardAsync(section.Element, item.IdText());
+        }
+    }
+
+    // onUserDataChanged: the play buttons follow the resume position.
+    private void OnUserDataChanged(UserItemDataDto data)
+    {
+        if (_item is { } item && ItemUserData.Apply(item, data))
+        {
+            _buttons = DetailsRules.GetPlayButtons(item, Playback.CanPlay(item), Dates.Now);
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // The original page does not listen for library changes; here an item that is removed elsewhere
+    // is left, and one that is updated elsewhere is loaded again.
+    private void OnLibraryChanged(JsonElement data)
+    {
+        if (_item is not { } item || _disposed)
+        {
+            return;
+        }
+
+        var id = item.IdText();
+        if (Contains(data, "ItemsRemoved", id) || Contains(data, "ItemsRemoved", Id))
+        {
+            _ = InvokeAsync(() => LeaveAsync(item));
+        }
+        else if (Contains(data, "ItemsUpdated", id))
+        {
+            _ = InvokeAsync(async () =>
+            {
+                await ReloadAsync();
+                StateHasChanged();
+            });
+        }
+    }
+
+    private void OnLayoutChanged()
+    {
+        Shell.SetTransparentHeader(!Host.IsMobileLayout);
+        if (_item is { } item)
+        {
+            SetImages(item);
+        }
+
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnLanguageChanged()
+    {
+        if (_item is { } item)
+        {
+            SetTexts(item);
+        }
+
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static bool Contains(JsonElement data, string name, string? id)
+    {
+        if (string.IsNullOrEmpty(id) || data.ValueKind != JsonValueKind.Object || !data.TryGetProperty(name, out var value)
+            || value.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var entry in value.EnumerateArray())
+        {
+            if (entry.ValueKind == JsonValueKind.String && SameId(entry.GetString(), id))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool SameId(string? left, string? right) =>
+        Guid.TryParse(left, out var first) && Guid.TryParse(right, out var second) && first == second;
+}

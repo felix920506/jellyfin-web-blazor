@@ -1,0 +1,1237 @@
+@* The item details page: what it shows per item type, its requests, the buttons and the track selection. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages
+@using Jellyfin.Web.Routing
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Items
+@using Jellyfin.Web.Tests.Support
+@inherits DetailsTestContext
+
+@code {
+    private const long Minute = 600_000_000;
+
+    private static readonly string MovieId = TestItems.Id(1);
+    private static readonly string SeriesId = TestItems.Id(10);
+    private static readonly string SeasonId = TestItems.Id(11);
+    private static readonly string EpisodeId = TestItems.Id(12);
+    private static readonly string AlbumId = TestItems.Id(20);
+    private static readonly string SongId = TestItems.Id(21);
+    private static readonly string ArtistId = TestItems.Id(30);
+    private static readonly string PersonId = TestItems.Id(40);
+    private static readonly string CollectionId = TestItems.Id(50);
+    private static readonly string PlaylistId = TestItems.Id(60);
+
+    private AppLocation _location = AppLocation.Parse("/details");
+    private string? _id;
+    private string? _context;
+    private string? _musicArtist;
+    private string? _genre;
+    private string? _musicGenre;
+    private string? _seriesTimerId;
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+
+        // Sections without a rule of their own in a test are empty.
+        var empty = new { Items = Array.Empty<object>(), TotalRecordCount = 0 };
+        App.Server.OnGet("/Items", empty);
+        App.Server.OnGet("/Persons", empty);
+        App.Server.OnGet("/Similar", empty);
+        App.Server.OnGet("/Collections", empty);
+        App.Server.OnGet("/Shows/NextUp", empty);
+        App.Server.OnGet("/LiveTv/Programs", empty);
+        SignIn();
+    }
+
+    // --- Fixtures ---------------------------------------------------------------------------------
+
+    private static object UserData(string id, long position = 0, bool played = false, bool favorite = false) =>
+        new { ItemId = id, Played = played, IsFavorite = favorite, PlaybackPositionTicks = position, PlayCount = played ? 1 : 0 };
+
+    private static object MovieSource(string id, string name) => new
+    {
+        Id = id,
+        Name = name,
+        Type = "Default",
+        DefaultAudioStreamIndex = 1,
+        MediaStreams = new object[]
+        {
+            new { Type = "Video", Index = 0, DisplayTitle = "1080p H264" },
+            new { Type = "Audio", Index = 1, DisplayTitle = "English - AAC - Stereo", IsDefault = true },
+            new { Type = "Audio", Index = 2, DisplayTitle = "German - AC3 - 5.1" },
+            new { Type = "Subtitle", Index = 3, DisplayTitle = "English - SRT", IsExternal = true }
+        }
+    };
+
+    private static Dictionary<string, object?> Movie(long position = 0) => new()
+    {
+        ["Id"] = MovieId,
+        ["Name"] = "Second Feature",
+        ["OriginalTitle"] = "Zweiter Film",
+        ["ServerId"] = TestApp.ServerId,
+        ["Type"] = "Movie",
+        ["MediaType"] = "Video",
+        ["ProductionYear"] = 2021,
+        ["RunTimeTicks"] = 90 * Minute,
+        ["PrimaryImageAspectRatio"] = 0.6667,
+        ["ImageTags"] = new { Primary = "p1", Logo = "l1" },
+        ["BackdropImageTags"] = new[] { "b1" },
+        ["Overview"] = "A **bold** story.",
+        ["Taglines"] = new[] { "Twice as good" },
+        ["GenreItems"] = new[] { new { Id = TestItems.Id(71), Name = "Drama" } },
+        ["Studios"] = new[] { new { Id = TestItems.Id(72), Name = "Studio One" } },
+        ["Tags"] = new[] { "feel good" },
+        ["ExternalUrls"] = new[] { new { Name = "IMDb", Url = "https://www.imdb.com/title/tt1" } },
+        ["People"] = new object[]
+        {
+            new { Id = TestItems.Id(41), Name = "Ann Actor", Type = "Actor", Role = "Hero", PrimaryImageTag = "a" },
+            new { Id = TestItems.Id(42), Name = "Dee Director", Type = "Director" },
+            new { Id = TestItems.Id(43), Name = "Gus Guest", Type = "GuestStar", Role = "Himself" }
+        },
+        ["LocalTrailerCount"] = 1,
+        ["CanDelete"] = true,
+        ["Chapters"] = new[]
+        {
+            new { Name = "Opening", StartPositionTicks = 0L, ImageTag = "c0" },
+            new { Name = "Ending", StartPositionTicks = 60 * Minute, ImageTag = "c1" }
+        },
+        ["MediaSources"] = new[] { MovieSource(MovieId, "Second Feature") },
+        ["UserData"] = UserData(MovieId, position)
+    };
+
+    private static object Season(int number) => new
+    {
+        Id = TestItems.Id(10 + number),
+        Name = "Season " + number,
+        ServerId = TestApp.ServerId,
+        Type = "Season",
+        IsFolder = true,
+        SeriesId,
+        SeriesName = "The Show",
+        IndexNumber = number,
+        ImageTags = new { Primary = "s" + number },
+        UserData = UserData(TestItems.Id(10 + number))
+    };
+
+    private static object Episode(int number, string name) => new
+    {
+        Id = TestItems.Id(11 + number),
+        Name = name,
+        ServerId = TestApp.ServerId,
+        Type = "Episode",
+        MediaType = "Video",
+        SeriesId,
+        SeriesName = "The Show",
+        SeasonId,
+        SeasonName = "Season 1",
+        IndexNumber = number,
+        ParentIndexNumber = 1,
+        Overview = "What happens in " + name,
+        RunTimeTicks = 25 * Minute,
+        PrimaryImageAspectRatio = 1.7778,
+        ImageTags = new { Primary = "e" + number },
+        UserData = UserData(TestItems.Id(11 + number))
+    };
+
+    private static object Song(int number, string name, int disc = 1) => new
+    {
+        Id = TestItems.Id(20 + number),
+        Name = name,
+        ServerId = TestApp.ServerId,
+        Type = "Audio",
+        MediaType = "Audio",
+        Album = "The Album",
+        AlbumId,
+        AlbumArtist = "Artist A",
+        AlbumArtists = new[] { new { Id = ArtistId, Name = "Artist A" } },
+        Artists = new[] { "Artist A" },
+        ArtistItems = new[] { new { Id = ArtistId, Name = "Artist A" } },
+        IndexNumber = number,
+        ParentIndexNumber = disc,
+        RunTimeTicks = 3 * Minute,
+        UserData = UserData(TestItems.Id(20 + number))
+    };
+
+    private static object Album(int number, string name) => new
+    {
+        Id = TestItems.Id(number),
+        Name = name,
+        ServerId = TestApp.ServerId,
+        Type = "MusicAlbum",
+        IsFolder = true,
+        AlbumArtist = "Artist A",
+        AlbumArtists = new[] { new { Id = ArtistId, Name = "Artist A" } },
+        ProductionYear = 2000 + number,
+        ImageTags = new { Primary = "al" + number },
+        UserData = UserData(TestItems.Id(number))
+    };
+
+    private static object Items(params object[] items) => new { Items = items, TotalRecordCount = items.Length };
+
+    private IRenderedComponent<ContainerFragment> RenderDetails(
+        string? id,
+        string? context = null,
+        string? musicArtist = null,
+        string? genre = null,
+        string? musicGenre = null,
+        string? seriesTimerId = null)
+    {
+        _id = id;
+        _context = context;
+        _musicArtist = musicArtist;
+        _genre = genre;
+        _musicGenre = musicGenre;
+        _seriesTimerId = seriesTimerId;
+        var query = new (string Key, string? Value)[]
+            {
+                ("id", id), ("context", context), ("musicartist", musicArtist), ("genre", genre), ("musicgenre", musicGenre),
+                ("seriesTimerId", seriesTimerId), ("serverId", TestApp.ServerId)
+            }
+            .Where(pair => pair.Value is not null)
+            .Select(pair => pair.Key + "=" + Uri.EscapeDataString(pair.Value!));
+        _location = AppLocation.Parse("/details?" + string.Join('&', query));
+        return Render(
+            @<CascadingValue Value="_location">
+                <ItemDetails Id="@_id" ServerId="@TestApp.ServerId" Context="@_context" MusicArtist="@_musicArtist"
+                             Genre="@_genre" MusicGenre="@_musicGenre" SeriesTimerId="@_seriesTimerId" />
+            </CascadingValue>);
+    }
+
+    private IRenderedComponent<ContainerFragment> RenderMovie(long position = 0, Action<Dictionary<string, object?>>? change = null)
+    {
+        var movie = Movie(position);
+        change?.Invoke(movie);
+        App.Server.OnGet("/Items/" + MovieId, movie);
+        var cut = RenderDetails(MovieId);
+        cut.WaitForAssertion(() => Assert.Equal("Second Feature", cut.Find("h1.itemName").TextContent));
+        return cut;
+    }
+
+    private static bool Hidden(AngleSharp.Dom.IElement element) => element.ClassList.Contains("hide");
+
+    private static string[] VisibleButtons(IRenderedComponent<ContainerFragment> cut) => cut.FindAll(".mainDetailButtons > button")
+        .Where(button => !Hidden(button))
+        .Select(button => button.ClassList.First(name => name.StartsWith("btn", StringComparison.Ordinal)))
+        .ToArray();
+
+    private static string[] Texts(IRenderedComponent<ContainerFragment> cut, string selector) =>
+        cut.FindAll(selector).Select(element => element.TextContent.Trim()).ToArray();
+
+    // --- Movie: header ----------------------------------------------------------------------------
+
+    [Fact]
+    public void A_movie_shows_its_header()
+    {
+        var cut = RenderMovie();
+
+        Assert.Equal(
+            "page libraryPage itemDetailPage noSecondaryNavPage selfBackdropPage noBackdropTransparency",
+            cut.Find("#itemDetailPage").ClassName);
+        Assert.Equal("Zweiter Film", cut.Find("h4.originalTitle").TextContent);
+
+        // The poster is in the page twice: beside the title on desktop, above it on phones.
+        Assert.Equal(2, cut.FindAll(".detailImageContainer .card.portraitCard").Count);
+        Assert.Contains("hide-mobile", cut.FindAll(".detailImageContainer")[0].ClassName);
+        Assert.Contains("hide-desktop", cut.FindAll(".detailImageContainer")[1].ClassName);
+
+        Assert.Contains("2021", cut.Find(".itemMiscInfo-primary").TextContent);
+        Assert.Equal("Twice as good", cut.Find("h3.tagline").TextContent);
+        Assert.False(Hidden(cut.Find("h3.tagline")));
+        Assert.Equal("Tags: feel good", cut.Find(".itemTags").TextContent);
+        Assert.Equal("IMDb", cut.Find(".itemExternalLinks a").TextContent);
+        Assert.Equal("_blank", cut.Find(".itemExternalLinks a").GetAttribute("target"));
+        Assert.True(Hidden(cut.Find("#itemBirthday")));
+        Assert.True(Hidden(cut.Find("#seriesAirTime")));
+
+        // Directors, studios and genres with their links.
+        Assert.Equal(["Director", "Studio", "Genre"], Texts(cut, ".itemDetailsGroup .detailsGroupItem .label"));
+        Assert.Equal(["Dee Director", "Studio One", "Drama"], Texts(cut, ".itemDetailsGroup a"));
+        Assert.Equal(
+            $"#/list?genreId={TestItems.Id(71)}&serverId={TestApp.ServerId}",
+            cut.FindAll(".itemDetailsGroup a")[2].GetAttribute("href"));
+    }
+
+    [Fact]
+    public async Task The_banner_of_a_movie_is_the_page_backdrop_and_the_header_is_see_through()
+    {
+        var cut = RenderMovie();
+
+        var backdrop = Assert.Single(BackdropDom.Shown);
+        Assert.Contains($"/Items/{MovieId}/Images/Backdrop/0?", backdrop);
+        Assert.Contains("tag=b1", backdrop);
+        Assert.True(Get<ShellState>().TransparentHeader);
+
+        var logo = cut.Find(".detailLogo");
+        Assert.Contains("lazy", logo.ClassName);
+        Assert.Contains($"/Items/{MovieId}/Images/Logo", logo.GetAttribute("data-src"));
+        Assert.Equal("itemBackdrop", cut.Find("#itemBackdrop").ClassName);
+
+        // Leaving the page takes the backdrop away and makes the header opaque again.
+        await DisposeComponentsAsync();
+        Assert.Null(BackdropDom.Url);
+        Assert.False(Get<ShellState>().TransparentHeader);
+    }
+
+    [Fact]
+    public void With_backdrops_turned_on_the_page_stays_see_through()
+    {
+        Get<UserSettings>().EnableBackdrops = true;
+
+        var cut = RenderMovie();
+
+        Assert.DoesNotContain("noBackdropTransparency", cut.Find("#itemDetailPage").ClassName);
+        Assert.Single(BackdropDom.Shown);
+    }
+
+    [Fact]
+    public void Without_the_banner_setting_there_is_no_backdrop()
+    {
+        Get<UserSettings>().DetailsBanner = false;
+
+        var cut = RenderMovie();
+
+        Assert.Empty(BackdropDom.Shown);
+        Assert.DoesNotContain("noBackdropTransparency", cut.Find("#itemDetailPage").ClassName);
+    }
+
+    [Fact]
+    public void On_a_phone_the_banner_sits_above_the_title()
+    {
+        Get<AppHost>().SetLayout("mobile");
+
+        var cut = RenderMovie();
+
+        var banner = cut.Find("#itemBackdrop");
+        Assert.Equal("itemBackdrop lazy", banner.ClassName);
+        Assert.Contains($"/Items/{MovieId}/Images/Backdrop/0?", banner.GetAttribute("data-src"));
+        Assert.Empty(BackdropDom.Shown);
+        Assert.False(Get<ShellState>().TransparentHeader);
+        Assert.True(Details.ImageLoads > 0);
+    }
+
+    // --- Movie: buttons ---------------------------------------------------------------------------
+
+    [Fact]
+    public void A_movie_has_the_buttons_of_its_type()
+    {
+        var cut = RenderMovie();
+
+        Assert.Equal(["btnPlay", "btnPlayTrailer", "btnPlaystate", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut));
+        Assert.Equal(
+            [
+                "btnPlay", "btnReplay", "btnDownload", "btnPlayTrailer", "btnInstantMix", "btnShuffle", "btnCancelSeriesTimer",
+                "btnCancelTimer", "btnPlaystate", "btnUserRating", "btnSplitVersions", "btnMoreCommands"
+            ],
+            cut.FindAll(".mainDetailButtons > button").Select(button => button.ClassList.First(name => name.StartsWith("btn", StringComparison.Ordinal))));
+        Assert.Equal("Play", cut.Find(".btnPlay").GetAttribute("title"));
+        Assert.Equal("resume", cut.Find(".btnPlay").GetAttribute("data-action"));
+        Assert.False(Hidden(cut.Find(".mainDetailButtons")));
+    }
+
+    [Fact]
+    public void An_item_this_client_cannot_play_has_no_play_button()
+    {
+        Playback.Playable = false;
+
+        var cut = RenderMovie();
+
+        Assert.Equal(["btnPlayTrailer", "btnPlaystate", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut));
+        Assert.True(Hidden(cut.Find("form.trackSelections")));
+    }
+
+    [Fact]
+    public void A_started_movie_resumes_or_starts_over()
+    {
+        var cut = RenderMovie(position: 30 * Minute);
+
+        Assert.Equal("Resume", cut.Find(".btnPlay").GetAttribute("title"));
+        Assert.False(Hidden(cut.Find(".btnReplay")));
+        Assert.Equal("Play", cut.Find(".btnReplay").GetAttribute("title"));
+
+        cut.Find(".btnPlay").Click();
+        cut.Find(".btnReplay").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(2, Playback.PlayRequests.Count));
+        Assert.Equal(30 * Minute, Playback.PlayRequests[0].StartPositionTicks);
+        Assert.Equal(0, Playback.PlayRequests[1].StartPositionTicks);
+        Assert.Equal(MovieId, Assert.Single(Playback.PlayRequests[0].Items!).IdText());
+    }
+
+    [Fact]
+    public void The_trailer_button_plays_the_trailers()
+    {
+        var cut = RenderMovie();
+
+        cut.Find(".btnPlayTrailer").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("PlayTrailers", Playback.Calls));
+    }
+
+    [Fact]
+    public void Played_and_favorite_are_set_on_the_server()
+    {
+        App.Server.OnPost("/UserPlayedItems/" + MovieId, UserData(MovieId, played: true));
+        App.Server.OnPost("/UserFavoriteItems/" + MovieId, UserData(MovieId, played: true, favorite: true));
+        var cut = RenderMovie();
+        Assert.Equal("false", cut.Find(".btnPlaystate").GetAttribute("data-played"));
+
+        cut.Find(".btnPlaystate").Click();
+        cut.WaitForAssertion(() => Assert.Equal("true", cut.Find(".btnPlaystate").GetAttribute("data-played")));
+        cut.Find(".btnUserRating").Click();
+        cut.WaitForAssertion(() => Assert.Equal("true", cut.Find(".btnUserRating").GetAttribute("data-isfavorite")));
+
+        Assert.Single(App.Server.RequestsTo("/UserPlayedItems/" + MovieId));
+        Assert.Single(App.Server.RequestsTo("/UserFavoriteItems/" + MovieId));
+    }
+
+    [Fact]
+    public async Task The_more_button_opens_the_menu_of_the_item()
+    {
+        var cut = RenderMovie();
+
+        cut.Find(".btnMoreCommands").Click();
+
+        var dialog = await NextDialogAsync();
+        Assert.Contains("actionSheet", dialog.Options.Class);
+        dialog.Cancel();
+    }
+
+    [Fact]
+    public void An_administrator_can_split_grouped_versions()
+    {
+        SignIn(admin: true);
+        var cut = RenderMovie(change: movie => movie["MediaSources"] = new object[]
+        {
+            new { Id = MovieId, Name = "1080p", Type = "Grouping", MediaStreams = Array.Empty<object>() },
+            new { Id = TestItems.Id(2), Name = "4K", Type = "Grouping", MediaStreams = Array.Empty<object>() }
+        });
+
+        Assert.False(Hidden(cut.Find(".btnSplitVersions")));
+    }
+
+    // --- Movie: track selection -------------------------------------------------------------------
+
+    [Fact]
+    public void A_movie_offers_its_tracks()
+    {
+        var cut = RenderMovie();
+
+        Assert.False(Hidden(cut.Find("form.trackSelections")));
+        Assert.True(Hidden(cut.Find(".selectSourceContainer")));
+        Assert.False(Hidden(cut.Find(".selectVideoContainer")));
+        Assert.True(cut.Find("select.selectVideo").HasAttribute("disabled"));
+        Assert.Equal(["1080p H264"], Texts(cut, "select.selectVideo option"));
+        Assert.Equal(["English - AAC - Stereo", "German - AC3 - 5.1"], Texts(cut, "select.selectAudio option"));
+        Assert.False(cut.Find("select.selectAudio").HasAttribute("disabled"));
+        Assert.Equal(["Off", "English - SRT"], Texts(cut, "select.selectSubtitles option"));
+        Assert.Equal(["Version", "Video", "Audio", "Subtitles"], Texts(cut, "form.trackSelections label.selectLabel"));
+    }
+
+    [Fact]
+    public void Playback_starts_with_the_default_tracks()
+    {
+        var cut = RenderMovie();
+
+        cut.Find(".btnPlay").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(Playback.PlayRequests));
+        var request = Playback.PlayRequests[0];
+        Assert.Equal(MovieId, request.MediaSourceId);
+        Assert.Equal(1, request.AudioStreamIndex);
+        Assert.Equal(-1, request.SubtitleStreamIndex);
+        Assert.Equal(0, request.StartPositionTicks);
+    }
+
+    [Fact]
+    public void Playback_starts_with_the_chosen_tracks()
+    {
+        var cut = RenderMovie();
+
+        cut.Find("select.selectAudio").Change("2");
+        cut.Find("select.selectSubtitles").Change("3");
+        cut.Find(".btnPlay").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(Playback.PlayRequests));
+        var request = Playback.PlayRequests[0];
+        Assert.Equal(MovieId, request.MediaSourceId);
+        Assert.Equal(2, request.AudioStreamIndex);
+        Assert.Equal(3, request.SubtitleStreamIndex);
+    }
+
+    [Fact]
+    public void Choosing_another_version_shows_that_version()
+    {
+        var otherId = TestItems.Id(2);
+        object[] sources = [MovieSource(MovieId, "1080p"), new
+        {
+            Id = otherId,
+            Name = "4K",
+            Type = "Default",
+            MediaStreams = new object[]
+            {
+                new { Type = "Video", Index = 0, DisplayTitle = "4K HEVC" },
+                new { Type = "Audio", Index = 1, DisplayTitle = "French - AAC" }
+            }
+        }];
+        var other = Movie();
+        other["Id"] = otherId;
+        other["Name"] = "Second Feature";
+        other["MediaSources"] = sources;
+        other["UserData"] = UserData(otherId, position: 10 * Minute);
+        App.Server.OnGet("/Items/" + otherId, other);
+        var cut = RenderMovie(change: movie => movie["MediaSources"] = sources);
+        Assert.False(Hidden(cut.Find(".selectSourceContainer")));
+        Assert.Equal(["1080p", "4K"], Texts(cut, "select.selectSource option"));
+
+        cut.Find("select.selectSource").Change(otherId);
+
+        // The other version is loaded: its tracks and its own resume position.
+        cut.WaitForAssertion(() => Assert.Equal(["French - AAC"], Texts(cut, "select.selectAudio option")));
+        cut.WaitForAssertion(() => Assert.Equal("Resume", cut.Find(".btnPlay").GetAttribute("title")));
+        Assert.Equal(otherId, cut.Find("select.selectSource").GetAttribute("value"));
+        Assert.True(Hidden(cut.Find(".selectSubtitlesContainer")));
+
+        cut.Find(".btnPlay").Click();
+        cut.WaitForAssertion(() => Assert.Single(Playback.PlayRequests));
+        Assert.Equal(otherId, Playback.PlayRequests[0].MediaSourceId);
+        Assert.Equal(1, Playback.PlayRequests[0].AudioStreamIndex);
+        Assert.Null(Playback.PlayRequests[0].SubtitleStreamIndex);
+        Assert.Equal(10 * Minute, Playback.PlayRequests[0].StartPositionTicks);
+    }
+
+    // --- Movie: sections --------------------------------------------------------------------------
+
+    [Fact]
+    public void The_overview_is_rendered_from_markdown_and_expands()
+    {
+        Details.Clamped = true;
+
+        var cut = RenderMovie();
+
+        cut.WaitForAssertion(() => Assert.Equal("A **bold** story.", cut.Find("p.overview bdi em").TextContent));
+        cut.WaitForAssertion(() => Assert.False(Hidden(cut.Find(".overview-expand"))));
+        Assert.Contains("detail-clamp-text", cut.Find("p.overview").ClassName);
+        Assert.Equal("Show more", cut.Find(".overview-expand").TextContent.Trim());
+
+        cut.Find(".overview-expand").Click();
+
+        Assert.DoesNotContain("detail-clamp-text", cut.Find("p.overview").ClassName);
+        Assert.Equal("Show less", cut.Find(".overview-expand").TextContent.Trim());
+    }
+
+    [Fact]
+    public void A_short_overview_has_nothing_to_expand()
+    {
+        var cut = RenderMovie();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("p.overview bdi em")));
+        Assert.True(Hidden(cut.Find(".overview-expand")));
+    }
+
+    [Fact]
+    public void A_movie_shows_people_scenes_and_similar_items()
+    {
+        App.Server.OnGet("/Items/" + MovieId + "/Similar", Items(TestItems.Movie(5, "Alike"), TestItems.Movie(6, "Also alike")));
+        App.Server.OnGet("/Items/" + MovieId + "/Collections", Items(new
+        {
+            Id = CollectionId,
+            Name = "The Collection",
+            ServerId = TestApp.ServerId,
+            Type = "BoxSet",
+            IsFolder = true
+        }));
+
+        var cut = RenderMovie();
+
+        Assert.Equal("Cast & Crew", cut.Find("#castCollapsible #peopleHeader").TextContent.Trim());
+        Assert.Equal(["Ann Actor", "Dee Director"], Texts(cut, "#castContent .card .cardText-first"));
+        Assert.Contains("personCard", cut.Find("#castContent .card").ClassName);
+        Assert.Equal("Guest Stars", cut.Find("#guestCastCollapsible h2").TextContent.Trim());
+        Assert.Single(cut.FindAll("#guestCastContent .card"));
+
+        Assert.Equal("Scenes", cut.Find("#scenesCollapsible h2").TextContent.Trim());
+        Assert.Equal(2, cut.FindAll("#scenesContent .chapterCard").Count);
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("#similarCollapsible .card").Count));
+        Assert.False(Hidden(cut.Find("#similarCollapsible")));
+        Assert.Equal("More Like This", cut.Find("#similarCollapsible h2").TextContent.Trim());
+        var similar = Assert.Single(App.Server.RequestsTo("/Items/" + MovieId + "/Similar"));
+        Assert.Equal("12", similar.Query("limit"));
+        Assert.Equal(UserIdText, similar.Query("userId"));
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("#collectionsCollapsible .card")));
+        Assert.Equal("Collections", cut.Find("#collectionsCollapsible h2").TextContent.Trim());
+
+        // What a movie cannot have is not in the page.
+        Assert.Empty(cut.FindAll(".nextUpSection, #childrenCollapsible, #listChildrenCollapsible, #lyricsSection, .moreFromSeasonSection"));
+        Assert.Empty(cut.FindAll(".moreFromArtistSection, #specialsCollapsible, #additionalPartsCollapsible, #musicVideosCollapsible"));
+    }
+
+    [Fact]
+    public void Sections_without_items_stay_hidden()
+    {
+        var cut = RenderMovie(change: movie =>
+        {
+            movie["People"] = Array.Empty<object>();
+            movie["Chapters"] = Array.Empty<object>();
+        });
+
+        cut.WaitForAssertion(() => Assert.Single(App.Server.RequestsTo("/Items/" + MovieId + "/Similar")));
+        Assert.True(Hidden(cut.Find("#similarCollapsible")));
+        Assert.True(Hidden(cut.Find("#collectionsCollapsible")));
+        Assert.Empty(cut.FindAll("#castCollapsible, #guestCastCollapsible, #scenesCollapsible"));
+    }
+
+    [Fact]
+    public void Special_features_and_additional_parts_are_asked_for_when_the_item_has_them()
+    {
+        App.Server.OnGet("/Items/" + MovieId + "/SpecialFeatures", new[] { TestItems.Movie(7, "Making of") });
+        App.Server.OnGet("/Videos/" + MovieId + "/AdditionalParts", Items(TestItems.Movie(8, "Part 2")));
+
+        var cut = RenderMovie(change: movie =>
+        {
+            movie["SpecialFeatureCount"] = 1;
+            movie["PartCount"] = 2;
+        });
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("#specialsCollapsible .card")));
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("#additionalPartsCollapsible .card")));
+        Assert.Equal("Special Features", cut.Find("#specialsCollapsible h2").TextContent.Trim());
+        Assert.False(Hidden(cut.Find("#additionalPartsCollapsible")));
+    }
+
+    // --- Movie: changes ---------------------------------------------------------------------------
+
+    [Fact]
+    public void A_resume_position_set_elsewhere_changes_the_play_buttons()
+    {
+        var cut = RenderMovie();
+        var requests = App.Server.RequestsTo("/Items/" + MovieId).Count;
+
+        ServerMessage("UserDataChanged", new
+        {
+            UserId = UserIdText,
+            UserDataList = new[] { UserData(MovieId, position: 5 * Minute, favorite: true) }
+        });
+
+        cut.WaitForAssertion(() => Assert.Equal("Resume", cut.Find(".btnPlay").GetAttribute("title")));
+        Assert.False(Hidden(cut.Find(".btnReplay")));
+        Assert.Equal("true", cut.Find(".btnUserRating").GetAttribute("data-isfavorite"));
+
+        // The item is not loaded again for it.
+        Assert.Equal(requests, App.Server.RequestsTo("/Items/" + MovieId).Count);
+    }
+
+    [Fact]
+    public void An_item_changed_in_the_library_is_loaded_again()
+    {
+        var cut = RenderMovie();
+        var changed = Movie();
+        changed["Name"] = "Second Feature, recut";
+        App.Server.OnGet("/Items/" + MovieId, changed);
+
+        ServerMessage("LibraryChanged", new { ItemsAdded = Array.Empty<string>(), ItemsUpdated = new[] { MovieId }, ItemsRemoved = Array.Empty<string>() });
+
+        cut.WaitForAssertion(() => Assert.Equal("Second Feature, recut", cut.Find("h1.itemName").TextContent));
+    }
+
+    [Fact]
+    public void An_item_removed_from_the_library_is_left()
+    {
+        var cut = RenderMovie();
+
+        ServerMessage("LibraryChanged", new { ItemsRemoved = new[] { Guid.Parse(MovieId).ToString("D") } });
+
+        cut.WaitForAssertion(() => Assert.Equal("/home", App.Browser.Hash));
+    }
+
+    [Fact]
+    public void A_removed_episode_leads_to_its_season()
+    {
+        App.Server.OnGet("/Items/" + EpisodeId, Episode(1, "Pilot"));
+        App.Server.OnGet("/Items/" + SeasonId, Season(1));
+        App.Server.OnGet("/Episodes", Items(Episode(1, "Pilot")));
+        var cut = RenderDetails(EpisodeId);
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("h3.itemName")));
+
+        ServerMessage("LibraryChanged", new { ItemsRemoved = new[] { EpisodeId } });
+
+        cut.WaitForAssertion(() => Assert.StartsWith("/details?id=" + SeasonId, App.Browser.Hash));
+    }
+
+    // --- Shows ------------------------------------------------------------------------------------
+
+    [Fact]
+    public void A_series_shows_next_up_and_its_seasons()
+    {
+        App.Server.OnGet("/Items/" + SeriesId, new
+        {
+            Id = SeriesId,
+            Name = "The Show",
+            ServerId = TestApp.ServerId,
+            Type = "Series",
+            IsFolder = true,
+            Status = "Continuing",
+            AirDays = new[] { "Monday" },
+            AirTime = "20:00",
+            ImageTags = new { Primary = "p" },
+            UserData = UserData(SeriesId)
+        });
+        App.Server.OnGet("/Shows/" + SeriesId + "/Seasons", Items(Season(1), Season(2)));
+        App.Server.OnGet("/Shows/NextUp", Items(Episode(2, "Second")));
+
+        var cut = RenderDetails(SeriesId, context: "tvshows");
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("#listChildrenCollapsible #childrenContent .card").Count));
+        Assert.Equal("Seasons", cut.Find("#listChildrenCollapsible h2").TextContent.Trim());
+        Assert.False(Hidden(cut.Find("#listChildrenCollapsible h2")));
+        Assert.Equal(["Season 1", "Season 2"], Texts(cut, "#childrenContent .card .cardText-first"));
+        Assert.Contains("vertical-wrap", cut.Find("#childrenContent .itemsContainer").ClassName);
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".nextUpSection .nextUpItems .card")));
+        Assert.Equal("Next Up", cut.Find(".nextUpSection h2").TextContent.Trim());
+        Assert.Equal(SeriesId, Assert.Single(App.Server.RequestsTo("/Shows/NextUp")).Query("SeriesId"));
+
+        Assert.Equal("Airs Mondays at 20:00", cut.Find("#seriesAirTime").TextContent);
+        Assert.Equal(["btnPlay", "btnShuffle", "btnPlaystate", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut));
+        Assert.True(Hidden(cut.Find("form.trackSelections")));
+        Assert.Equal(SeriesId, Assert.Single(App.Server.RequestsTo("/LiveTv/Programs")).Query("LibrarySeriesId"));
+        Assert.True(Hidden(cut.Find("#seriesScheduleSection")));
+    }
+
+    [Fact]
+    public void A_season_lists_its_episodes()
+    {
+        App.Server.OnGet("/Items/" + SeasonId, Season(1));
+        App.Server.OnGet("/Shows/" + SeriesId + "/Episodes", Items(Episode(1, "Pilot"), Episode(2, "Second")));
+
+        var cut = RenderDetails(SeasonId);
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("#childrenContent .listItem").Count));
+        Assert.True(Hidden(cut.Find("#listChildrenCollapsible h2")));
+        Assert.Contains("vertical-list", cut.Find("#childrenContent .itemsContainer").ClassName);
+        Assert.Equal(["What happens in Pilot", "What happens in Second"], Texts(cut, "#childrenContent .listItem-overview"));
+        Assert.NotEmpty(cut.FindAll("#childrenContent .listItem .listItemImage"));
+
+        var request = Assert.Single(App.Server.RequestsTo("/Shows/" + SeriesId + "/Episodes"));
+        Assert.Equal(SeasonId, request.Query("seasonId"));
+        Assert.Contains("Overview", request.Query("Fields"));
+
+        // The series is the first title line.
+        Assert.Equal("The Show", cut.Find("h1.parentName a").TextContent);
+        Assert.Equal("Season 1", cut.Find("h3.itemName").TextContent);
+    }
+
+    [Fact]
+    public void An_episode_shows_the_rest_of_its_season()
+    {
+        App.Server.OnGet("/Items/" + EpisodeId, Episode(1, "Pilot"));
+        App.Server.OnGet("/Shows/" + SeriesId + "/Episodes", Items(Episode(1, "Pilot"), Episode(2, "Second")));
+
+        var cut = RenderDetails(EpisodeId);
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".moreFromSeasonSection .card").Count));
+        Assert.Equal("More from Season 1", cut.Find(".moreFromSeasonSection h2").TextContent.Trim());
+        Assert.False(Hidden(cut.Find(".moreFromSeasonSection")));
+        Assert.Equal(["The Show", "Season 1"], Texts(cut, ".nameContainer a"));
+        Assert.Contains("1. Pilot", cut.Find("h3.itemName").TextContent);
+        Assert.Equal(2, cut.FindAll(".detailImageContainer .card.backdropCard").Count);
+
+        // The card of the episode on show is scrolled into view.
+        cut.WaitForAssertion(() => Assert.Equal([EpisodeId], Details.ScrolledTo));
+        Assert.Empty(cut.FindAll("#similarCollapsible"));
+    }
+
+    [Fact]
+    public void An_only_episode_has_no_more_from_its_season()
+    {
+        App.Server.OnGet("/Items/" + EpisodeId, Episode(1, "Pilot"));
+        App.Server.OnGet("/Shows/" + SeriesId + "/Episodes", Items(Episode(1, "Pilot")));
+
+        var cut = RenderDetails(EpisodeId);
+
+        cut.WaitForAssertion(() => Assert.Single(App.Server.RequestsTo("/Shows/" + SeriesId + "/Episodes")));
+        cut.WaitForAssertion(() => Assert.True(Hidden(cut.Find(".moreFromSeasonSection"))));
+        Assert.Empty(Details.ScrolledTo);
+    }
+
+    // --- Music ------------------------------------------------------------------------------------
+
+    [Fact]
+    public void An_album_lists_its_tracks_by_disc()
+    {
+        App.Server.OnGet("/Items/" + AlbumId, Album(20, "The Album"));
+        App.Server.OnGet("/Items", request => request.Query("ParentId") == AlbumId
+            ? Items(Song(1, "First Song"), Song(2, "Second Song"), Song(3, "Third Song", disc: 2))
+            : request.Query("IncludeItemTypes") == "MusicAlbum" ? Items(Album(25, "Another Album")) : Items());
+
+        var cut = RenderDetails(AlbumId);
+
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll("#childrenContent .listItem").Count));
+        Assert.Equal(2, cut.FindAll("#childrenContent .listGroupHeader").Count);
+        Assert.True(Hidden(cut.Find("#listChildrenCollapsible h2")));
+        Assert.Empty(cut.FindAll("#childrenContent .listItem .listItemImage"));
+        var tracks = App.Server.RequestsTo("/Items").Single(request => request.Query("ParentId") == AlbumId);
+        Assert.Equal("ParentIndexNumber,IndexNumber,SortName", tracks.Query("SortBy"));
+
+        Assert.Equal(["btnPlay", "btnInstantMix", "btnShuffle", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut));
+        Assert.Equal("Artist A", cut.Find("h3.musicParentName a").TextContent);
+        Assert.Equal(2, cut.FindAll(".detailImageContainer .card.squareCard").Count);
+
+        // Other albums of the album artist.
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".moreFromArtistSection .card")));
+        Assert.Equal("More from Artist A", cut.Find(".moreFromArtistSection h2").TextContent.Trim());
+        var more = App.Server.RequestsTo("/Items").Single(request => request.Query("AlbumArtistIds") is not null);
+        Assert.Equal(ArtistId, more.Query("AlbumArtistIds"));
+        Assert.Equal(AlbumId, more.Query("ExcludeItemIds"));
+        Assert.Contains(App.Server.RequestsTo("/Items"), request => request.Query("AlbumIds") == AlbumId && request.Query("IncludeItemTypes") == "MusicVideo");
+        Assert.True(Hidden(cut.Find("#musicVideosCollapsible")));
+        Assert.Equal(ArtistId, Assert.Single(App.Server.RequestsTo("/Items/" + AlbumId + "/Similar")).Query("ExcludeArtistIds"));
+    }
+
+    [Fact]
+    public void A_song_shows_its_lyrics_and_more_from_its_artist()
+    {
+        App.Server.OnGet("/Items/" + SongId, new
+        {
+            Id = SongId,
+            Name = "First Song",
+            ServerId = TestApp.ServerId,
+            Type = "Audio",
+            MediaType = "Audio",
+            Album = "The Album",
+            AlbumId,
+            AlbumArtists = new[] { new { Id = ArtistId, Name = "Artist A" } },
+            HasLyrics = true,
+            RunTimeTicks = 3 * Minute,
+            UserData = UserData(SongId)
+        });
+        App.Server.OnGet("/Audio/" + SongId + "/Lyrics", new { Lyrics = new[] { new { Text = "First line" }, new { Text = "Second line" } } });
+        App.Server.OnGet("/Items", request => request.Query("IncludeItemTypes") == "MusicAlbum" ? Items(Album(20, "The Album")) : Items());
+
+        var cut = RenderDetails(SongId);
+
+        cut.WaitForAssertion(() => Assert.False(Hidden(cut.Find("#lyricsSection"))));
+        Assert.Contains("First line", cut.Find("#lyricsSection").TextContent);
+        Assert.Contains("Second line", cut.Find("#lyricsSection").TextContent);
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".moreFromArtistSection .card")));
+        Assert.Equal(["btnPlay", "btnInstantMix", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut));
+        Assert.Equal(["Artist A", "The Album"], Texts(cut, "h3.musicParentName a"));
+        Assert.True(Hidden(cut.Find("form.trackSelections")));
+
+        cut.Find(".btnInstantMix").Click();
+        cut.WaitForAssertion(() => Assert.Contains("InstantMix", Playback.Calls));
+    }
+
+    private static object Artist() => new
+    {
+        Id = ArtistId,
+        Name = "Artist A",
+        ServerId = TestApp.ServerId,
+        Type = "MusicArtist",
+        IsFolder = true,
+        AlbumCount = 2,
+        MusicVideoCount = 0,
+        ImageTags = new { Primary = "ar" },
+        UserData = UserData(ArtistId)
+    };
+
+    [Fact]
+    public void An_artist_shows_albums_and_what_the_artist_appears_on()
+    {
+        App.Server.OnGet("/Items/" + ArtistId, Artist());
+        App.Server.OnGet("/Items", request =>
+        {
+            if (request.Query("AlbumArtistIds") == ArtistId && request.Query("IncludeItemTypes") == "MusicAlbum")
+            {
+                return new { Items = new[] { Album(20, "The Album"), Album(25, "Another Album") }, TotalRecordCount = 120 };
+            }
+
+            return request.Query("ContributingArtistIds") == ArtistId ? Items(Album(26, "A Compilation")) : Items();
+        });
+
+        var cut = RenderDetails(ArtistId);
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("#childrenContent .verticalSection[data-type=MusicAlbum] .card").Count));
+        var albums = cut.Find("#childrenContent .verticalSection[data-type=MusicAlbum]");
+        Assert.False(Hidden(albums));
+        Assert.Equal("Albums", albums.QuerySelector("h2")!.TextContent.Trim());
+
+        // More albums than the section asks for: a link to all of them.
+        var more = albums.QuerySelector("a[is=emby-linkbutton]")!;
+        Assert.False(Hidden(more));
+        Assert.Equal($"#/list?type=MusicAlbum&artistId={ArtistId}&serverId={TestApp.ServerId}", more.GetAttribute("href"));
+        var request = App.Server.RequestsTo("/Items").First(candidate => candidate.Query("AlbumArtistIds") == ArtistId);
+        Assert.Equal("100", request.Query("Limit"));
+        Assert.Equal("PremiereDate,ProductionYear,Sortname", request.Query("SortBy"));
+        Assert.Equal("true", request.Query("Recursive"), ignoreCase: true);
+
+        // Sections without items stay hidden; those the artist has nothing of are not asked for.
+        Assert.True(Hidden(cut.Find("#childrenContent .verticalSection[data-type=Book]")));
+        Assert.Empty(cut.FindAll("#childrenContent .verticalSection[data-type=MusicVideo]"));
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".moreFromArtistSection .card")));
+        Assert.Equal("Appears On", cut.Find(".moreFromArtistSection h2").TextContent.Trim());
+        Assert.Equal(["btnPlay", "btnInstantMix", "btnShuffle", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut));
+    }
+
+    [Fact]
+    public void An_artist_can_be_opened_by_name()
+    {
+        App.Server.OnGet("/Persons/Artist%20A", Artist());
+
+        var cut = RenderDetails(null, musicArtist: "Artist A");
+
+        cut.WaitForAssertion(() => Assert.Equal("Artist A", cut.Find("h1.itemName").TextContent));
+        Assert.Equal(UserIdText, Assert.Single(App.Server.RequestsTo("/Persons/Artist%20A")).Query("userId"));
+    }
+
+    // --- Genres by name ---------------------------------------------------------------------------
+
+    [Fact]
+    public void A_genre_is_opened_by_name_and_shows_what_belongs_to_it()
+    {
+        var genreId = TestItems.Id(71);
+        App.Server.OnGet("/Genres/Science%20Fiction", new
+        {
+            Id = genreId,
+            Name = "Science Fiction",
+            ServerId = TestApp.ServerId,
+            Type = "Genre",
+            MovieCount = 2,
+            UserData = UserData(genreId)
+        });
+        App.Server.OnGet("/Items", request => request.Query("Genres") == "Science Fiction" && request.Query("IncludeItemTypes") == "Movie"
+            ? Items(TestItems.Movie(1, "Second Feature"), TestItems.Movie(2, "Another"))
+            : Items());
+
+        var cut = RenderDetails(null, genre: "Science Fiction");
+
+        cut.WaitForAssertion(() => Assert.Equal("Science Fiction", cut.Find("h1.itemName").TextContent));
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("#childrenContent .verticalSection[data-type=Movie] .card").Count));
+        Assert.Equal(UserIdText, Assert.Single(App.Server.RequestsTo("/Genres/Science%20Fiction")).Query("userId"));
+        Assert.Equal(
+            ["Movies"],
+            cut.FindAll("#childrenContent .verticalSection:not(.hide) h2").Select(title => title.TextContent.Trim()));
+        Assert.Equal(
+            $"#/list?type=Movie&genreId={genreId}&serverId={TestApp.ServerId}",
+            cut.Find("#childrenContent .verticalSection[data-type=Movie] a[is=emby-linkbutton]").GetAttribute("href"));
+
+        // The server counts no series for the genre: that section does not exist.
+        Assert.Empty(cut.FindAll("#childrenContent .verticalSection[data-type=Series]"));
+    }
+
+    [Fact]
+    public void A_music_genre_is_opened_by_name_and_can_be_mixed_and_shuffled()
+    {
+        var genreId = TestItems.Id(73);
+        App.Server.OnGet("/MusicGenres/Jazz", new
+        {
+            Id = genreId,
+            Name = "Jazz",
+            ServerId = TestApp.ServerId,
+            Type = "MusicGenre",
+            AlbumCount = 1,
+            UserData = UserData(genreId)
+        });
+        App.Server.OnGet("/Items", request => request.Query("Genres") == "Jazz" && request.Query("IncludeItemTypes") == "MusicAlbum"
+            ? Items(Album(20, "The Album"))
+            : Items());
+
+        var cut = RenderDetails(null, musicGenre: "Jazz");
+
+        cut.WaitForAssertion(() => Assert.Equal("Jazz", cut.Find("h1.itemName").TextContent));
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("#childrenContent .verticalSection[data-type=MusicAlbum] .card")));
+        Assert.Equal(UserIdText, Assert.Single(App.Server.RequestsTo("/MusicGenres/Jazz")).Query("userId"));
+        Assert.Equal(
+            $"#/list?type=MusicAlbum&musicGenreId={genreId}&serverId={TestApp.ServerId}",
+            cut.Find("#childrenContent .verticalSection[data-type=MusicAlbum] a[is=emby-linkbutton]").GetAttribute("href"));
+        Assert.Contains("btnInstantMix", VisibleButtons(cut));
+        Assert.Contains("btnShuffle", VisibleButtons(cut));
+    }
+
+    // --- Live TV ----------------------------------------------------------------------------------
+
+    private void SetUpSeriesTimer() => App.Server.OnGet("/LiveTv/SeriesTimers/timer1", new
+    {
+        Id = "timer1",
+        Name = "The News",
+        ServerId = TestApp.ServerId,
+        ChannelName = "Channel One",
+        Overview = "Every evening.",
+        RecordAnyTime = true
+    });
+
+    [Fact]
+    public void A_series_timer_is_loaded_from_live_tv()
+    {
+        SetUpSeriesTimer();
+
+        var cut = RenderDetails(null, seriesTimerId: "timer1");
+
+        cut.WaitForAssertion(() => Assert.Equal("The News", cut.Find("h1.itemName").TextContent));
+        Assert.Single(App.Server.RequestsTo("/LiveTv/SeriesTimers/timer1"));
+
+        // A timer is not a library item: no media info, no collections, neither played nor a
+        // favorite; cancelling it is for those who manage Live TV.
+        Assert.Equal(string.Empty, cut.Find(".itemMiscInfo-primary").TextContent.Trim());
+        Assert.Empty(App.Server.RequestsTo("/Collections"));
+        Assert.True(Hidden(cut.Find(".btnCancelSeriesTimer")));
+        Assert.DoesNotContain("btnPlaystate", VisibleButtons(cut));
+        Assert.DoesNotContain("btnUserRating", VisibleButtons(cut));
+    }
+
+    [Fact]
+    public void Those_who_manage_live_tv_can_cancel_a_series_timer()
+    {
+        SignIn(configure: user => user.Policy!.EnableLiveTvManagement = true);
+        SetUpSeriesTimer();
+
+        var cut = RenderDetails(null, seriesTimerId: "timer1");
+
+        cut.WaitForAssertion(() => Assert.Equal("The News", cut.Find("h1.itemName").TextContent));
+        Assert.False(Hidden(cut.Find(".btnCancelSeriesTimer")));
+        Assert.Equal("Cancel series", cut.Find(".btnCancelSeriesTimer").GetAttribute("title"));
+    }
+
+    private void SetUpProgram(DateTimeOffset start)
+    {
+        var programId = TestItems.Id(80);
+        var channelId = TestItems.Id(81);
+        App.Server.OnGet("/Items/" + programId, new
+        {
+            Id = programId,
+            Name = "The News",
+            ServerId = TestApp.ServerId,
+            Type = "Program",
+            ChannelId = channelId,
+            ChannelName = "Channel One",
+            StartDate = start,
+            EndDate = start.AddMinutes(30),
+            UserData = UserData(programId)
+        });
+        App.Server.OnGet("/LiveTv/Channels/" + channelId, new
+        {
+            Id = channelId,
+            Name = "Channel One",
+            ServerId = TestApp.ServerId,
+            Type = "TvChannel",
+            MediaType = "Video"
+        });
+    }
+
+    [Fact]
+    public void A_programme_on_air_plays_its_channel()
+    {
+        SetUpProgram(Now.AddMinutes(-10));
+
+        var cut = RenderDetails(TestItems.Id(80));
+
+        cut.WaitForAssertion(() => Assert.Equal("The News", cut.Find("h1.itemName").TextContent));
+        Assert.False(Hidden(cut.Find(".mainDetailButtons")));
+        Assert.False(Hidden(cut.Find(".btnPlay")));
+        Assert.True(Hidden(cut.Find(".btnReplay")));
+
+        cut.Find(".btnPlay").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(Playback.PlayRequests));
+        Assert.Equal(TestItems.Id(81), Assert.Single(Playback.PlayRequests[0].Items!).IdText());
+        Assert.Equal(UserIdText, Assert.Single(App.Server.RequestsTo("/LiveTv/Channels/" + TestItems.Id(81))).Query("userId"));
+    }
+
+    [Fact]
+    public void A_programme_that_is_over_has_no_buttons()
+    {
+        SetUpProgram(Now.AddHours(-2));
+
+        var cut = RenderDetails(TestItems.Id(80));
+
+        cut.WaitForAssertion(() => Assert.Equal("The News", cut.Find("h1.itemName").TextContent));
+        Assert.True(Hidden(cut.Find(".mainDetailButtons")));
+    }
+
+    // --- Person -----------------------------------------------------------------------------------
+
+    [Fact]
+    public void A_person_shows_dates_and_the_items_they_are_in()
+    {
+        App.Server.OnGet("/Items/" + PersonId, new
+        {
+            Id = PersonId,
+            Name = "Ann Actor",
+            ServerId = TestApp.ServerId,
+            Type = "Person",
+            PremiereDate = new DateTimeOffset(1980, 5, 18, 0, 0, 0, TimeSpan.Zero),
+            ProductionLocations = new[] { "Springfield, USA" },
+            MovieCount = 2,
+            SeriesCount = 1,
+            ImageTags = new { Primary = "pp" },
+            PrimaryImageAspectRatio = 0.6667,
+            BackdropImageTags = Array.Empty<string>(),
+            UserData = UserData(PersonId)
+        });
+        App.Server.OnGet("/Items", request => request.Query("IncludeItemTypes") switch
+        {
+            "Movie" => Items(TestItems.Movie(1, "Second Feature"), TestItems.Movie(2, "Another")),
+            "Series" => Items(new { Id = SeriesId, Name = "The Show", ServerId = TestApp.ServerId, Type = "Series", IsFolder = true }),
+            _ => Items()
+        });
+
+        var cut = RenderDetails(PersonId);
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("#childrenContent .verticalSection[data-type=Movie] .card").Count));
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("#childrenContent .verticalSection[data-type=Series] .card")));
+        Assert.Equal(
+            ["Movies", "Shows"],
+            cut.FindAll("#childrenContent .verticalSection:not(.hide) h2").Select(title => title.TextContent.Trim()));
+        var movies = App.Server.RequestsTo("/Items").First(request => request.Query("IncludeItemTypes") == "Movie");
+        Assert.Equal(PersonId, movies.Query("PersonIds"));
+        Assert.Equal("10", movies.Query("Limit"));
+        Assert.True(Hidden(cut.Find("#childrenContent .verticalSection[data-type=Movie] a[is=emby-linkbutton]")));
+
+        Assert.StartsWith("Born: ", cut.Find("#itemBirthday").TextContent);
+        Assert.EndsWith("(43 years old)", cut.Find("#itemBirthday").TextContent);
+        Assert.False(Hidden(cut.Find("#itemBirthday")));
+        Assert.Equal("Springfield, USA", cut.Find("#itemBirthLocation a").TextContent);
+        Assert.True(Hidden(cut.Find("#itemDeathDate")));
+
+        // A person is not played and has no banner.
+        Assert.Equal(["btnPlay", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut));
+        Assert.Empty(BackdropDom.Shown);
+        Assert.Equal(2, cut.FindAll(".detailImageContainer .card.portraitCard").Count);
+        Assert.Empty(cut.FindAll("#similarCollapsible"));
+    }
+
+    // --- Collection and playlist ------------------------------------------------------------------
+
+    [Fact]
+    public void A_collection_shows_its_items_by_type()
+    {
+        App.Server.OnGet("/Items/" + CollectionId, new
+        {
+            Id = CollectionId,
+            Name = "The Collection",
+            ServerId = TestApp.ServerId,
+            Type = "BoxSet",
+            IsFolder = true,
+            ImageTags = new { Primary = "bs" },
+            UserData = UserData(CollectionId)
+        });
+        App.Server.OnGet("/Items", request => request.Query("ParentId") == CollectionId
+            ? Items(
+                TestItems.Movie(1, "Second Feature"),
+                new { Id = SeriesId, Name = "The Show", ServerId = TestApp.ServerId, Type = "Series", IsFolder = true },
+                TestItems.Movie(2, "Another"))
+            : Items());
+
+        var cut = RenderDetails(CollectionId);
+
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll(".collectionItems .card").Count));
+        Assert.Equal(["Movies", "Series"], Texts(cut, ".collectionItems .verticalSection h2"));
+        Assert.Equal(2, cut.FindAll(".collectionItems .verticalSection")[0].QuerySelectorAll(".collectionItemsContainer .card").Length);
+        Assert.False(Hidden(cut.Find(".collectionItems")));
+        Assert.Null(App.Server.RequestsTo("/Items").Single(request => request.Query("ParentId") == CollectionId).Query("SortBy"));
+        Assert.Equal(["btnPlay", "btnShuffle", "btnPlaystate", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut));
+        Assert.Empty(cut.FindAll("#listChildrenCollapsible, #childrenCollapsible"));
+    }
+
+    [Fact]
+    public void An_empty_collection_has_nothing_to_play()
+    {
+        App.Server.OnGet("/Items/" + CollectionId, new
+        {
+            Id = CollectionId,
+            Name = "The Collection",
+            ServerId = TestApp.ServerId,
+            Type = "BoxSet",
+            IsFolder = true,
+            UserData = UserData(CollectionId)
+        });
+
+        var cut = RenderDetails(CollectionId);
+
+        cut.WaitForAssertion(() => Assert.False(Hidden(cut.Find(".collectionItems"))));
+        cut.WaitForAssertion(() => Assert.Equal(["btnPlaystate", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut)));
+        Assert.Equal(["Items"], Texts(cut, ".collectionItems .verticalSection h2"));
+    }
+
+    private void SetUpPlaylist(bool editable)
+    {
+        App.Server.OnGet("/Items/" + PlaylistId, new
+        {
+            Id = PlaylistId,
+            Name = "The Playlist",
+            ServerId = TestApp.ServerId,
+            Type = "Playlist",
+            MediaType = "Audio",
+            IsFolder = true,
+            UserData = UserData(PlaylistId)
+        });
+        App.Server.OnGet("/Playlists/" + PlaylistId + "/Items", Items(
+            PlaylistEntry(1, "First Song", "entry1"),
+            PlaylistEntry(2, "Second Song", "entry2"),
+            PlaylistEntry(3, "Third Song", "entry3")));
+        App.Server.OnGet("/Playlists/" + PlaylistId + "/Users/" + UserIdText, new { UserId = UserIdText, CanEdit = editable });
+    }
+
+    private static object PlaylistEntry(int number, string name, string entryId) => new
+    {
+        Id = TestItems.Id(20 + number),
+        Name = name,
+        ServerId = TestApp.ServerId,
+        Type = "Audio",
+        MediaType = "Audio",
+        Album = "The Album",
+        AlbumId,
+        PlaylistItemId = entryId,
+        RunTimeTicks = 3 * Minute,
+        UserData = UserData(TestItems.Id(20 + number))
+    };
+
+    [Fact]
+    public void A_playlist_lists_its_entries()
+    {
+        SetUpPlaylist(editable: false);
+
+        var cut = RenderDetails(PlaylistId);
+
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll("#childrenContent .listItem").Count));
+        Assert.Contains("vertical-list", cut.Find("#childrenContent .itemsContainer").ClassName);
+        Assert.Empty(cut.FindAll("#childrenContent button[data-customaction]"));
+        var request = Assert.Single(App.Server.RequestsTo("/Playlists/" + PlaylistId + "/Items"));
+        Assert.Equal(UserIdText, request.Query("UserId"));
+        Assert.Equal("Primary,Backdrop,Banner,Thumb", request.Query("EnableImageTypes"));
+        Assert.Equal(["btnPlay", "btnShuffle", "btnUserRating", "btnMoreCommands"], VisibleButtons(cut));
+        cut.WaitForAssertion(() => Assert.Single(App.Server.RequestsTo("/Items/" + PlaylistId + "/Similar")));
+    }
+
+    [Fact]
+    public void Those_who_may_edit_a_playlist_can_move_its_entries()
+    {
+        SetUpPlaylist(editable: true);
+        App.Server.OnPost("/Playlists/" + PlaylistId + "/Items/entry2/Move/0");
+        App.Server.OnPost("/Playlists/" + PlaylistId + "/Items/entry2/Move/2");
+
+        var cut = RenderDetails(PlaylistId);
+
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll("#childrenContent button[data-customaction=jf-playlist-up]").Count));
+        Assert.Equal("Up", cut.Find("#childrenContent button[data-customaction=jf-playlist-up]").GetAttribute("title"));
+        Assert.Equal("Down", cut.Find("#childrenContent button[data-customaction=jf-playlist-down]").GetAttribute("title"));
+
+        cut.FindAll("#childrenContent button[data-customaction=jf-playlist-up]")[1].Click();
+
+        cut.WaitForAssertion(() => Assert.Single(App.Server.RequestsTo("/Playlists/" + PlaylistId + "/Items/entry2/Move/0")));
+
+        // The list is loaded again after the move.
+        cut.WaitForAssertion(() => Assert.Equal(2, App.Server.RequestsTo("/Playlists/" + PlaylistId + "/Items").Count));
+
+        // The first entry cannot go further up.
+        cut.FindAll("#childrenContent button[data-customaction=jf-playlist-up]")[0].Click();
+        cut.FindAll("#childrenContent button[data-customaction=jf-playlist-down]")[1].Click();
+        cut.WaitForAssertion(() => Assert.Single(App.Server.RequestsTo("/Playlists/" + PlaylistId + "/Items/entry2/Move/2")));
+        Assert.DoesNotContain(App.Server.Requests, request => request.Uri.AbsolutePath.Contains("/entry1/Move/", StringComparison.Ordinal));
+    }
+}

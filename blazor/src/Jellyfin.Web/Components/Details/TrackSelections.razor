@@ -1,0 +1,60 @@
+@namespace Jellyfin.Web.Components
+@*
+    The form of the details page that chooses what to play: version, video, audio and subtitles
+    (form.trackSelections of controllers/itemDetails). TrackSelection holds the options and values.
+*@
+@inject Globalize Globalize
+
+<form class="@("trackSelections focuscontainer-x" + (Selection is null ? " hide" : null))" @onsubmit:preventDefault="true">
+    @Select("Source", Globalize["LabelVersion"], Selection?.Source, OnSourceChangedAsync)
+    @Select("Video", Globalize["Video"], Selection?.Video, null)
+    @Select("Audio", Globalize["Audio"], Selection?.Audio, OnAudioChangedAsync)
+    @Select("Subtitles", Globalize["Subtitles"], Selection?.Subtitles, OnSubtitlesChangedAsync)
+</form>
+
+@code {
+    /// <summary>The selection of the shown item; null hides the form.</summary>
+    [Parameter]
+    public TrackSelection? Selection { get; set; }
+
+    /// <summary>Raised after another version was chosen, with its id.</summary>
+    [Parameter]
+    public EventCallback<string> SourceChanged { get; set; }
+
+    private RenderFragment Select(string name, string label, TrackSelect? select, Func<string?, Task>? changed)
+    {
+        select ??= TrackSelect.Empty;
+        var containerClass = $"select{name}Container trackSelectionFieldContainer flex-shrink-zero" + (select.Visible ? null : " hide");
+        var callback = changed is null ? default(EventCallback<string?>) : EventCallback.Factory.Create<string?>(this, changed);
+        return @<EmbySelect ContainerClass="@containerClass" Class="@($"select{name} detailTrackSelect")" Label="@label"
+                            Value="@select.Value" Disabled="select.Disabled" ValueChanged="callback">
+                   @foreach (var option in select.Options)
+                   {
+                       <option value="@option.Value" selected="@(option.Value == select.Value)">@option.Text</option>
+                   }
+               </EmbySelect>;
+    }
+
+    private Task OnSourceChangedAsync(string? value)
+    {
+        if (Selection is null || string.IsNullOrEmpty(value) || value == Selection.Source.Value)
+        {
+            return Task.CompletedTask;
+        }
+
+        Selection.SelectSource(value);
+        return SourceChanged.InvokeAsync(value);
+    }
+
+    private Task OnAudioChangedAsync(string? value)
+    {
+        Selection?.SelectAudio(value);
+        return Task.CompletedTask;
+    }
+
+    private Task OnSubtitlesChangedAsync(string? value)
+    {
+        Selection?.SelectSubtitles(value);
+        return Task.CompletedTask;
+    }
+}

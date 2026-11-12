@@ -1,0 +1,78 @@
+@namespace Jellyfin.Web.Components
+@*
+    The overview of the details page: Markdown rendered and sanitised like the original's
+    (renderOverview), clamped to a few lines with "Show more" when it is cut off.
+*@
+@inject IDetailsInterop Interop
+@inject Globalize Globalize
+
+<p @ref="_element" class="@OverviewClass">
+    @if (_html is not null)
+    {
+        <bdi>@((MarkupString)_html)</bdi>
+    }
+</p>
+<div class="overview-controls">
+    <LinkButton Class="@("overview-expand" + (_canExpand ? null : " hide"))" Href="#" OnClick="Toggle">@Globalize[_expanded ? "ShowLess" : "ShowMore"]</LinkButton>
+</div>
+
+@code {
+    /// <summary>The overview as the server has it (Markdown).</summary>
+    [Parameter]
+    public string? Text { get; set; }
+
+    private ElementReference _element;
+    private string? _applied = "\0";
+    private string? _html;
+    private bool _expanded;
+    private bool _canExpand;
+    private bool _measure;
+
+    private string OverviewClass => "overview" + (_html is null ? " hide" : null) + (_expanded || _html is null ? null : " detail-clamp-text");
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_applied == Text)
+        {
+            return;
+        }
+
+        var text = Text;
+        _applied = text;
+        _expanded = false;
+        _canExpand = false;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _html = null;
+            return;
+        }
+
+        // Without the Markdown libraries the text shows as it is.
+        var html = await Interop.RenderOverviewAsync(text) ?? System.Net.WebUtility.HtmlEncode(text);
+        if (_applied != text)
+        {
+            return;
+        }
+
+        _html = string.IsNullOrWhiteSpace(html) ? null : html;
+        _measure = _html is not null;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_measure)
+        {
+            return;
+        }
+
+        _measure = false;
+        var clamped = await Interop.IsClampedAsync(_element);
+        if (clamped != _canExpand && !_expanded)
+        {
+            _canExpand = clamped;
+            StateHasChanged();
+        }
+    }
+
+    private void Toggle() => _expanded = !_expanded;
+}

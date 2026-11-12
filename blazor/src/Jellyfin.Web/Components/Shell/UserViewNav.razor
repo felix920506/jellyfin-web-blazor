@@ -6,6 +6,8 @@
 @inject WebConfig Config
 @inject IBrowser Browser
 @inject Globalize Globalize
+@inject ItemQueries Items
+@inject JellyfinApi Api
 
 <MudButton Variant="Variant.Text" Color="@(IsFavoritesActive ? Color.Primary : Color.Inherit)" StartIcon="@MdIcon.Of("favorite")"
            Href="#/home?tab=1">@Globalize["Favorites"]</MudButton>
@@ -40,6 +42,8 @@
         "/home", "/list", "/details", "/movies", "/tv", "/music", "/livetv", "/homevideos", "/books"
     };
 
+    private readonly Dictionary<string, Guid?> _ancestorLibraries = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _pendingAncestors = new(StringComparer.OrdinalIgnoreCase);
     private List<NavItem> _items = [];
     private string? _currentKey;
 
@@ -136,6 +140,56 @@
         }
 
         var libraryId = Location["topParentId"] ?? Location["parentId"];
-        return Guid.TryParse(libraryId, out var id) ? ViewKey(id) : null;
+        if (Guid.TryParse(libraryId, out var id))
+        {
+            return ViewKey(id);
+        }
+
+        // The address of an item (the details page) does not name its library: its ancestors do.
+        var itemId = Location["id"];
+        if (string.IsNullOrEmpty(itemId))
+        {
+            return null;
+        }
+
+        if (_ancestorLibraries.TryGetValue(itemId, out var library))
+        {
+            return library is null ? null : ViewKey(library);
+        }
+
+        _ = LoadAncestorLibraryAsync(itemId);
+        return null;
+    }
+
+    /// <summary>Finds the library an item is in (useAncestors of the original) and highlights it.</summary>
+    private async Task LoadAncestorLibraryAsync(string itemId)
+    {
+        if (!_pendingAncestors.Add(itemId))
+        {
+            return;
+        }
+
+        try
+        {
+            var ancestors = await Items.GetItemsAsync($"Items/{itemId}/Ancestors", ("userId", Api.UserIdText));
+
+            // Ancestors are unlikely to change: asked once per item.
+            _ancestorLibraries[itemId] = ancestors.FirstOrDefault(ancestor => ancestor.TypeName() == "CollectionFolder")?.Id;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            // Unknown: no library is highlighted.
+            return;
+        }
+        finally
+        {
+            _pendingAncestors.Remove(itemId);
+        }
+
+        if (Location["id"] == itemId)
+        {
+            _currentKey = CurrentKey();
+            StateHasChanged();
+        }
     }
 }

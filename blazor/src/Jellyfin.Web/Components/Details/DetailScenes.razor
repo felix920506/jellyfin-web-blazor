@@ -1,0 +1,93 @@
+@namespace Jellyfin.Web.Components
+@*
+    The "Scenes" section of the details page: one card per chapter with its image, name and start
+    time; a click plays the item from there. Port of renderScenes (controllers/itemDetails) and
+    components/cardbuilder/chaptercardbuilder.js, with its markup.
+*@
+@inject Globalize Globalize
+@inject CardImages Images
+@inject IItemsInterop Interop
+@inject IPlaybackManager Playback
+
+<div id="scenesCollapsible" class="verticalSection detailVerticalSection verticalSection-extrabottompadding emby-scroller-container">
+    <h2 class="sectionTitle sectionTitle-cards padded-right">@Globalize["HeaderScenes"]</h2>
+    <Scroller Class="padded-top-focusscale padded-bottom-focusscale no-padding" data-centerfocus="true">
+        <div id="scenesContent" @ref="_content" is="emby-itemscontainer" class="scrollSlider focuscontainer-x itemsContainer">
+            @for (var i = 0; i < _chapters.Count; i++)
+            {
+                var chapter = _chapters[i];
+                var url = GetImageUrl(chapter, i);
+                <button type="button" class="card itemAction chapterCard @(_shape)Card" data-action="play" data-isfolder="@(Item.IsFolder == true ? "true" : "false")"
+                        data-id="@Item.IdText()" data-serverid="@Item.ServerId" data-type="@Item.TypeName()" data-mediatype="@Item.MediaTypeName()"
+                        data-positionticks="@Ticks(chapter)" @key="i" @onclick="() => PlayAsync(chapter)">
+                    <div class="cardBox">
+                        <div class="cardScalable">
+                            <div class="cardPadder-@_shape"></div>
+                            @if (url is not null)
+                            {
+                                <div class="cardContent cardContent-shadow cardImageContainer chapterCardImageContainer lazy" data-src="@url"></div>
+                            }
+                            else
+                            {
+                                <div class="cardContent cardContent-shadow cardImageContainer chapterCardImageContainer">
+                                    <span class="material-icons cardImageIcon local_movies" aria-hidden="true"></span>
+                                </div>
+                            }
+                            <div class="innerCardFooter">
+                                <div class="cardText">@chapter.Name</div>
+                                <div class="cardText">@DateTimeText.GetDisplayRunningTime(chapter.StartPositionTicks ?? 0)</div>
+                            </div>
+                        </div>
+                    </div>
+                </button>
+            }
+        </div>
+    </Scroller>
+</div>
+
+@code {
+    /// <summary>The video whose chapters show. The page draws the section only when <see cref="DetailsRules.GetScenes"/> has some.</summary>
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    private ElementReference _content;
+    private BaseItemDto? _applied;
+    private IReadOnlyList<ChapterInfo> _chapters = [];
+    private string _shape = CardShape.OverflowBackdrop;
+
+    /// <summary>The shape of the chapter cards: square for (nearly) square videos, else backdrop.</summary>
+    public static string GetShape(BaseItemDto item)
+    {
+        var video = item.MediaSources is { Count: > 0 } sources
+            ? sources[0].MediaStreams?.FirstOrDefault(stream => stream.Type == MediaStream_Type.Video)
+            : null;
+        return video is { Width: > 0, Height: > 0 } && (double)video.Width.Value / video.Height.Value <= 1.2
+            ? CardShape.OverflowSquare
+            : CardShape.OverflowBackdrop;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_applied, Item))
+        {
+            return;
+        }
+
+        _applied = Item;
+        _chapters = DetailsRules.GetScenes(Item);
+        _shape = GetShape(Item);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender) => await Interop.LoadImagesAsync(_content);
+
+    private static string Ticks(ChapterInfo chapter) =>
+        (chapter.StartPositionTicks ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    // Items/{id}/Images/Chapter/{index}, at most 400 CSS pixels wide.
+    private string? GetImageUrl(ChapterInfo chapter, int index) => string.IsNullOrEmpty(chapter.ImageTag)
+        ? null
+        : Images.GetScaledImageUrl(Item.IdText(), "Chapter/" + DetailsRules.Invariant(index), chapter.ImageTag, maxWidth: 400);
+
+    private Task PlayAsync(ChapterInfo chapter) =>
+        Playback.PlayAsync(new PlayOptions { Items = [Item], StartPositionTicks = chapter.StartPositionTicks ?? 0 });
+}

@@ -1,0 +1,82 @@
+@namespace Jellyfin.Web.Components
+@*
+    The contents of a collection on the details page (renderCollectionItems of
+    controllers/itemDetails): one section of cards per item type. The whole block is one items
+    container, so that removing an item from the collection through its menu reloads every section,
+    like the original's notifyRefreshNeeded on each of them.
+*@
+@inject DetailsQueries Queries
+@inject Globalize Globalize
+@inject IPlaybackManager Playback
+
+<ItemsContainer Class="@("collectionItems jf-collection-items" + (_loaded ? null : " hide"))" Fetch="_fetch" CollectionId="@Item.IdText()"
+                Context="@Context" OnItemsChanged="OnItemsChangedAsync">
+    <ItemsTemplate Context="items">
+        @if (_loaded)
+        {
+            foreach (var section in DetailsRules.GroupCollectionItems(items))
+            {
+                <div class="verticalSection" @key="section.TitleKey">
+                    <div class="sectionTitleContainer sectionTitleContainer-cards padded-left">
+                        <h2 class="sectionTitle sectionTitle-cards">
+                            <span>@Globalize[section.TitleKey]</span>
+                        </h2>
+                    </div>
+                    <div is="emby-itemscontainer" class="itemsContainer collectionItemsContainer vertical-wrap padded-left padded-right">
+                        <Cards Items="section.Items" Options="GetCardOptions(section.TitleKey, section.Type)" />
+                    </div>
+                </div>
+            }
+        }
+    </ItemsTemplate>
+</ItemsContainer>
+
+@code {
+    /// <summary>The collection.</summary>
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    /// <summary>The context for item links, e.g. "movies".</summary>
+    [Parameter]
+    public string? Context { get; set; }
+
+    /// <summary>
+    /// Raised after the items loaded, with whether any of them can be played: the page hides its
+    /// play and shuffle buttons for a collection with nothing to play.
+    /// </summary>
+    [Parameter]
+    public EventCallback<bool> PlayableChanged { get; set; }
+
+    private BaseItemDto? _applied;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _fetch;
+    private bool _loaded;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_applied, Item))
+        {
+            return;
+        }
+
+        var item = _applied = Item;
+        _loaded = false;
+        _fetch = () => Queries.GetChildrenAsync(item);
+    }
+
+    private CardOptions GetCardOptions(string titleKey, string? type) => new()
+    {
+        Shape = type == "MusicAlbum" ? CardShape.Square : CardShape.Portrait,
+        ShowTitle = true,
+        ShowYear = titleKey == "HeaderVideos" || type is "Series" or "Movie",
+        CenterText = true,
+        OverlayMoreButton = true,
+        CollectionId = Item.IdText(),
+        Context = Context
+    };
+
+    private Task OnItemsChangedAsync(IReadOnlyList<BaseItemDto> items)
+    {
+        _loaded = true;
+        return PlayableChanged.InvokeAsync(items.Any(Playback.CanPlay));
+    }
+}

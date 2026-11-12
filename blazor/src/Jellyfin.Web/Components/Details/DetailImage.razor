@@ -1,0 +1,82 @@
+@namespace Jellyfin.Web.Components
+@*
+    The poster of the details page: an image-only card whose shape follows the image
+    (components/cardbuilder/cardImage.ts: buildCardImage, as renderDetailImage calls it).
+    The page draws it twice, beside the title on wide screens and above it on phones.
+*@
+@inject CardImages Images
+@inject CardBuilder Builder
+@inject IItemsInterop Interop
+@inject IBrowser Browser
+@inject UserSettings Settings
+
+<div @ref="_element" class="detailImageContainer @Class">
+    <div class="card @(_shape)Card">
+        <div class="cardBox">
+            <div class="cardScalable">
+                <div class="cardPadder cardPadder-@_shape">
+                    @if (_icon is not null)
+                    {
+                        <span class="cardImageIcon material-icons @_icon" aria-hidden="true"></span>
+                    }
+                    else if (_text is not null)
+                    {
+                        <div class="cardText cardDefaultText">@_text</div>
+                    }
+                </div>
+                @if (_blurHash is not null)
+                {
+                    <canvas class="blurhash-canvas lazy-hidden" width="20" height="20" aria-hidden="true"></canvas>
+                }
+                <div class="cardImageContainer coveredImage cardContent lazy" style="cursor: default;" data-src="@(_url ?? string.Empty)" data-blurhash="@_blurHash"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    /// <summary>The classes that say in which layout this copy shows: "hide-mobile" or "hide-desktop hide-tv".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    private ElementReference _element;
+    private BaseItemDto? _applied;
+    private string _shape = CardShape.Square;
+    private string? _url;
+    private string? _blurHash;
+    private string? _icon;
+    private string? _text;
+
+    /// <summary>The shape of the poster of an item: banner, backdrop, square or portrait by the ratio of its image.</summary>
+    public static string GetShape(BaseItemDto item) => item.PrimaryImageAspectRatio switch
+    {
+        null or 0 => CardShape.Square,
+        >= 3 => CardShape.Banner,
+        >= 1.33 => CardShape.Backdrop,
+        > 0.8 => CardShape.Square,
+        _ => CardShape.Portrait
+    };
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_applied, Item))
+        {
+            return;
+        }
+
+        _applied = Item;
+        _shape = GetShape(Item);
+        var width = (int)Math.Round(Browser.Environment.InnerWidth * 0.25, MidpointRounding.AwayFromZero);
+        var image = Images.GetCardImage(Item, new CardOptions { Width = width }, _shape);
+        _url = image.Url;
+        _blurHash = _url is not null && !string.IsNullOrEmpty(image.BlurHash) && Settings.EnableBlurhash ? image.BlurHash : null;
+
+        // The placeholder behind the image; channel logos are transparent, so they get none.
+        (_icon, _text) = _url is not null && Item.TypeName() != "TvChannel" ? Builder.GetDefaultText(Item, "folder") : (null, null);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender) => await Interop.LoadImagesAsync(_element);
+}
