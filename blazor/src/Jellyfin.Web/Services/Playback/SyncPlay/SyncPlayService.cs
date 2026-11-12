@@ -78,9 +78,17 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
         return groups ?? [];
     }
 
-    public Task CreateGroupAsync(string groupName) => PostAsync("SyncPlay/New", new { GroupName = groupName });
+    public async Task CreateGroupAsync(string groupName)
+    {
+        var group = await PostJsonAsync<SyncPlayGroupState>("SyncPlay/New", new { GroupName = groupName });
+        Enable(group);
+    }
 
-    public Task JoinGroupAsync(string groupId) => PostAsync("SyncPlay/Join", new { GroupId = groupId });
+    public async Task JoinGroupAsync(string groupId)
+    {
+        var group = await PostJsonAsync<SyncPlayGroupState>("SyncPlay/Join", new { GroupId = groupId });
+        Enable(group);
+    }
 
     public async Task LeaveGroupAsync()
     {
@@ -329,12 +337,26 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
         {
             case PlaybackEvents.Pause: Run(SendStateAsync("Pause")); break;
             case PlaybackEvents.Unpause: Run(SendStateAsync("Unpause")); break;
-            case PlaybackEvents.PlaybackStart: Run(SendReadyAsync(false)); break;
+            case PlaybackEvents.PlaybackStart: Run(SendReadyAfterQueueAsync()); break;
             case PlaybackEvents.Playing: Run(SendReadyAsync(false)); break;
             case PlaybackEvents.Waiting: Run(SendReadyAsync(true)); break;
             case "seek": Run(SeekAsync(_playback.CurrentTimeTicks)); break;
             case PlaybackEvents.TimeUpdate: CorrectDrift(); break;
         }
+    }
+
+    private async Task SendReadyAfterQueueAsync()
+    {
+        if (Queue is null && _playback.CurrentItem?.Id is { } itemId)
+        {
+            await SetNewQueueAsync([itemId.ToString("N")]);
+            for (var i = 0; i < 40 && Queue?.CurrentPlaylistItemId is null; i++)
+            {
+                await _timers.Delay(25);
+            }
+        }
+
+        await SendReadyAsync(false);
     }
 
     private Task SendStateAsync(string command) => command == "Pause" ? PauseAsync() : UnpauseAsync();
@@ -415,6 +437,19 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
     {
         using var response = await _api.SendAsync(HttpMethod.Post, path, body);
         response.EnsureSuccessStatusCode();
+    }
+
+    private async Task<T?> PostJsonAsync<T>(string path, object? body = null)
+    {
+        using var response = await _api.SendAsync(HttpMethod.Post, path, body);
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadAsStringAsync();
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return default;
+        }
+
+        return JsonSerializer.Deserialize<T>(content, JellyfinApi.Json);
     }
 
     private async Task ApplyLocallyAsync(Func<Task> operation)
