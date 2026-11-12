@@ -1,0 +1,62 @@
+@* "Everything, or these": a switch for all libraries, channels or devices and the list to pick from.
+   Port of components/dashboard/users/AccessContainer.tsx. *@
+@namespace Jellyfin.Web.Components
+@inject Globalize Globalize
+
+<div class="@(ContainerClass + (Hidden ? " hide" : null))">
+    <h2>@Globalize[HeaderTitle]</h2>
+    <DashboardCheckBox LabelClass="checkboxContainer" Class="@CheckBoxClass" Label="@Globalize[CheckBoxTitle]" Value="All" ValueChanged="AllChanged" />
+    <div class="@(ListContainerClass + (All ? " hide" : null))">
+        <div class="@AccessClass">
+            <h3 class="checkboxListLabel">@Globalize[ListTitle]</h3>
+            <div class="checkboxList paperList" style="padding:.5em 1em;">
+                @ChildContent
+            </div>
+        </div>
+        <div class="fieldDescription">@Globalize[Description]</div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string ContainerClass { get; set; } = string.Empty;
+
+    /// <summary>The translation key of the heading.</summary>
+    [Parameter, EditorRequired]
+    public string HeaderTitle { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string CheckBoxClass { get; set; } = string.Empty;
+
+    /// <summary>The translation key of the "all" checkbox.</summary>
+    [Parameter, EditorRequired]
+    public string CheckBoxTitle { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string ListContainerClass { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string AccessClass { get; set; } = string.Empty;
+
+    /// <summary>The translation key of the list's heading.</summary>
+    [Parameter, EditorRequired]
+    public string ListTitle { get; set; } = string.Empty;
+
+    /// <summary>The translation key of the explanation below the list.</summary>
+    [Parameter, EditorRequired]
+    public string Description { get; set; } = string.Empty;
+
+    /// <summary>Whether everything is allowed, which hides the list.</summary>
+    [Parameter]
+    public bool All { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> AllChanged { get; set; }
+
+    /// <summary>Hides the whole section (no channels, or an administrator's devices).</summary>
+    [Parameter]
+    public bool Hidden { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

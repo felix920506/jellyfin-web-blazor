@@ -1,0 +1,175 @@
+@* The general server settings. Port of apps/dashboard/routes/settings/index.tsx. *@
+@attribute [Route("/dashboard/settings")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+<Page Id="dashboardGeneralPage" Title="@Globalize["General"]" Class="type-interior mainAnimatedPage">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["SettingsPageLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    <MudText Typo="Typo.h1">@Globalize["Settings"]</MudText>
+
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <MudTextField T="string" @bind-Value="_serverName" Variant="Variant.Filled" Label="@Globalize["LabelServerName"]"
+                                  HelperText="@Globalize["LabelServerNameHelp"]" InputId="jf-dashboard-settings-name" />
+
+                    <div class="jf-dashboard-field">
+                        <MudSelect T="string" @bind-Value="_culture" Variant="Variant.Filled" Label="@Globalize["LabelPreferredDisplayLanguage"]"
+                                   InputId="jf-dashboard-settings-culture" Class="jf-dashboard-settings-culture">
+                            @foreach (var language in _languages)
+                            {
+                                <MudSelectItem T="string" Value="@(language.Value ?? string.Empty)">@language.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <div class="jf-dashboard-field-help">
+                            <span>@Globalize["LabelDisplayLanguageHelp"]</span>
+                            <MudLink Href="https://jellyfin.org/docs/general/contributing/#translating" Target="_blank" Typo="Typo.inherit">@Globalize["LearnHowYouCanContribute"]</MudLink>
+                        </div>
+                    </div>
+
+                    <MudText Typo="Typo.h2">@Globalize["HeaderPaths"]</MudText>
+
+                    <MudTextField T="string" @bind-Value="_cachePath" Variant="Variant.Filled" Label="@Globalize["LabelCachePath"]"
+                                  HelperText="@Globalize["LabelCachePathHelp"]" InputId="jf-dashboard-settings-cache"
+                                  Adornment="Adornment.End" AdornmentIcon="@MdIcon.Of("search")" OnAdornmentClick="PickCachePathAsync" />
+
+                    <MudTextField T="string" @bind-Value="_metadataPath" Variant="Variant.Filled" Label="@Globalize["LabelMetadataPath"]"
+                                  HelperText="@Globalize["LabelMetadataPathHelp"]" InputId="jf-dashboard-settings-metadata"
+                                  Adornment="Adornment.End" AdornmentIcon="@MdIcon.Of("search")" OnAdornmentClick="PickMetadataPathAsync" />
+
+                    <MudText Typo="Typo.h2">@Globalize["QuickConnect"]</MudText>
+
+                    <MudCheckBox T="bool" @bind-Value="_quickConnect" Color="Color.Primary" Label="@Globalize["EnableQuickConnect"]"
+                                 Class="jf-dashboard-settings-quickconnect" />
+
+                    <MudText Typo="Typo.h2">@Globalize["HeaderPerformance"]</MudText>
+
+                    <MudNumericField T="int?" @bind-Value="_fanout" Variant="Variant.Filled" Min="0" Step="1"
+                                     Label="@Globalize["LibraryScanFanoutConcurrency"]" HelperText="@Globalize["LibraryScanFanoutConcurrencyHelp"]"
+                                     InputId="jf-dashboard-settings-fanout" />
+
+                    <MudNumericField T="int?" @bind-Value="_encodingLimit" Variant="Variant.Filled" Min="0" Step="1"
+                                     Label="@Globalize["LabelParallelImageEncodingLimit"]" HelperText="@Globalize["LabelParallelImageEncodingLimitHelp"]"
+                                     InputId="jf-dashboard-settings-encoding" />
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private List<LocalizationOption> _languages = [];
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+    private string? _serverName;
+    private string? _culture;
+    private string? _cachePath;
+    private string? _metadataPath;
+    private bool _quickConnect;
+    private int? _fanout;
+    private int? _encodingLimit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var languages = Api.Client.Localization.OptionsPath.GetAsync();
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            _languages = await languages ?? [];
+
+            _serverName = configuration.ServerName;
+            _culture = configuration.UICulture ?? string.Empty;
+            _cachePath = configuration.CachePath;
+            _metadataPath = configuration.MetadataPath;
+            _quickConnect = configuration.QuickConnectAvailable ?? false;
+            // Zero stands for "decide automatically" and shows as an empty field.
+            _fanout = configuration.LibraryScanFanoutConcurrency is > 0 and var fanout ? fanout : null;
+            _encodingLimit = configuration.ParallelImageEncodingLimit is > 0 and var limit ? limit : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Settings] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    private async Task PickCachePathAsync()
+    {
+        var path = await DirectoryBrowser.ShowAsync(
+            Dialogs,
+            header: Globalize["HeaderSelectServerCachePath"],
+            instruction: Globalize["HeaderSelectServerCachePathHelp"],
+            validateWriteable: true);
+        if (!string.IsNullOrEmpty(path))
+        {
+            _cachePath = path;
+        }
+    }
+
+    private async Task PickMetadataPathAsync()
+    {
+        var path = await DirectoryBrowser.ShowAsync(
+            Dialogs,
+            path: _metadataPath,
+            header: Globalize["HeaderSelectMetadataPath"],
+            instruction: Globalize["HeaderSelectMetadataPathHelp"],
+            validateWriteable: true);
+        if (!string.IsNullOrEmpty(path))
+        {
+            _metadataPath = path;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _saved = false;
+        try
+        {
+            // The settings as they are now, so that nothing changed elsewhere in the meantime is undone.
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            configuration.ServerName = _serverName ?? string.Empty;
+            configuration.UICulture = _culture ?? string.Empty;
+            configuration.CachePath = _cachePath ?? string.Empty;
+            configuration.MetadataPath = _metadataPath ?? string.Empty;
+            configuration.QuickConnectAvailable = _quickConnect;
+            configuration.LibraryScanFanoutConcurrency = _fanout ?? 0;
+            configuration.ParallelImageEncodingLimit = _encodingLimit ?? 0;
+            await Api.Client.System.Configuration.PostAsync(configuration);
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Settings] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

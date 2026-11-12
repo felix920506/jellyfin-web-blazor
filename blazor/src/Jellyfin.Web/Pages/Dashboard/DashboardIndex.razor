@@ -1,0 +1,321 @@
+@* The dashboard's start page: the server and what it is doing right now.
+   Port of apps/dashboard/routes/index.tsx and components/widgets/*. *@
+@attribute [Route("/dashboard")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@implements IDisposable
+@using System.Reflection
+@using System.Text.Json
+@inject JellyfinApi Api
+@inject ServerEvents Events
+@inject AppDialogs Dialogs
+@inject AppHost Host
+@inject DateTimeText Clock
+@inject Globalize Globalize
+
+<Page Id="dashboardPage" Title="@Globalize["TabDashboard"]" Class="mainAnimatedPage type-interior">
+    <div class="content-primary">
+        <div class="jf-dashboard-grid">
+            <div class="jf-dashboard-col jf-dashboard-col-main">
+                <DashboardWidget Title="@Globalize["TabServer"]" Href="#/dashboard/settings">
+                    <MudPaper Class="jf-dashboard-server-info">
+                        <div class="jf-dashboard-server-labels">
+                            <MudText>@Globalize["LabelServerName"]</MudText>
+                            <MudText>@Globalize["LabelServerVersion"]</MudText>
+                            <MudText>@Globalize["LabelWebVersion"]</MudText>
+                            <MudText>@Globalize["LabelBuildVersion"]</MudText>
+                        </div>
+                        <div class="jf-dashboard-server-values">
+                            @if (_systemInfo is null)
+                            {
+                                <MudSkeleton />
+                                <MudSkeleton />
+                            }
+                            else
+                            {
+                                <MudText Class="jf-dashboard-server-name">@_systemInfo.ServerName</MudText>
+                                <MudText Class="jf-dashboard-server-version">@DashboardNav.DisplayVersion(_systemInfo.Version)</MudText>
+                            }
+                            <MudText>@DashboardNav.DisplayVersion(Host.AppVersion)</MudText>
+                            <MudText>@BuildVersion</MudText>
+                        </div>
+                    </MudPaper>
+
+                    <div class="jf-dashboard-server-actions">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="jf-dashboard-scan" Disabled="IsScanning" OnClick="ScanLibrariesAsync">
+                            @if (IsScanning)
+                            {
+                                <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="jf-dashboard-button-spinner" />
+                            }
+                            else
+                            {
+                                <MudIcon Icon="@MdIcon.Of("refresh")" Class="jf-dashboard-button-icon" />
+                            }
+                            @Globalize["ButtonScanAllLibraries"]
+                        </MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Error" StartIcon="@MdIcon.Of("restart_alt")" Class="jf-dashboard-restart" OnClick="RestartAsync">
+                            @Globalize["Restart"]
+                        </MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Error" StartIcon="@MdIcon.Of("power_settings_new")" Class="jf-dashboard-shutdown" OnClick="ShutdownAsync">
+                            @Globalize["ButtonShutdown"]
+                        </MudButton>
+                    </div>
+                </DashboardWidget>
+
+                <div class="jf-dashboard-counts">
+                    @foreach (var card in CountCards)
+                    {
+                        if (_counts is not null && !card.Metrics.Any(metric => metric.Value(_counts) is > 0))
+                        {
+                            continue;
+                        }
+
+                        <MudCard Class="jf-dashboard-count-card" @key="card.Icon">
+                            @foreach (var metric in card.Metrics)
+                            {
+                                <div class="jf-dashboard-count">
+                                    <MudText Typo="Typo.body2" Class="mud-text-secondary">@Globalize[metric.Key]</MudText>
+                                    <MudText Typo="Typo.h5" HtmlTag="div" Class="jf-dashboard-count-value">
+                                        @if (_counts is null)
+                                        {
+                                            <MudSkeleton />
+                                        }
+                                        else
+                                        {
+                                            @Globalize.FormatNumber(metric.Value(_counts) ?? 0)
+                                        }
+                                    </MudText>
+                                </div>
+                            }
+                            <MudIcon Icon="@MdIcon.Of(card.Icon)" Size="Size.Large" />
+                        </MudCard>
+                    }
+                </div>
+
+                @if (RunningTasks.Count > 0)
+                {
+                    <DashboardWidget Title="@Globalize["HeaderRunningTasks"]" Href="#/dashboard/tasks">
+                        <MudPaper Class="jf-dashboard-running-tasks">
+                            @foreach (var task in RunningTasks)
+                            {
+                                <div @key="task.Id" class="jf-dashboard-running-task">
+                                    <MudText>@task.Name</MudText>
+                                    <DashboardTaskProgress Info="task" />
+                                </div>
+                            }
+                        </MudPaper>
+                    </DashboardWidget>
+                }
+
+                <DashboardWidget Title="@Globalize["HeaderDevices"]" Href="#/dashboard/devices">
+                    <div class="jf-dashboard-devices">
+                        @foreach (var session in _sessions ?? [])
+                        {
+                            <DashboardDeviceCard @key="session.Id" Device="session" />
+                        }
+                    </div>
+                </DashboardWidget>
+            </div>
+
+            <div class="jf-dashboard-col jf-dashboard-col-activity">
+                <DashboardWidget Title="@Globalize["HeaderActivity"]" Href="#/dashboard/activity?useractivity=true">
+                    @if (_activity is null)
+                    {
+                        <div class="jf-dashboard-skeletons">
+                            @for (var i = 0; i < 4; i++)
+                            {
+                                <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="60px" />
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="mud-list mud-list-padding jf-dashboard-list jf-dashboard-activity">
+                            @foreach (var entry in _activity)
+                            {
+                                <DashboardActivityItem @key="entry.Id" Item="entry" ShowShortOverview="true" Href="#/dashboard/activity?useractivity=true" />
+                            }
+                        </div>
+                    }
+                </DashboardWidget>
+            </div>
+
+            <div class="jf-dashboard-col jf-dashboard-col-side">
+                @if (_alerts is { Count: > 0 })
+                {
+                    <DashboardWidget Title="@Globalize["Alerts"]" Href="#/dashboard/activity?useractivity=false">
+                        <div class="mud-list mud-list-padding jf-dashboard-list jf-dashboard-alerts">
+                            @foreach (var entry in _alerts)
+                            {
+                                <DashboardActivityItem @key="entry.Id" Item="entry" Href="#/dashboard/activity?useractivity=false" />
+                            }
+                        </div>
+                    </DashboardWidget>
+                }
+
+                <DashboardWidget Title="@Globalize["HeaderPaths"]" Href="#/dashboard/settings">
+                    <div class="mud-list mud-list-padding jf-dashboard-list jf-dashboard-paths">
+                        <DashboardStorageItem Label="@Globalize["LabelCache"]" Folder="_storage?.CacheFolder" />
+                        <DashboardStorageItem Label="@Globalize["LabelImageCache"]" Folder="_storage?.ImageCacheFolder" />
+                        <DashboardStorageItem Label="@Globalize["LabelProgramData"]" Folder="_storage?.ProgramDataFolder" />
+                        <DashboardStorageItem Label="@Globalize["LabelLogs"]" Folder="_storage?.LogFolder" />
+                        <DashboardStorageItem Label="@Globalize["LabelMetadata"]" Folder="_storage?.InternalMetadataFolder" />
+                        <DashboardStorageItem Label="@Globalize["LabelTranscodes"]" Folder="_storage?.TranscodingTempFolder" />
+                        <DashboardStorageItem Label="@Globalize["LabelWeb"]" Folder="_storage?.WebFolder" />
+                    </div>
+                </DashboardWidget>
+            </div>
+        </div>
+    </div>
+</Page>
+
+@code {
+    private const string ScanTaskKey = "RefreshLibrary";
+
+    private static readonly CountCard[] CountCards =
+    [
+        new("movie", [new("Movies", c => c.MovieCount)]),
+        new("tv", [new("Series", c => c.SeriesCount), new("Episodes", c => c.EpisodeCount)]),
+        new("music_note", [new("Albums", c => c.AlbumCount), new("Songs", c => c.SongCount)]),
+        new("music_video", [new("MusicVideos", c => c.MusicVideoCount)]),
+        new("book", [new("Books", c => c.BookCount)]),
+        new("video_library", [new("Collections", c => c.BoxSetCount)]),
+    ];
+
+    // The original shows its build variable here ("Release" for release builds).
+    private static readonly string BuildVersion =
+        typeof(DashboardNav).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+') is [_, var commit, ..]
+            ? commit
+            : "Release";
+
+    private SystemInfo? _systemInfo;
+    private ItemCounts? _counts;
+    private List<TaskInfo>? _tasks;
+    private List<SessionInfoDto>? _sessions;
+    private List<ActivityLogEntry>? _activity;
+    private List<ActivityLogEntry>? _alerts;
+    private SystemStorageDto? _storage;
+    private LiveFeed? _taskFeed;
+    private LiveFeed? _sessionFeed;
+
+    private List<TaskInfo> RunningTasks => _tasks?.Where(task => task.State == TaskInfo_State.Running).ToList() ?? [];
+
+    // As in the original, the button also spins until the tasks are known.
+    private bool IsScanning => _tasks?.FirstOrDefault(task => task.Key == ScanTaskKey)?.State != TaskInfo_State.Idle;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _taskFeed = new LiveFeed(Events, "ScheduledTasksInfo", "1000,1000", OnTasksMessage);
+        _sessionFeed = new LiveFeed(Events, "Sessions", "0,1500", OnSessionsMessage);
+
+        var now = Clock.Now;
+        await Task.WhenAll(
+            LoadAsync("system info", async () => _systemInfo = await Api.Client.System.Info.GetAsync()),
+            LoadAsync("item counts", async () => _counts = await Api.Client.Items.Counts.GetAsync() ?? new ItemCounts()),
+            LoadAsync("tasks", async () => _tasks ??= await Api.Client.ScheduledTasks.GetAsync(request => request.QueryParameters.IsHidden = false) ?? []),
+            LoadAsync("sessions", async () =>
+            {
+                var sessions = await Api.Client.Sessions.GetAsync(
+                    request => request.QueryParameters.ActiveWithinSeconds = DashboardSessions.ActiveWithinSeconds) ?? [];
+                // Updates that arrived while the request ran are newer than its answer.
+                _sessions = _sessions is null ? sessions : DashboardSessions.Merge(sessions, _sessions, Clock.Now);
+            }),
+            LoadAsync("activity", async () => _activity = await GetEntriesAsync(7, now.AddDays(-1), hasUserId: true)),
+            LoadAsync("alerts", async () => _alerts = await GetEntriesAsync(4, now.AddDays(-7), hasUserId: false)),
+            LoadAsync("storage", async () => _storage = await Api.Client.System.Info.Storage.GetAsync()));
+    }
+
+    public void Dispose()
+    {
+        _taskFeed?.Dispose();
+        _sessionFeed?.Dispose();
+    }
+
+    private async Task LoadAsync(string what, Func<Task> load)
+    {
+        try
+        {
+            await load();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn($"[Dashboard] unable to load the {what}: {ex.Message}");
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task<List<ActivityLogEntry>> GetEntriesAsync(int limit, DateTimeOffset minDate, bool hasUserId)
+    {
+        var result = await Api.Client.System.ActivityLog.Entries.GetAsync(request =>
+        {
+            request.QueryParameters.StartIndex = 0;
+            request.QueryParameters.Limit = limit;
+            request.QueryParameters.MinDate = minDate;
+            request.QueryParameters.HasUserId = hasUserId;
+        });
+        return result?.Items ?? [];
+    }
+
+    private void OnTasksMessage(JsonElement data) => _ = InvokeAsync(() =>
+    {
+        _tasks = KiotaJson.ParseList(data, TaskInfo.CreateFromDiscriminatorValue);
+        StateHasChanged();
+    });
+
+    private void OnSessionsMessage(JsonElement data) => _ = InvokeAsync(() =>
+    {
+        var update = KiotaJson.ParseList(data, SessionInfoDto.CreateFromDiscriminatorValue);
+        _sessions = DashboardSessions.Merge(_sessions ?? [], update, Clock.Now);
+        StateHasChanged();
+    });
+
+    private async Task ScanLibrariesAsync()
+    {
+        if (_tasks?.FirstOrDefault(task => task.Key == ScanTaskKey)?.Id is not { } taskId)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.ScheduledTasks.Running[taskId].PostAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Dashboard] starting the library scan failed: " + ex.Message);
+        }
+    }
+
+    private async Task RestartAsync()
+    {
+        if (await Dialogs.MuiConfirmAsync(Globalize["Restart"], Globalize["MessageConfirmRestart"], Globalize["Restart"], destructive: true))
+        {
+            await SendPowerCommandAsync(() => Api.Client.System.Restart.PostAsync());
+        }
+    }
+
+    private async Task ShutdownAsync()
+    {
+        if (await Dialogs.MuiConfirmAsync(Globalize["ButtonShutdown"], Globalize["MessageConfirmShutdown"], Globalize["ButtonShutdown"], destructive: true))
+        {
+            await SendPowerCommandAsync(() => Api.Client.System.Shutdown.PostAsync());
+        }
+    }
+
+    private static async Task SendPowerCommandAsync(Func<Task> send)
+    {
+        try
+        {
+            await send();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Dashboard] the server did not accept the command: " + ex.Message);
+        }
+    }
+
+    private sealed record CountCard(string Icon, CountMetric[] Metrics);
+
+    private sealed record CountMetric(string Key, Func<ItemCounts, int?> Value);
+}

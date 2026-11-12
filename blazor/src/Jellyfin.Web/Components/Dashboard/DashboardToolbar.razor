@@ -1,0 +1,65 @@
+@* The contents of the dashboard's app bar. Port of components/toolbar/AppToolbar.tsx as
+   apps/dashboard/AppLayout.tsx uses it, plus the page title (the original shows it in the
+   browser tab only). *@
+@namespace Jellyfin.Web.Components
+@implements IDisposable
+@inject AppRouter Router
+@inject ShellState Shell
+@inject Globalize Globalize
+
+@if (DrawerAvailable)
+{
+    <MudTooltip Text="@Globalize[DrawerOpen ? "MenuClose" : "MenuOpen"]">
+        <MudIconButton Icon="@MdIcon.Of("menu")" Color="Color.Inherit" Size="Size.Large" Edge="Edge.Start" Class="jf-drawer-button"
+                       aria-label="@Globalize[DrawerOpen ? "MenuClose" : "MenuOpen"]" OnClick="OnDrawerButtonClick" />
+    </MudTooltip>
+}
+
+@if (Router.CanGoBack)
+{
+    <MudTooltip Text="@Globalize["ButtonBack"]">
+        <MudIconButton Icon="@MdIcon.Of("arrow_back")" Color="Color.Inherit" Size="Size.Large" Edge="Edge.Start" Class="jf-dashboard-back"
+                       aria-label="@Globalize["ButtonBack"]" OnClick="Router.Back" />
+    </MudTooltip>
+}
+
+<div class="jf-dashboard-title">@Shell.Title</div>
+
+<div class="jf-toolbar-end">
+    @if (DashboardNav.HelpUrl(Location.Path) is { } helpUrl)
+    {
+        <MudTooltip Text="@Globalize["Help"]">
+            <MudIconButton Icon="@MdIcon.Of("help_outline")" Color="Color.Inherit" Size="Size.Large" Href="@helpUrl" Target="_blank"
+                           rel="noopener noreferrer" Class="jf-dashboard-help" aria-label="@Globalize["Help"]" />
+        </MudTooltip>
+    }
+    <UserMenuButton />
+</div>
+
+@code {
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    [Parameter]
+    public bool DrawerAvailable { get; set; }
+
+    [Parameter]
+    public bool DrawerOpen { get; set; }
+
+    [Parameter]
+    public EventCallback OnDrawerButtonClick { get; set; }
+
+    protected override void OnInitialized()
+    {
+        Globalize.LanguageChanged += Refresh;
+        Shell.Changed += Refresh;
+    }
+
+    public void Dispose()
+    {
+        Globalize.LanguageChanged -= Refresh;
+        Shell.Changed -= Refresh;
+    }
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+}

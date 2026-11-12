@@ -1,0 +1,118 @@
+@* The server's log files and the slow response warning. Port of apps/dashboard/routes/logs/index.tsx. *@
+@attribute [Route("/dashboard/logs")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject Globalize Globalize
+@inject DateTimeText Dates
+
+<Page Id="logPage" Title="@Globalize["TabLogs"]" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_configuration is not null)
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    <MudText Typo="Typo.h1">@Globalize["TabLogs"]</MudText>
+
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <MudCheckBox T="bool" @bind-Value="_warn" Color="Color.Primary" Label="@Globalize["LabelSlowResponseEnabled"]"
+                                 Class="jf-dashboard-logs-warn" />
+
+                    <MudNumericField T="int?" @bind-Value="_threshold" Variant="Variant.Filled" FullWidth="true" Disabled="!_warn"
+                                     Label="@Globalize["LabelSlowResponseTime"]" InputId="jf-dashboard-logs-threshold" />
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+            <div class="serverLogs readOnlyContent jf-dashboard-logs">
+                <div class="mud-list mud-list-padding jf-dashboard-list jf-dashboard-paper-list">
+                    @foreach (var log in _logs)
+                    {
+                        <a @key="log.Name" class="mud-list-item mud-list-item-gutters mud-list-item-clickable mud-ripple jf-dashboard-log-item"
+                           href="@($"#/dashboard/logs/{Uri.EscapeDataString(log.Name ?? string.Empty)}")">
+                            <div class="mud-list-item-text">
+                                <h3 class="mud-typography mud-typography-h3 jf-dashboard-wrap">@log.Name</h3>
+                                <p class="mud-typography mud-typography-body1 mud-text-secondary">@DateOf(log)</p>
+                            </div>
+                        </a>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</Page>
+
+@code {
+    private ServerConfiguration? _configuration;
+    private List<LogFile> _logs = [];
+    private bool _loading = true;
+    private bool _warn;
+    private int? _threshold;
+    private bool _saving;
+    private bool _saved;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Task.WhenAll(
+            LoadAsync("log files", async () => _logs = await Api.Client.System.Logs.GetAsync() ?? []),
+            LoadAsync("configuration", async () =>
+            {
+                _configuration = await Api.Client.System.Configuration.GetAsync();
+                _warn = _configuration?.EnableSlowResponseWarning ?? false;
+                _threshold = (int?)_configuration?.SlowResponseThresholdMs;
+            }));
+        _loading = false;
+    }
+
+    private static async Task LoadAsync(string what, Func<Task> load)
+    {
+        try
+        {
+            await load();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn($"[Logs] unable to load the {what}: {ex.Message}");
+        }
+    }
+
+    private string DateOf(LogFile log) =>
+        log.DateModified is { } date ? Dates.ToLocaleDateString(date) + " " + Dates.GetDisplayTime(date) : string.Empty;
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _saved = false;
+        try
+        {
+            // The settings as they are now, so that nothing changed elsewhere in the meantime is undone.
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            configuration.EnableSlowResponseWarning = _warn;
+            if (_threshold is { } threshold)
+            {
+                configuration.SlowResponseThresholdMs = threshold;
+            }
+
+            await Api.Client.System.Configuration.PostAsync(configuration);
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Logs] saving the configuration failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

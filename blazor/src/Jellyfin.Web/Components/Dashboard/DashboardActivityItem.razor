@@ -1,0 +1,40 @@
+@* One activity log entry of the start page's activity and alerts widgets.
+   Port of features/activity/components/ActivityListItem.tsx. *@
+@namespace Jellyfin.Web.Components
+@inject RelativeTime RelativeTime
+
+<a class="mud-list-item mud-list-item-gutters mud-list-item-clickable mud-ripple jf-dashboard-activity-item" href="@Href">
+    <div class="mud-list-item-avatar">
+        <MudAvatar Color="@SeverityColor(Item.Severity)">
+            <MudIcon Icon="@MdIcon.Of("notifications")" />
+        </MudAvatar>
+    </div>
+    <div class="mud-list-item-text">
+        <p class="mud-typography mud-typography-body1 jf-dashboard-activity-name">@Item.Name</p>
+        <p class="mud-typography mud-typography-body1 mud-text-secondary jf-dashboard-activity-detail">@(Item.Date is { } date ? RelativeTime.Calendar(date) : "N/A")</p>
+        @if (ShowShortOverview && !string.IsNullOrEmpty(Item.ShortOverview))
+        {
+            <p class="mud-typography mud-typography-body1 mud-text-secondary jf-dashboard-activity-detail">@Item.ShortOverview</p>
+        }
+    </div>
+</a>
+
+@code {
+    [Parameter, EditorRequired]
+    public ActivityLogEntry Item { get; set; } = default!;
+
+    [Parameter]
+    public bool ShowShortOverview { get; set; }
+
+    [Parameter, EditorRequired]
+    public string Href { get; set; } = string.Empty;
+
+    /// <summary>The color of a log level. Port of getLogLevelColor().</summary>
+    public static Color SeverityColor(ActivityLogEntry_Severity? severity) => severity switch
+    {
+        ActivityLogEntry_Severity.Information or null => Color.Info,
+        ActivityLogEntry_Severity.Warning => Color.Warning,
+        ActivityLogEntry_Severity.Error or ActivityLogEntry_Severity.Critical => Color.Error,
+        _ => Color.Default,
+    };
+}

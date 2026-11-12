@@ -1,0 +1,98 @@
+@* The frame of the admin dashboard. Port of apps/dashboard/AppLayout.tsx: the app bar, a drawer
+   that is always there on wide screens and slides in on narrow ones, and the page body. While it
+   is shown the document carries the "dashboardDocument" class (which the original stylesheets
+   use to make room for the drawer) and the user's dashboard theme. *@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject JellyfinApi Api
+@inject IBrowser Browser
+@inject ThemeManager Theme
+@inject UserSettings Settings
+@inject IDashboardInterop Interop
+
+<div class="jf-layout jf-dashboard-layout">
+    <MudAppBar Dense="true" Elevation="0" Fixed="true" Gutters="false" Class="jf-appbar jf-dashboard-appbar" ToolBarClass="jf-toolbar dashboard-appBar">
+        <DashboardToolbar DrawerAvailable="!IsMediumScreen" DrawerOpen="DrawerOpen" OnDrawerButtonClick="ToggleDrawer" />
+    </MudAppBar>
+    <div class="jf-appbar-offset"></div>
+
+    @if (IsMediumScreen)
+    {
+        <aside class="jf-dashboard-drawer">
+            <DashboardDrawerContent />
+        </aside>
+    }
+    else
+    {
+        <MudDrawer Open="DrawerOpen" OpenChanged="OnDrawerOpenChanged" Variant="DrawerVariant.Temporary" Anchor="Anchor.Left"
+                   Elevation="1" Class="jf-dashboard-drawer-temporary">
+            <DashboardDrawerContent />
+        </MudDrawer>
+    }
+
+    <main class="jf-main">
+        <div class="mainAnimatedPages skinBody"></div>
+        <div class="skinBody">@Body</div>
+    </main>
+    <ShellSlotHost Slot="ShellSlot.Footer" />
+</div>
+
+@code {
+    private bool _drawerActive;
+    private string? _lastUrl;
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    private bool IsMediumScreen => Browser.ViewportWidth >= Viewport.Md;
+
+    private bool DrawerOpen => _drawerActive && !IsMediumScreen;
+
+    protected override void OnInitialized()
+    {
+        Api.Changed += Refresh;
+        Browser.Resized += Refresh;
+        Settings.Changed += OnSettingChanged;
+        Browser.ToggleClass(DocumentTarget.Body, "dashboardDocument", true);
+        Theme.ApplyUserTheme(dashboard: true);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Relative times ("5 minutes ago") come from the browser once this is loaded.
+        await Interop.LoadAsync();
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Following a drawer link closes the drawer.
+        if (_lastUrl != Location.Url)
+        {
+            _lastUrl = Location.Url;
+            _drawerActive = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        Api.Changed -= Refresh;
+        Browser.Resized -= Refresh;
+        Settings.Changed -= OnSettingChanged;
+        Browser.ToggleClass(DocumentTarget.Body, "dashboardDocument", false);
+        Theme.ApplyUserTheme();
+    }
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnSettingChanged(string name)
+    {
+        if (name == "dashboardTheme")
+        {
+            Theme.ApplyUserTheme(dashboard: true);
+        }
+    }
+
+    private void ToggleDrawer() => _drawerActive = !_drawerActive;
+
+    private void OnDrawerOpenChanged(bool open) => _drawerActive = open;
+}

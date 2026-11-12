@@ -1,0 +1,52 @@
+@* A server folder and how full its drive is. Port of
+   apps/dashboard/features/storage/components/StorageListItem.tsx. *@
+@namespace Jellyfin.Web.Components
+@inject Globalize Globalize
+
+<div class="mud-list-item mud-list-item-gutters jf-dashboard-storage-item">
+    <div class="mud-list-item-icon" title="@TypeText">
+        <MudIcon Icon="@MdIcon.Of(StorageText.Icon(Folder?.StorageType))" />
+    </div>
+    <div class="mud-list-item-text">
+        <span class="mud-typography mud-typography-body2">@Label</span>
+        <div class="jf-dashboard-storage-detail">
+            <p class="mud-typography mud-typography-body1 jf-dashboard-storage-path">@Folder?.Path</p>
+            @if (Folder is null)
+            {
+                <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+            }
+            else
+            {
+                <MudProgressLinear Color="@LevelColor" Value="_usage.Percent" />
+            }
+            <div class="jf-dashboard-storage-numbers">
+                <span class="mud-typography mud-typography-body2 mud-text-secondary">@Globalize.Translate("OnFilesystem", string.IsNullOrEmpty(Folder?.DeviceId) ? "?" : Folder.DeviceId)</span>
+                <span class="mud-typography mud-typography-body2 mud-text-secondary jf-dashboard-storage-size">@_usage.Text</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private StorageUsage _usage = StorageText.Usage(null);
+
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>Null while the storage information loads.</summary>
+    [Parameter]
+    public FolderStorageDto? Folder { get; set; }
+
+    private string? TypeText => Folder?.StorageType is not { Length: > 0 } type
+        ? null
+        : StorageText.TypeKey(type) is { } key ? Globalize[key] : type;
+
+    private Color LevelColor => _usage.Level switch
+    {
+        "error" => Color.Error,
+        "warning" => Color.Warning,
+        _ => Color.Success,
+    };
+
+    protected override void OnParametersSet() => _usage = StorageText.Usage(Folder);
+}

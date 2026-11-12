@@ -1,0 +1,249 @@
+@* The log files page (/dashboard/logs) and the log viewer (/dashboard/logs/{file}). *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private const string LogText = "[INF] Startup complete\n[WRN] Slow response";
+
+    private void ScriptLogs(bool warn = true)
+    {
+        App.Server.OnGet("/System/Logs", new[]
+        {
+            new { Name = "log_20240515.log", DateModified = Now.AddHours(-1), Size = 2048 },
+            new { Name = "upgrade notes.txt", DateModified = Now.AddDays(-3), Size = 12 },
+        });
+        App.Server.OnGet("/System/Configuration", new { ServerName = "Attic", EnableSlowResponseWarning = warn, SlowResponseThresholdMs = 500 });
+    }
+
+    private IRenderedComponent<DashboardLogs> RenderLogs()
+    {
+        var cut = Render<DashboardLogs>();
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-dashboard-logs")));
+        return cut;
+    }
+
+    private IRenderedComponent<DashboardLogFile> RenderFile(string file = "log_20240515.log")
+    {
+        var cut = Render<DashboardLogFile>(viewer => viewer.Add(v => v.File, file));
+        cut.Eventually(() => Assert.NotEmpty(App.Server.RequestsTo("/System/Logs/Log")));
+        return cut;
+    }
+
+    [Fact]
+    public void The_log_files_link_to_their_viewer()
+    {
+        SignIn(admin: true);
+        ScriptLogs();
+
+        var cut = RenderLogs();
+
+        Assert.Equal(
+            ["#/dashboard/logs/log_20240515.log", "#/dashboard/logs/upgrade%20notes.txt"],
+            cut.FindAll("a.jf-dashboard-log-item").Select(item => item.GetAttribute("href")));
+        Assert.Equal(["log_20240515.log", "upgrade notes.txt"], cut.FindAll("a.jf-dashboard-log-item h3").Select(name => name.TextContent));
+        Assert.Contains("2024-05-15", cut.FindAll("a.jf-dashboard-log-item p")[0].TextContent, StringComparison.Ordinal);
+        Assert.Contains("2024-05-12", cut.FindAll("a.jf-dashboard-log-item p")[1].TextContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_slow_response_warning_shows_the_server_settings()
+    {
+        SignIn(admin: true);
+        ScriptLogs();
+
+        var cut = RenderLogs();
+
+        Assert.True(Box(cut, "jf-dashboard-logs-warn").IsChecked());
+        Assert.Equal("500", cut.Find("#jf-dashboard-logs-threshold").Value());
+        Assert.False(cut.Find("#jf-dashboard-logs-threshold").HasAttribute("disabled"));
+        Assert.Empty(cut.FindAll(".jf-dashboard-saved"));
+    }
+
+    [Fact]
+    public async Task The_threshold_is_only_asked_for_when_the_warning_is_on()
+    {
+        SignIn(admin: true);
+        ScriptLogs(warn: false);
+        var cut = RenderLogs();
+        Assert.False(Box(cut, "jf-dashboard-logs-warn").IsChecked());
+        Assert.True(cut.Find("#jf-dashboard-logs-threshold").HasAttribute("disabled"));
+
+        await Box(cut, "jf-dashboard-logs-warn").ChangeAsync(new ChangeEventArgs { Value = true });
+
+        cut.Eventually(() => Assert.False(cut.Find("#jf-dashboard-logs-threshold").HasAttribute("disabled")));
+    }
+
+    [Fact]
+    public async Task Saving_changes_the_two_settings_and_keeps_the_others()
+    {
+        SignIn(admin: true);
+        ScriptLogs();
+        App.Server.OnPost("/System/Configuration");
+        var cut = RenderLogs();
+
+        await cut.Find("#jf-dashboard-logs-threshold").ChangeAsync(new ChangeEventArgs { Value = "750" });
+        await cut.Find("form.jf-dashboard-form").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal(this.T("SettingsSaved"), cut.Find(".jf-dashboard-saved").TextContent.Trim()));
+        var body = Assert.Single(BodiesTo("/System/Configuration"));
+        Assert.True(body.Flag("EnableSlowResponseWarning"));
+        Assert.Equal(750, body.GetProperty("SlowResponseThresholdMs").GetInt64());
+        Assert.Equal("Attic", body.Text("ServerName"));
+        Assert.Equal(2, App.Server.RequestsTo("/System/Configuration").Count(request => request.Method == HttpMethod.Get));
+
+        await Box(cut, "jf-dashboard-logs-warn").ChangeAsync(new ChangeEventArgs { Value = false });
+        await cut.Find("form.jf-dashboard-form").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal(2, BodiesTo("/System/Configuration").Count));
+        Assert.False(BodiesTo("/System/Configuration")[1].Flag("EnableSlowResponseWarning"));
+    }
+
+    [Fact]
+    public async Task Nothing_is_reported_as_saved_when_the_server_refuses()
+    {
+        SignIn(admin: true);
+        ScriptLogs();
+        App.Server.OnPost("/System/Configuration", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+        var cut = RenderLogs();
+
+        await cut.Find("form.jf-dashboard-form").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(BodiesTo("/System/Configuration")));
+        cut.Eventually(() => Assert.False(cut.Find(".jf-dashboard-submit").HasAttribute("disabled")));
+        Assert.Empty(cut.FindAll(".jf-dashboard-saved"));
+    }
+
+    [Fact]
+    public void The_files_are_listed_without_the_settings_when_those_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/System/Logs", new[] { new { Name = "server.log", DateModified = Now } });
+
+        var cut = RenderLogs();
+
+        Assert.Single(cut.FindAll("a.jf-dashboard-log-item"));
+        Assert.Empty(cut.FindAll("form"));
+    }
+
+    [Fact]
+    public void The_page_is_empty_when_the_server_answers_nothing()
+    {
+        SignIn(admin: true);
+
+        var cut = RenderLogs();
+
+        Assert.Empty(cut.FindAll("a.jf-dashboard-log-item"));
+        Assert.Empty(cut.FindAll("form"));
+    }
+
+    [Fact]
+    public void A_log_file_is_shown_as_text()
+    {
+        SignIn(admin: true);
+        App.Server.On(HttpMethod.Get, "/System/Logs/Log", _ => PlainText(LogText));
+
+        var cut = RenderFile();
+
+        cut.Eventually(() => Assert.Equal(LogText, cut.Find("pre.jf-dashboard-log-text").TextContent));
+        Assert.Equal("log_20240515.log", Assert.Single(App.Server.RequestsTo("/System/Logs/Log")).Query("name"));
+        Assert.Equal("log_20240515.log", cut.Find("h1").TextContent);
+        Assert.Equal(2, cut.FindAll(".jf-dashboard-log-copy").Count);
+        Assert.Equal(2, cut.FindAll(".jf-dashboard-log-download").Count);
+        Assert.Equal(2, cut.FindAll(".jf-dashboard-log-watch").Count);
+        Assert.Empty(cut.FindAll(".jf-dashboard-log-error"));
+    }
+
+    [Fact]
+    public async Task The_log_is_copied_to_the_clipboard()
+    {
+        SignIn(admin: true);
+        App.Server.On(HttpMethod.Get, "/System/Logs/Log", _ => PlainText(LogText));
+        Module.Setup<bool>("copyText", LogText).SetResult(true);
+        var cut = RenderFile();
+        cut.Eventually(() => Assert.NotNull(cut.Find("pre.jf-dashboard-log-text")));
+
+        await cut.Find(".jf-dashboard-log-copy").ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Equal([this.T("CopyLogSuccess")], this.Toasts()));
+    }
+
+    [Fact]
+    public async Task No_success_is_reported_when_the_browser_refuses_to_copy()
+    {
+        SignIn(admin: true);
+        App.Server.On(HttpMethod.Get, "/System/Logs/Log", _ => PlainText(LogText));
+        Module.Setup<bool>("copyText", LogText).SetResult(false);
+        var cut = RenderFile();
+        cut.Eventually(() => Assert.NotNull(cut.Find("pre.jf-dashboard-log-text")));
+
+        await cut.Find(".jf-dashboard-log-copy").ClickAsync(new MouseEventArgs());
+
+        Assert.Single(Module.Invocations["copyText"]);
+        Assert.Empty(this.Toasts());
+    }
+
+    [Fact]
+    public async Task The_log_is_offered_as_a_download()
+    {
+        SignIn(admin: true);
+        App.Server.On(HttpMethod.Get, "/System/Logs/Log", _ => PlainText(LogText));
+        var cut = RenderFile();
+        cut.Eventually(() => Assert.NotNull(cut.Find("pre.jf-dashboard-log-text")));
+
+        await cut.Find(".jf-dashboard-log-download").ClickAsync(new MouseEventArgs());
+
+        var download = Assert.Single(Module.Invocations["downloadText"]);
+        Assert.Equal([LogText, "log_20240515.log"], download.Arguments);
+    }
+
+    [Fact]
+    public async Task A_watched_log_is_read_again_and_again()
+    {
+        SignIn(admin: true);
+        var text = LogText;
+        App.Server.On(HttpMethod.Get, "/System/Logs/Log", _ => PlainText(text));
+        var cut = RenderFile();
+        cut.Eventually(() => Assert.NotNull(cut.Find("pre.jf-dashboard-log-text")));
+        cut.Instance.WatchInterval = TimeSpan.FromMilliseconds(20);
+        Assert.Equal(this.T("Watch"), cut.Find(".jf-dashboard-log-watch").TextContent.Trim());
+
+        await cut.Find(".jf-dashboard-log-watch").ClickAsync(new MouseEventArgs());
+        Assert.Equal(this.T("Unwatch"), cut.Find(".jf-dashboard-log-watch").TextContent.Trim());
+        text = LogText + "\n[INF] One more line";
+
+        cut.Eventually(() => Assert.Equal(text, cut.Find("pre.jf-dashboard-log-text").TextContent));
+
+        await cut.Find(".jf-dashboard-log-watch").ClickAsync(new MouseEventArgs());
+        Assert.Equal(this.T("Watch"), cut.Find(".jf-dashboard-log-watch").TextContent.Trim());
+        await Task.Delay(100);
+        var loads = App.Server.RequestsTo("/System/Logs/Log").Count;
+        await Task.Delay(150);
+        Assert.Equal(loads, App.Server.RequestsTo("/System/Logs/Log").Count);
+    }
+
+    [Fact]
+    public async Task A_log_that_cannot_be_read_can_be_tried_again()
+    {
+        SignIn(admin: true);
+
+        var cut = RenderFile("gone.log");
+
+        cut.Eventually(() => Assert.Contains(this.T("LogLoadFailure"), cut.Find(".jf-dashboard-log-error").TextContent, StringComparison.Ordinal));
+        Assert.Empty(cut.FindAll("pre"));
+        Assert.Empty(cut.FindAll(".jf-dashboard-log-copy"));
+
+        App.Server.On(HttpMethod.Get, "/System/Logs/Log", _ => PlainText(LogText));
+        await cut.Find(".jf-dashboard-log-retry").ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Equal(LogText, cut.Find("pre.jf-dashboard-log-text").TextContent));
+        Assert.Empty(cut.FindAll(".jf-dashboard-log-error"));
+    }
+}

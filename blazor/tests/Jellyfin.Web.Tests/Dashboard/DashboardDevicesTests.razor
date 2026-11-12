@@ -1,0 +1,240 @@
+@* The devices page (/dashboard/devices). *@
+@using System.Text.Json
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Jellyfin.Web.Tests.User
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private static readonly Guid Alice = SettingsTestExtensions.OtherUserId;
+
+    private string ThisDevice => Get<JellyfinApi>().DeviceId;
+
+    private object[] Devices() =>
+    [
+        new { Id = "tv", Name = "Living room TV", AppName = "Jellyfin Android TV", AppVersion = "0.18", LastUserName = "bob", DateLastActivity = Now.AddDays(-2) },
+        new { Id = "chrome", Name = "Chrome", CustomName = "Kitchen", AppName = "Jellyfin Web", AppVersion = "10.11.0", LastUserName = "alice", LastUserId = (Guid?)Alice, DateLastActivity = Now.AddHours(-1) },
+        new { Id = ThisDevice, Name = "Firefox", AppName = "Jellyfin Web", AppVersion = "10.11.0", LastUserName = "tester", DateLastActivity = Now.AddDays(-1) },
+    ];
+
+    private void ScriptDevices(params object[] devices)
+    {
+        App.Server.OnGet("/Users", new[] { new { Id = Alice, Name = "alice" } });
+        App.Server.OnGet("/Devices", new { Items = devices, TotalRecordCount = devices.Length });
+    }
+
+    private IRenderedComponent<DashboardDevices> RenderPage(int devices = 3)
+    {
+        var cut = Render<DashboardDevices>();
+        cut.Eventually(() => Assert.Equal(devices, cut.FindAll("tbody tr.mud-table-row").Count));
+        return cut;
+    }
+
+    private static string[] Names(IRenderedComponent<DashboardDevices> cut) =>
+        cut.FindAll(".jf-dashboard-device-cell-name").Select(name => name.TextContent).ToArray();
+
+    private int Loads() => App.Server.RequestsTo("/Devices").Count(request => request.Method == HttpMethod.Get);
+
+    [Fact]
+    public void The_devices_are_listed_most_recently_used_first()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+
+        var cut = RenderPage();
+
+        Assert.Equal(["Kitchen", "Firefox", "Living room TV"], Names(cut));
+        var cells = cut.FindAll("tbody tr.mud-table-row")[0].QuerySelectorAll("td");
+        Assert.Equal("2024-05-15 11:00:00", cells[0].TextContent.Trim());
+        Assert.Equal("generated/assets/img/devices/chrome.svg", cells[1].QuerySelector("img.jf-dashboard-device-cell-icon")!.GetAttribute("src"));
+        Assert.Equal("Jellyfin Web 10.11.0", cells[2].TextContent.Trim());
+        Assert.Equal("alice", cells[3].TextContent.Trim());
+        Assert.Equal($"#/dashboard/users/{Alice:N}/profile", cells[3].QuerySelector("a.jf-dashboard-device-cell-user")!.GetAttribute("href"));
+        Assert.Null(cut.FindAll("tbody tr.mud-table-row")[2].QuerySelector("a.jf-dashboard-device-cell-user"));
+        Assert.Equal(1, Loads());
+        Assert.Single(App.Server.RequestsTo("/Users"));
+    }
+
+    [Fact]
+    public void The_device_in_use_cannot_be_deleted()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+
+        var cut = RenderPage();
+
+        Assert.True(cut.Find($"[data-deviceid='{ThisDevice}'] .jf-dashboard-device-delete").HasAttribute("disabled"));
+        Assert.False(cut.Find("[data-deviceid='tv'] .jf-dashboard-device-delete").HasAttribute("disabled"));
+        Assert.False(cut.Find($"[data-deviceid='{ThisDevice}'] .jf-dashboard-device-edit").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public async Task The_search_narrows_the_list()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+        var cut = RenderPage();
+
+        await cut.Find("#jf-dashboard-devices-search").InputAsync(new ChangeEventArgs { Value = "android" });
+        cut.Eventually(() => Assert.Equal(["Living room TV"], Names(cut)));
+
+        await cut.Find("#jf-dashboard-devices-search").InputAsync(new ChangeEventArgs { Value = "ALICE" });
+        cut.Eventually(() => Assert.Equal(["Kitchen"], Names(cut)));
+
+        await cut.Find("#jf-dashboard-devices-search").InputAsync(new ChangeEventArgs { Value = "" });
+        cut.Eventually(() => Assert.Equal(3, Names(cut).Length));
+    }
+
+    [Fact]
+    public async Task A_device_is_given_another_name()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+        App.Server.OnPost("/Devices/Options");
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-deviceid='chrome'] .jf-dashboard-device-edit"));
+        Assert.Equal(this.T("Edit"), dialogs.Find(".jf-dashboard-dialog-title").TextContent);
+        Assert.Equal("Kitchen", dialogs.Find("#jf-dashboard-dialog-input").Value());
+        Assert.Equal(this.T("Save"), dialogs.Find("[data-id=ok]").TextContent.Trim());
+        ScriptDevices(new { Id = "chrome", Name = "Chrome", CustomName = "Den", AppName = "Jellyfin Web", DateLastActivity = Now });
+        await ConfirmDialogAsync(dialogs, " Den ");
+
+        cut.Eventually(() => Assert.Equal(["Den"], Names(cut)));
+        var request = Assert.Single(App.Server.RequestsTo("/Devices/Options"));
+        Assert.Equal("chrome", request.Query("id"));
+        Assert.Equal("Den", request.JsonBody().Text("CustomName"));
+        Assert.Equal(2, Loads());
+    }
+
+    [Fact]
+    public async Task An_empty_name_takes_the_custom_name_away()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+        App.Server.OnPost("/Devices/Options");
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-deviceid='chrome'] .jf-dashboard-device-edit"));
+        await ConfirmDialogAsync(dialogs, string.Empty);
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Devices/Options")));
+        var body = App.Server.RequestsTo("/Devices/Options")[0].JsonBody();
+        Assert.False(body.TryGetProperty("CustomName", out var name) && name.ValueKind != JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task Nothing_is_sent_when_the_name_stays_or_the_dialog_is_closed()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-deviceid='chrome'] .jf-dashboard-device-edit"));
+        await ConfirmDialogAsync(dialogs);
+        cut.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-deviceid='chrome'] .jf-dashboard-device-edit"));
+        this.Dialogs().Dialogs[0].Cancel();
+        cut.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+
+        Assert.Empty(App.Server.RequestsTo("/Devices/Options"));
+        Assert.Equal(1, Loads());
+    }
+
+    [Fact]
+    public async Task A_device_is_deleted_after_a_confirmation()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+        App.Server.OnDelete("/Devices");
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-deviceid='tv'] .jf-dashboard-device-delete"));
+        Assert.Equal(this.T("HeaderDeleteDevice"), dialogs.Find(".jf-dashboard-dialog-title").TextContent);
+        Assert.Equal(this.T("DeleteDeviceConfirmation"), dialogs.Find(".jf-dashboard-dialog-text").TextContent);
+        Assert.Equal(this.T("Delete"), dialogs.Find("[data-id=ok]").TextContent.Trim());
+        ScriptDevices(Devices()[1], Devices()[2]);
+        await ConfirmDialogAsync(dialogs);
+
+        cut.Eventually(() => Assert.Equal(["Kitchen", "Firefox"], Names(cut)));
+        var request = Assert.Single(App.Server.Requests, request => request.Method == HttpMethod.Delete);
+        Assert.EndsWith("/Devices", request.Path, StringComparison.Ordinal);
+        Assert.Equal("tv", request.Query("id"));
+    }
+
+    [Fact]
+    public async Task A_device_stays_when_the_question_is_cancelled()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-deviceid='tv'] .jf-dashboard-device-delete"));
+        await CancelDialogAsync(dialogs);
+
+        cut.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Delete);
+        Assert.Equal(1, Loads());
+    }
+
+    [Fact]
+    public async Task All_devices_but_the_one_in_use_are_deleted()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+        App.Server.OnDelete("/Devices");
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-devices-delete-all"));
+        Assert.Equal(this.T("HeaderDeleteDevices"), dialogs.Find(".jf-dashboard-dialog-title").TextContent);
+        Assert.Equal(this.T("DeleteDevicesConfirmation"), dialogs.Find(".jf-dashboard-dialog-text").TextContent);
+        ScriptDevices(Devices()[2]);
+        await ConfirmDialogAsync(dialogs);
+
+        cut.Eventually(() => Assert.Equal(["Firefox"], Names(cut)));
+        Assert.Equal(
+            ["chrome", "tv"],
+            App.Server.Requests.Where(request => request.Method == HttpMethod.Delete).Select(request => request.Query("id")).Order());
+    }
+
+    [Fact]
+    public async Task The_list_is_read_again_when_a_change_fails()
+    {
+        SignIn(admin: true);
+        ScriptDevices(Devices());
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-deviceid='tv'] .jf-dashboard-device-delete"));
+        await ConfirmDialogAsync(dialogs);
+
+        cut.Eventually(() => Assert.Equal(2, Loads()));
+        Assert.Equal(3, Names(cut).Length);
+        Assert.Empty(cut.FindAll(".mud-alert"));
+    }
+
+    [Fact]
+    public void An_error_is_shown_when_the_devices_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", Array.Empty<object>());
+
+        var cut = Render<DashboardDevices>();
+
+        cut.Eventually(() => Assert.Equal(this.T("DevicesLoadError"), cut.Find(".mud-alert").TextContent.Trim()));
+        Assert.Empty(cut.FindAll("table"));
+    }
+}

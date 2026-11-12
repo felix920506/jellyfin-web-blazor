@@ -1,0 +1,59 @@
+@* A user on the dashboard's user list. Port of components/dashboard/users/UserCardBox.tsx. *@
+@namespace Jellyfin.Web.Components
+@inject JellyfinApi Api
+@inject IBrowser Browser
+@inject Globalize Globalize
+@inject RelativeTime RelativeTime
+
+<div class="@("card squareCard scalableCard squareCard-scalable" + (IsDisabled ? " grayscale" : null))" data-userid="@UserPages.IdText(User.Id)" data-username="@User.Name">
+    <div class="cardBox visualCardBox">
+        <div class="cardScalable visualCardBox-cardScalable">
+            <div class="cardPadder cardPadder-square"></div>
+            <a class="emby-button cardContent" href="@($"#/dashboard/users/{UserPages.IdText(User.Id)}/profile")">
+                @if (ImageUrl is { } url)
+                {
+                    <div class="@("cardImage" + (IsDisabled ? " disabledUser" : null))" style="@($"background-image:url('{url}')")"></div>
+                }
+                else
+                {
+                    <div class="@($"cardImage{(IsDisabled ? " disabledUser" : null)} {SessionUi.DefaultBackgroundClass(User.Name)} flex align-items-center justify-content-center")">
+                        <span class="material-icons cardImageIcon person" aria-hidden="true"></span>
+                    </div>
+                }
+            </a>
+        </div>
+        <div class="cardFooter visualCardBox-cardFooter">
+            <div style="text-align:right;float:right;padding-top:5px;">
+                <IconButton Icon="more_vert" Class="btnUserMenu flex-shrink-zero" OnClick="@(() => OnMenu.InvokeAsync(User))" />
+            </div>
+            <div class="cardText">
+                <span>@User.Name</span>
+            </div>
+            <div class="cardText cardText-secondary">
+                <span>@LastSeen</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public UserDto User { get; set; } = default!;
+
+    /// <summary>The card's "more" button was pressed.</summary>
+    [Parameter]
+    public EventCallback<UserDto> OnMenu { get; set; }
+
+    private bool IsDisabled => User.Policy?.IsDisabled == true;
+
+    private string? ImageUrl => User is { Id: { } id, PrimaryImageTag: { Length: > 0 } tag }
+        ? Api.GetUrl(
+            $"Users/{id:N}/Images/Primary",
+            ("width", (int)Math.Round(300 * Browser.Environment.DevicePixelRatio, MidpointRounding.AwayFromZero)),
+            ("tag", tag))
+        : null;
+
+    private string LastSeen => User.LastActivityDate is { } date
+        ? Globalize.Translate("LastSeen", RelativeTime.FromNow(date))
+        : string.Empty;
+}

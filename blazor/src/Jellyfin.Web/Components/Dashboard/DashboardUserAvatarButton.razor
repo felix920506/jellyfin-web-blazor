@@ -1,0 +1,18 @@
+@* A user's picture that leads to their dashboard profile. Port of apps/dashboard/components/UserAvatarButton.tsx. *@
+@namespace Jellyfin.Web.Components
+
+@if (User?.Id is { } id)
+{
+    <a class="mud-button-root mud-icon-button mud-ripple mud-ripple-icon jf-dashboard-user-avatar-button @Class" title="@User.Name"
+       href="@($"#/dashboard/users/{id:N}/profile")">
+        <UserAvatar User="User" />
+    </a>
+}
+
+@code {
+    [Parameter]
+    public UserDto? User { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+}

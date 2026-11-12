@@ -1,0 +1,73 @@
+@* The dashboard's question, message and one-line input dialogs. Port of
+   components/ConfirmDialog.tsx, components/SimpleAlert.tsx and components/InputDialog.tsx;
+   opened through the helpers in Services/Dashboard/DashboardDialogs.cs. *@
+@namespace Jellyfin.Web.Components
+@inject Globalize Globalize
+
+<form class="jf-dashboard-dialog-form" @onsubmit="Confirm" @onsubmit:preventDefault="true">
+    @if (!string.IsNullOrEmpty(Title))
+    {
+        <h2 class="jf-dashboard-dialog-title">@Title</h2>
+    }
+    <div class="jf-dashboard-dialog-content">
+        @if (IsInput)
+        {
+            <MudTextField T="string" @bind-Value="_text" Label="@InputLabel" HelperText="@HelperText" Variant="Variant.Text"
+                          FullWidth="true" Immediate="true" AutoFocus="true" InputId="jf-dashboard-dialog-input" />
+        }
+        else
+        {
+            <p class="jf-dashboard-dialog-text">@Text</p>
+        }
+    </div>
+    <div class="jf-dashboard-dialog-actions">
+        @if (ShowCancel)
+        {
+            <MudButton Variant="Variant.Text" Color="Color.Primary" data-id="cancel" OnClick="@(() => Dialog.Cancel())">@Globalize["ButtonCancel"]</MudButton>
+        }
+        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="@(Destructive ? Color.Error : Color.Primary)" data-id="ok">
+            @(ConfirmText ?? Globalize[IsInput || ShowCancel ? "ButtonOk" : "ButtonGotIt"])
+        </MudButton>
+    </div>
+</form>
+
+@code {
+    private string? _text;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    [Parameter]
+    public string? Title { get; set; }
+
+    /// <summary>The message; line breaks are kept.</summary>
+    [Parameter]
+    public string? Text { get; set; }
+
+    /// <summary>The confirm button's label; "OK" (or "Got it" for a plain message) when null.</summary>
+    [Parameter]
+    public string? ConfirmText { get; set; }
+
+    /// <summary>The confirm button warns (delete, restart, ...).</summary>
+    [Parameter]
+    public bool Destructive { get; set; }
+
+    [Parameter]
+    public bool ShowCancel { get; set; }
+
+    /// <summary>When set the dialog asks for a line of text with this label and closes with the text.</summary>
+    [Parameter]
+    public string? InputLabel { get; set; }
+
+    [Parameter]
+    public string? HelperText { get; set; }
+
+    [Parameter]
+    public string? InitialText { get; set; }
+
+    private bool IsInput => InputLabel is not null;
+
+    protected override void OnInitialized() => _text = InitialText;
+
+    private void Confirm() => Dialog.Close(IsInput ? _text ?? string.Empty : true);
+}

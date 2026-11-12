@@ -1,0 +1,306 @@
+@* The dashboard's frame: app bar, drawer, theme and the document class. *@
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Layout
+@using Jellyfin.Web.Routing
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components
+@using Microsoft.Extensions.DependencyInjection
+@inherits DashboardTestContext
+
+@code {
+    private static readonly RenderFragment Body = builder => builder.AddMarkupContent(0, "<p id=\"body\">page</p>");
+
+    private IRenderedComponent<DashboardLayout> RenderLayout(string url = "/dashboard")
+    {
+        var cut = RenderAt<DashboardLayout>(url, layout => layout.Add(l => l.Body, Body));
+        cut.Eventually(() => Assert.NotEmpty(App.Server.RequestsTo("/System/Info")));
+        return cut;
+    }
+
+    private void ScriptDrawer(object[]? pluginPages = null)
+    {
+        App.Server.OnGet("/System/Info", new { ServerName = "Attic", Version = "10.11.0.0" });
+        App.Server.OnGet("/web/ConfigurationPages", pluginPages ?? []);
+    }
+
+    [Fact]
+    public void A_wide_screen_shows_the_drawer_beside_the_page()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout();
+
+        Assert.NotNull(cut.Find("aside.jf-dashboard-drawer nav.jf-dashboard-nav"));
+        Assert.Empty(cut.FindAll(".jf-drawer-button"));
+        Assert.Empty(cut.FindAll(".jf-dashboard-drawer-temporary"));
+        Assert.Equal("page", cut.Find("main.jf-main #body").TextContent);
+        Assert.NotNull(cut.Find(".jf-dashboard-appbar .jf-user-menu-button"));
+    }
+
+    [Fact]
+    public void The_drawer_names_the_server_and_its_version()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout();
+
+        cut.Eventually(() => Assert.Equal("Attic", cut.Find(".jf-dashboard-drawer-header-name").TextContent));
+        Assert.Equal("10.11.0", cut.Find(".jf-dashboard-drawer-header-version").TextContent);
+        Assert.Equal("#/", cut.Find("a.jf-dashboard-drawer-header").GetAttribute("href"));
+    }
+
+    [Fact]
+    public void The_drawer_falls_back_to_the_connected_server_when_its_info_is_unavailable()
+    {
+        SignIn(admin: true);
+
+        var cut = RenderLayout();
+
+        Assert.Equal("Test Server", cut.Find(".jf-dashboard-drawer-header-name").TextContent);
+        Assert.Equal(string.Empty, cut.Find(".jf-dashboard-drawer-header-version").TextContent);
+        Assert.Equal(5, cut.FindAll(".jf-dashboard-nav-section").Count);
+    }
+
+    [Fact]
+    public void The_drawer_has_the_sections_and_links_of_the_original()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout();
+
+        Assert.Equal(
+            [this.T("TabServer"), this.T("HeaderDevices"), this.T("LiveTV"), this.T("TabPlugins"), this.T("TabAdvanced")],
+            cut.FindAll(".jf-dashboard-nav-section .jf-drawer-subheader").Select(header => header.TextContent));
+        Assert.Equal(
+            [
+                "#/dashboard", "#/dashboard/settings", "#/dashboard/branding", "#/dashboard/users",
+                "#/dashboard/devices", "#/dashboard/activity",
+                "#/dashboard/livetv", "#/dashboard/livetv/recordings",
+                "#/dashboard/plugins",
+                "#/dashboard/networking", "#/dashboard/keys", "#/dashboard/backups", "#/dashboard/logs", "#/dashboard/tasks",
+            ],
+            cut.FindAll(".jf-dashboard-nav-section a.mud-nav-link").Select(link => link.GetAttribute("href")));
+        Assert.Equal(
+            [this.T("HeaderLibraries"), this.T("TitlePlayback")],
+            cut.FindAll("button.jf-dashboard-nav-group .mud-nav-link-text").Select(text => text.TextContent));
+    }
+
+    [Theory]
+    [InlineData("/dashboard", "#/dashboard")]
+    [InlineData("/dashboard/users", "#/dashboard/users")]
+    [InlineData("/dashboard/tasks", "#/dashboard/tasks")]
+    [InlineData("/dashboard/keys", "#/dashboard/keys")]
+    public void The_link_of_the_current_page_is_highlighted(string url, string href)
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout(url);
+
+        var active = Assert.Single(cut.FindAll(".jf-dashboard-nav a.active"));
+        Assert.Equal(href, active.GetAttribute("href"));
+        Assert.Equal("page", active.GetAttribute("aria-current"));
+    }
+
+    [Fact]
+    public void No_link_is_highlighted_on_a_page_below_another()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout("/dashboard/users/add");
+
+        Assert.Empty(cut.FindAll(".jf-dashboard-nav a.active"));
+    }
+
+    [Fact]
+    public void A_group_opens_on_click_and_starts_open_on_its_own_pages()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout("/dashboard/playback/resume");
+
+        var groups = cut.FindAll("button.jf-dashboard-nav-group");
+        Assert.Equal("false", groups[0].GetAttribute("aria-expanded"));
+        Assert.Equal("true", groups[1].GetAttribute("aria-expanded"));
+        Assert.Equal(
+            ["#/dashboard/playback/transcoding", "#/dashboard/playback/resume", "#/dashboard/playback/streaming", "#/dashboard/playback/trickplay"],
+            cut.FindAll("a.jf-dashboard-nav-child").Select(link => link.GetAttribute("href")));
+        Assert.Equal("#/dashboard/playback/resume", cut.Find("a.jf-dashboard-nav-child.active").GetAttribute("href"));
+
+        cut.FindAll("button.jf-dashboard-nav-group")[0].Click();
+
+        Assert.Equal("true", cut.FindAll("button.jf-dashboard-nav-group")[0].GetAttribute("aria-expanded"));
+        Assert.Equal(8, cut.FindAll("a.jf-dashboard-nav-child").Count);
+        Assert.Contains("#/dashboard/libraries/nfo", cut.FindAll("a.jf-dashboard-nav-child").Select(link => link.GetAttribute("href")));
+
+        cut.FindAll("button.jf-dashboard-nav-group")[1].Click();
+
+        Assert.Equal(4, cut.FindAll("a.jf-dashboard-nav-child").Count);
+    }
+
+    [Fact]
+    public void Plugins_with_a_menu_entry_are_listed_below_the_plugin_links()
+    {
+        SignIn(admin: true);
+        ScriptDrawer([new { Name = "My Plugin", DisplayName = "My plugin", MenuIcon = "extension", PluginId = Guid.NewGuid() }]);
+
+        var cut = RenderLayout("/configurationpage?name=My%20Plugin");
+
+        cut.Eventually(() => Assert.NotNull(cut.Find("a[href='#/configurationpage?name=My%20Plugin']")));
+        var link = cut.Find("a[href='#/configurationpage?name=My%20Plugin']");
+        Assert.Equal("My plugin", link.QuerySelector(".mud-nav-link-text")!.TextContent);
+        Assert.True(link.HasClass("active"));
+        Assert.Single(cut.FindAll(".jf-dashboard-nav a.active"));
+        Assert.Equal("true", App.Server.RequestsTo("/web/ConfigurationPages")[0].Query("enableInMainMenu"));
+    }
+
+    [Fact]
+    public void The_plugins_link_is_highlighted_on_plugin_pages_without_a_menu_entry()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout("/configurationpage?name=Other");
+
+        Assert.Equal("#/dashboard/plugins", Assert.Single(cut.FindAll(".jf-dashboard-nav a.active")).GetAttribute("href"));
+    }
+
+    [Fact]
+    public void A_narrow_screen_opens_the_drawer_with_the_menu_button()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+        App.Browser.Resize(600);
+
+        var cut = RenderLayout();
+
+        Assert.Empty(cut.FindAll("aside.jf-dashboard-drawer"));
+        Assert.Equal(this.T("MenuOpen"), cut.Find(".jf-drawer-button").GetAttribute("aria-label"));
+
+        cut.Find(".jf-drawer-button").Click();
+
+        Assert.Equal(this.T("MenuClose"), cut.Find(".jf-drawer-button").GetAttribute("aria-label"));
+        Assert.True(cut.Find(".jf-dashboard-drawer-temporary").HasClass("mud-drawer--open"));
+    }
+
+    [Fact]
+    public void The_frame_follows_the_width_of_the_window()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout();
+        App.Browser.Resize(500);
+
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-drawer-button")));
+        Assert.Empty(cut.FindAll("aside.jf-dashboard-drawer"));
+
+        App.Browser.Resize(1200);
+
+        cut.Eventually(() => Assert.NotNull(cut.Find("aside.jf-dashboard-drawer")));
+        Assert.Empty(cut.FindAll(".jf-drawer-button"));
+    }
+
+    [Theory]
+    [InlineData("/dashboard/users", "https://jellyfin.org/docs/general/server/users/adding-managing-users")]
+    [InlineData("/dashboard/tasks", "https://jellyfin.org/docs/general/server/tasks")]
+    public void Pages_with_documentation_have_a_help_button(string url, string help)
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout(url);
+
+        var button = cut.Find(".jf-dashboard-help");
+        Assert.Equal(help, button.GetAttribute("href"));
+        Assert.Equal("_blank", button.GetAttribute("target"));
+    }
+
+    [Fact]
+    public void The_app_bar_shows_the_title_of_the_page_and_no_help_without_documentation()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+
+        var cut = RenderLayout("/dashboard");
+        Get<ShellState>().SetTitle("Dashboard");
+
+        cut.Eventually(() => Assert.Equal("Dashboard", cut.Find(".jf-dashboard-title").TextContent));
+        Assert.Empty(cut.FindAll(".jf-dashboard-help"));
+    }
+
+    [Fact]
+    public async Task The_dashboard_theme_is_used_while_the_frame_is_shown()
+    {
+        SignIn(admin: true);
+        ScriptDrawer();
+        var settings = Get<UserSettings>();
+        settings.Set("appTheme", "purplehaze", enableOnServer: false);
+        settings.Set("dashboardTheme", "light", enableOnServer: false);
+        var theme = Get<ThemeManager>();
+        theme.ApplyUserTheme();
+        Assert.Equal("purplehaze", theme.CurrentId);
+
+        var cut = RenderLayout();
+
+        Assert.Equal("light", theme.CurrentId);
+        Assert.Contains("body:dashboardDocument", App.Browser.Classes);
+
+        settings.Set("dashboardTheme", "dark", enableOnServer: false);
+
+        Assert.Equal("dark", theme.CurrentId);
+
+        await DisposeComponentsAsync();
+
+        Assert.Equal("purplehaze", theme.CurrentId);
+        Assert.DoesNotContain("body:dashboardDocument", App.Browser.Classes);
+    }
+
+    [Fact]
+    public async Task An_administrator_reaches_the_dashboard_through_the_router()
+    {
+        App.Server.OnPost("/Users/AuthenticateByName", new
+        {
+            AccessToken = "token",
+            ServerId = TestApp.ServerId,
+            User = new { Id = TestApp.UserId, Name = "tester", ServerId = TestApp.ServerId, Policy = new { IsAdministrator = true } }
+        });
+        App.Server.OnGet("/UserViews", new { Items = Array.Empty<object>(), TotalRecordCount = 0 });
+        ScriptDrawer();
+        App.Browser.Navigate("/dashboard");
+        await Get<AppStartup>().InitializeAsync();
+        var cut = Render<App>();
+        cut.Eventually(() => Assert.NotNull(cut.Find("#loginPage")));
+
+        cut.Find("#txtManualName").Input("tester");
+        cut.Find("#txtManualPassword").Input("secret");
+        await cut.Find("form.manualLoginForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-dashboard-layout #dashboardPage")));
+        Assert.Equal("/dashboard", App.Browser.Hash);
+        Assert.Contains("body:dashboardDocument", App.Browser.Classes);
+        Assert.Equal(this.T("TabDashboard"), cut.Find(".jf-dashboard-title").TextContent);
+        Assert.Equal("#/dashboard", cut.Find(".jf-dashboard-nav a.active").GetAttribute("href"));
+
+        App.Browser.Navigate("/dashboard/keys");
+
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-dashboard-layout #apiKeysPage")));
+        Assert.Equal("#/dashboard/keys", cut.Find(".jf-dashboard-nav a.active").GetAttribute("href"));
+        Assert.Equal(this.T("HeaderApiKeys"), cut.Find(".jf-dashboard-title").TextContent);
+
+        App.Browser.Navigate("/mypreferencesmenu");
+
+        cut.Eventually(() => Assert.NotNull(cut.Find("#myPreferencesMenuPage")));
+        Assert.Empty(cut.FindAll(".jf-dashboard-layout"));
+        Assert.DoesNotContain("body:dashboardDocument", App.Browser.Classes);
+        Assert.Equal("#/dashboard", cut.Find("a[href='#/dashboard']").GetAttribute("href"));
+    }
+}

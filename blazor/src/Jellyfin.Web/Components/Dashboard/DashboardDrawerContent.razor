@@ -1,0 +1,134 @@
+@* The dashboard's navigation. Port of apps/dashboard/components/drawer/AppDrawer.tsx and its
+   sections; the links themselves are listed in Services/Dashboard/DashboardNav.cs. *@
+@namespace Jellyfin.Web.Components
+@implements IDisposable
+@inject JellyfinApi Api
+@inject Globalize Globalize
+
+<nav class="mud-navmenu mud-navmenu-default jf-dashboard-nav">
+    <a class="mud-nav-link mud-ripple jf-dashboard-drawer-header" href="#/">
+        <span class="jf-dashboard-drawer-header-icon">
+            <img src="generated/lib/jellyfin-ux-web/icon-transparent.png" alt="" aria-hidden="true" />
+        </span>
+        <span class="jf-dashboard-drawer-header-text">
+            <span class="jf-dashboard-drawer-header-name">@(string.IsNullOrEmpty(ServerName) ? "Jellyfin" : ServerName)</span>
+            <span class="jf-dashboard-drawer-header-version">@DashboardNav.DisplayVersion(_systemInfo?.Version)</span>
+        </span>
+    </a>
+
+    @foreach (var section in DashboardNav.Sections)
+    {
+        <div class="jf-dashboard-nav-section" role="group" aria-label="@Globalize[section.TitleKey]">
+            <div class="jf-drawer-subheader">@Globalize[section.TitleKey]</div>
+            @foreach (var link in section.Links)
+            {
+                if (link.Children.Count == 0)
+                {
+                    <DrawerLink Href="@link.Href" Icon="@link.Icon" Text="@Globalize[link.TextKey]" Selected="@IsSelected(link)" />
+                }
+                else
+                {
+                    var open = IsOpen(link);
+                    <div class="mud-nav-item">
+                        <button type="button" class="mud-nav-link mud-ripple jf-dashboard-nav-group" aria-expanded="@(open ? "true" : "false")"
+                                @onclick="() => Toggle(link)">
+                            <span class="mud-icon-root mud-nav-link-icon mud-nav-link-icon-default material-icons @link.Icon" aria-hidden="true"></span>
+                            <div class="mud-nav-link-text">@Globalize[link.TextKey]</div>
+                            <span class="material-icons @(open ? "expand_less" : "expand_more")" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                    @if (open)
+                    {
+                        foreach (var child in link.Children)
+                        {
+                            var selected = IsSelected(child);
+                            <div class="mud-nav-item">
+                                <a class="mud-nav-link mud-ripple jf-dashboard-nav-child @(selected ? "active" : null)" href="@child.Href"
+                                   aria-current="@(selected ? "page" : null)">
+                                    <div class="mud-nav-link-text">@Globalize[child.TextKey]</div>
+                                </a>
+                            </div>
+                        }
+                    }
+                }
+            }
+
+            @if (section.TitleKey == DashboardNav.PluginsSection)
+            {
+                foreach (var pluginPage in _pluginPages)
+                {
+                    <DrawerLink @key="pluginPage.PluginId" Href="@("#/" + DashboardNav.PluginPageUrl(pluginPage.Name))" Icon="@(pluginPage.MenuIcon ?? "folder")"
+                                Text="@pluginPage.DisplayName" Selected="@IsPluginPage(pluginPage)" />
+                }
+            }
+        </div>
+    }
+</nav>
+
+@code {
+    private readonly Dictionary<DashboardLink, bool> _open = [];
+    private SystemInfo? _systemInfo;
+    private List<ConfigurationPageInfo> _pluginPages = [];
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    private string? ServerName => _systemInfo?.ServerName ?? Api.ServerName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Globalize.LanguageChanged += Refresh;
+
+        var info = LoadSystemInfoAsync();
+        var pages = LoadPluginPagesAsync();
+        await Task.WhenAll(info, pages);
+    }
+
+    public void Dispose() => Globalize.LanguageChanged -= Refresh;
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    private async Task LoadSystemInfoAsync()
+    {
+        try
+        {
+            _systemInfo = await Api.Client.System.Info.GetAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[DashboardDrawer] unable to fetch the system info: " + ex.Message);
+        }
+    }
+
+    private async Task LoadPluginPagesAsync()
+    {
+        try
+        {
+            _pluginPages = await Api.Client.Web.ConfigurationPages.GetAsync(request => request.QueryParameters.EnableInMainMenu = true) ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[DashboardDrawer] unable to fetch plugin config pages: " + ex.Message);
+        }
+    }
+
+    // The plugins link also covers plugin pages, except those with a drawer entry of their own.
+    private bool IsSelected(DashboardLink link) =>
+        DashboardNav.IsSelected(link, Location.Path) && !_pluginPages.Any(IsPluginPage);
+
+    private bool IsPluginPage(ConfigurationPageInfo page) =>
+        Location.Path.Equals("/configurationpage", StringComparison.OrdinalIgnoreCase) && Location["name"] == page.Name;
+
+    // A group starts out open when the current page is one of its links; afterwards the user decides.
+    private bool IsOpen(DashboardLink group)
+    {
+        if (!_open.TryGetValue(group, out var open))
+        {
+            open = _open[group] = DashboardNav.ContainsPath(group, Location.Path);
+        }
+
+        return open;
+    }
+
+    private void Toggle(DashboardLink group) => _open[group] = !IsOpen(group);
+}

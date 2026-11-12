@@ -1,0 +1,298 @@
+@* The general settings (/dashboard/settings) and the branding page (/dashboard/branding). *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private void ScriptSettings(int fanout = 0, int encodingLimit = 4)
+    {
+        App.Server.OnGet("/Localization/Options", new[] { new { Name = "English", Value = "en-US" }, new { Name = "Deutsch", Value = "de" } });
+        App.Server.OnGet("/System/Configuration", new
+        {
+            ServerName = "Attic",
+            UICulture = "en-US",
+            CachePath = "/cache",
+            MetadataPath = "/metadata",
+            QuickConnectAvailable = true,
+            LibraryScanFanoutConcurrency = fanout,
+            ParallelImageEncodingLimit = encodingLimit,
+            EnableMetrics = true,
+            MinResumePct = 7,
+        });
+    }
+
+    private IRenderedComponent<DashboardSettings> RenderSettings()
+    {
+        var cut = Render<DashboardSettings>();
+        cut.Eventually(() => Assert.NotNull(cut.Find("form.jf-dashboard-form")));
+        return cut;
+    }
+
+    private void ScriptBranding(bool splash = true) =>
+        App.Server.OnGet("/Branding/Configuration", new { LoginDisclaimer = "Be nice", CustomCss = ".logo { display: none; }", SplashscreenEnabled = splash });
+
+    private IRenderedComponent<DashboardBranding> RenderBranding()
+    {
+        var cut = Render<DashboardBranding>();
+        cut.Eventually(() => Assert.NotNull(cut.Find("form.jf-dashboard-form")));
+        return cut;
+    }
+
+    [Fact]
+    public void The_settings_show_what_the_server_has()
+    {
+        SignIn(admin: true);
+        ScriptSettings();
+
+        var cut = RenderSettings();
+
+        Assert.Equal("Attic", cut.Find("#jf-dashboard-settings-name").Value());
+        Assert.Equal("en-US", Chosen<DashboardSettings, string>(cut, "jf-dashboard-settings-culture"));
+        Assert.Equal("/cache", cut.Find("#jf-dashboard-settings-cache").Value());
+        Assert.Equal("/metadata", cut.Find("#jf-dashboard-settings-metadata").Value());
+        Assert.True(Box(cut, "jf-dashboard-settings-quickconnect").IsChecked());
+        // Zero means "automatic" and is shown as an empty field.
+        Assert.True(string.IsNullOrEmpty(cut.Find("#jf-dashboard-settings-fanout").Value()));
+        Assert.Equal("4", cut.Find("#jf-dashboard-settings-encoding").Value());
+        Assert.Empty(cut.FindAll(".jf-dashboard-saved"));
+        Assert.Single(App.Server.RequestsTo("/Localization/Options"));
+    }
+
+    [Fact]
+    public async Task Saving_sends_the_changed_settings_and_keeps_the_others()
+    {
+        SignIn(admin: true);
+        ScriptSettings();
+        App.Server.OnPost("/System/Configuration");
+        var cut = RenderSettings();
+
+        await cut.Find("#jf-dashboard-settings-name").ChangeAsync(new ChangeEventArgs { Value = "Cellar" });
+        await ChooseAsync(cut, "jf-dashboard-settings-culture", "de");
+        await cut.Find("#jf-dashboard-settings-cache").ChangeAsync(new ChangeEventArgs { Value = "/var/cache" });
+        await cut.Find("#jf-dashboard-settings-metadata").ChangeAsync(new ChangeEventArgs { Value = "/var/metadata" });
+        await Box(cut, "jf-dashboard-settings-quickconnect").ChangeAsync(new ChangeEventArgs { Value = false });
+        await cut.Find("#jf-dashboard-settings-fanout").ChangeAsync(new ChangeEventArgs { Value = "8" });
+        await cut.Find("#jf-dashboard-settings-encoding").ChangeAsync(new ChangeEventArgs { Value = string.Empty });
+        await cut.Find("form.jf-dashboard-form").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal(this.T("SettingsSaved"), cut.Find(".jf-dashboard-saved").TextContent.Trim()));
+        var body = Assert.Single(BodiesTo("/System/Configuration"));
+        Assert.Equal("Cellar", body.Text("ServerName"));
+        Assert.Equal("de", body.Text("UICulture"));
+        Assert.Equal("/var/cache", body.Text("CachePath"));
+        Assert.Equal("/var/metadata", body.Text("MetadataPath"));
+        Assert.False(body.Flag("QuickConnectAvailable"));
+        Assert.Equal(8, body.GetProperty("LibraryScanFanoutConcurrency").GetInt32());
+        Assert.Equal(0, body.GetProperty("ParallelImageEncodingLimit").GetInt32());
+        Assert.True(body.Flag("EnableMetrics"));
+        Assert.Equal(7, body.GetProperty("MinResumePct").GetInt32());
+        Assert.Equal(2, App.Server.RequestsTo("/System/Configuration").Count(request => request.Method == HttpMethod.Get));
+    }
+
+    [Fact]
+    public async Task Nothing_is_reported_as_saved_when_the_server_refuses_the_settings()
+    {
+        SignIn(admin: true);
+        ScriptSettings();
+        App.Server.OnPost("/System/Configuration", _ => FakeHttp.Status(HttpStatusCode.InternalServerError));
+        var cut = RenderSettings();
+
+        await cut.Find("form.jf-dashboard-form").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(BodiesTo("/System/Configuration")));
+        cut.Eventually(() => Assert.False(cut.Find(".jf-dashboard-submit").HasAttribute("disabled")));
+        Assert.Empty(cut.FindAll(".jf-dashboard-saved"));
+    }
+
+    [Fact]
+    public async Task The_paths_can_be_picked_on_the_server()
+    {
+        SignIn(admin: true);
+        ScriptSettings();
+        this.RenderDialogs();
+        var cut = RenderSettings();
+
+        await this.Settle(() => cut.FindAll(".mud-input-adornment button")[0].ClickAsync(new MouseEventArgs()));
+
+        Assert.Single(this.Dialogs().Dialogs);
+    }
+
+    [Fact]
+    public void An_error_is_shown_when_the_settings_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Localization/Options", Array.Empty<object>());
+
+        var cut = Render<DashboardSettings>();
+
+        cut.Eventually(() => Assert.Equal(this.T("SettingsPageLoadError"), cut.Find(".mud-alert").TextContent.Trim()));
+        Assert.Empty(cut.FindAll("form"));
+    }
+
+    [Fact]
+    public void The_branding_shows_what_the_server_has()
+    {
+        SignIn(admin: true);
+        ScriptBranding();
+
+        var cut = RenderBranding();
+
+        Assert.True(Box(cut, "jf-dashboard-branding-enable").IsChecked());
+        Assert.Contains("/Branding/Splashscreen?t=", cut.Find("img.jf-dashboard-branding-image").GetAttribute("src"), StringComparison.Ordinal);
+        Assert.Equal("Be nice", cut.Find("#jf-dashboard-branding-disclaimer").Value());
+        Assert.Equal(".logo { display: none; }", cut.Find("#jf-dashboard-branding-css").Value());
+        Assert.False(cut.Find(".jf-dashboard-branding-delete").HasAttribute("disabled"));
+        Assert.False(cut.Find(".jf-dashboard-branding-upload").HasClass("mud-disabled"));
+        Assert.Empty(cut.FindAll(".jf-dashboard-saved"));
+        Assert.Empty(cut.FindAll(".jf-dashboard-branding-error"));
+    }
+
+    [Fact]
+    public void No_image_is_shown_without_a_splash_screen()
+    {
+        SignIn(admin: true);
+        ScriptBranding(splash: false);
+
+        var cut = RenderBranding();
+
+        Assert.False(Box(cut, "jf-dashboard-branding-enable").IsChecked());
+        Assert.Empty(cut.FindAll("img.jf-dashboard-branding-image"));
+        Assert.NotNull(cut.Find(".jf-dashboard-image-fallback"));
+        Assert.True(cut.Find(".jf-dashboard-branding-delete").HasAttribute("disabled"));
+        Assert.True(cut.Find(".jf-dashboard-branding-upload").HasClass("mud-disabled"));
+        Assert.True(cut.Find(".jf-dashboard-branding-upload input").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public async Task The_splash_screen_switch_takes_effect_at_once()
+    {
+        SignIn(admin: true);
+        ScriptBranding();
+        App.Server.OnPost("/System/Configuration/Branding");
+        var cut = RenderBranding();
+        await cut.Find("#jf-dashboard-branding-disclaimer").ChangeAsync(new ChangeEventArgs { Value = "Not saved yet" });
+
+        await Box(cut, "jf-dashboard-branding-enable").ChangeAsync(new ChangeEventArgs { Value = false });
+
+        cut.Eventually(() => Assert.Single(BodiesTo("/System/Configuration/Branding")));
+        var body = BodiesTo("/System/Configuration/Branding")[0];
+        Assert.False(body.Flag("SplashscreenEnabled"));
+        Assert.Equal("Be nice", body.Text("LoginDisclaimer"));
+        Assert.Equal(".logo { display: none; }", body.Text("CustomCss"));
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-dashboard-image-fallback")));
+        Assert.Empty(cut.FindAll(".jf-dashboard-saved"));
+    }
+
+    [Fact]
+    public async Task Saving_sends_the_texts_and_the_switch()
+    {
+        SignIn(admin: true);
+        ScriptBranding();
+        App.Server.OnPost("/System/Configuration/Branding");
+        var cut = RenderBranding();
+
+        await cut.Find("#jf-dashboard-branding-disclaimer").ChangeAsync(new ChangeEventArgs { Value = "Welcome" });
+        await cut.Find("#jf-dashboard-branding-css").ChangeAsync(new ChangeEventArgs { Value = "body { color: red; }" });
+        await cut.Find("form.jf-dashboard-form").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal(this.T("SettingsSaved"), cut.Find(".jf-dashboard-saved").TextContent.Trim()));
+        var body = Assert.Single(BodiesTo("/System/Configuration/Branding"));
+        Assert.Equal("Welcome", body.Text("LoginDisclaimer"));
+        Assert.Equal("body { color: red; }", body.Text("CustomCss"));
+        Assert.True(body.Flag("SplashscreenEnabled"));
+    }
+
+    [Fact]
+    public async Task Nothing_is_reported_as_saved_when_the_server_refuses_the_branding()
+    {
+        SignIn(admin: true);
+        ScriptBranding();
+        var cut = RenderBranding();
+
+        await cut.Find("form.jf-dashboard-form").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(BodiesTo("/System/Configuration/Branding")));
+        cut.Eventually(() => Assert.False(cut.Find(".jf-dashboard-submit").HasAttribute("disabled")));
+        Assert.Empty(cut.FindAll(".jf-dashboard-saved"));
+    }
+
+    [Fact]
+    public async Task An_image_is_uploaded_as_the_splash_screen()
+    {
+        SignIn(admin: true);
+        ScriptBranding();
+        App.Server.OnPost("/Branding/Splashscreen");
+        var cut = RenderBranding();
+        byte[] image = [1, 2, 3, 4, 5];
+
+        cut.FindComponent<InputFile>().UploadFiles(InputFileContent.CreateFromBinary(image, "splash.png", contentType: "image/png"));
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Branding/Splashscreen")));
+        var request = App.Server.RequestsTo("/Branding/Splashscreen")[0];
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal(Convert.ToBase64String(image), request.Body);
+        cut.Eventually(() => Assert.Equal(
+            "data:image/png;base64," + Convert.ToBase64String(image),
+            cut.Find("img.jf-dashboard-branding-image").GetAttribute("src")));
+        Assert.Empty(cut.FindAll(".jf-dashboard-branding-error"));
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public void A_failed_upload_is_reported()
+    {
+        SignIn(admin: true);
+        ScriptBranding();
+        var cut = RenderBranding();
+
+        cut.FindComponent<InputFile>().UploadFiles(InputFileContent.CreateFromBinary([1, 2, 3], "splash.png", contentType: "image/png"));
+
+        cut.Eventually(() => Assert.Equal(this.T("ImageUploadFailed"), cut.Find(".jf-dashboard-branding-error").TextContent.Trim()));
+        Assert.DoesNotContain("data:", cut.Find("img.jf-dashboard-branding-image").GetAttribute("src"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_custom_image_is_deleted()
+    {
+        SignIn(admin: true);
+        ScriptBranding();
+        App.Server.OnDelete("/Branding/Splashscreen");
+        var cut = RenderBranding();
+
+        await cut.Find(".jf-dashboard-branding-delete").ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Branding/Splashscreen"), request => request.Method == HttpMethod.Delete));
+        Assert.Empty(cut.FindAll(".jf-dashboard-branding-error"));
+    }
+
+    [Fact]
+    public async Task A_failed_delete_is_reported()
+    {
+        SignIn(admin: true);
+        ScriptBranding();
+        var cut = RenderBranding();
+
+        await cut.Find(".jf-dashboard-branding-delete").ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Equal(this.T("ImageDeleteFailed"), cut.Find(".jf-dashboard-branding-error").TextContent.Trim()));
+    }
+
+    [Fact]
+    public void An_error_is_shown_when_the_branding_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+
+        var cut = Render<DashboardBranding>();
+
+        cut.Eventually(() => Assert.Equal(this.T("BrandingLoadError"), cut.Find(".mud-alert").TextContent.Trim()));
+        Assert.Empty(cut.FindAll("form"));
+    }
+}

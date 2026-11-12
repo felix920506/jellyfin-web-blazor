@@ -1,0 +1,381 @@
+@* The profile tab of the user editor: name, sign-in providers and what the user may do.
+   Port of apps/dashboard/features/users/components/Profile.tsx. *@
+@namespace Jellyfin.Web.Components
+@using System.Globalization
+@using System.Text.Json
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject DashboardUserCache Cache
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div>
+    <div class="lnkEditUserPreferencesContainer" style="padding-bottom:1em;">
+        <LinkButton Class="lnkEditUserPreferences button-link" Href="@($"#/mypreferencesmenu?userId={UserPages.IdText(User.Id)}")">
+            @Globalize["ButtonEditOtherUserPreferences"]
+        </LinkButton>
+    </div>
+    <form class="editUserProfileForm" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+        <div class="@("disabledUserBanner" + (User.Policy?.IsDisabled == true ? null : " hide"))">
+            <div class="btn btnDarkAccent btnStatic">
+                <div>@Globalize["HeaderThisUserIsCurrentlyDisabled"]</div>
+                <div style="margin-top:5px;">@Globalize["MessageReenableUser"]</div>
+            </div>
+        </div>
+        <EmbyInput Id="txtUserName" Label="@Globalize["LabelName"]" Required="true" @bind-Value="_name"
+                   Description="@Globalize["LabelUsernameAllowedCharactersHelp"]" />
+        <EmbySelect Id="selectLoginProvider" ContainerClass="@("fldSelectLoginProvider" + (_authProviders.Count > 1 ? null : " hide"))"
+                    Label="@Globalize["LabelAuthProvider"]" Description="@Globalize["AuthProviderHelp"]" @bind-Value="_authProviderId">
+            @foreach (var provider in _authProviders)
+            {
+                <option value="@provider.Id">@provider.Name</option>
+            }
+        </EmbySelect>
+        <EmbySelect Id="selectPasswordResetProvider" ContainerClass="@("fldSelectPasswordResetProvider" + (_resetProviders.Count > 1 ? null : " hide"))"
+                    Label="@Globalize["LabelPasswordResetProvider"]" Description="@Globalize["PasswordResetProviderHelp"]" @bind-Value="_resetProviderId">
+            @foreach (var provider in _resetProviders)
+            {
+                <option value="@provider.Id">@provider.Name</option>
+            }
+        </EmbySelect>
+        <div class="@("checkboxContainer checkboxContainer-withDescription fldRemoteAccess" + (_remoteAccessAvailable ? null : " hide"))">
+            <DashboardCheckBox Class="chkRemoteAccess" Label="@Globalize["AllowRemoteAccess"]" @bind-Value="_remoteAccess" />
+            <div class="fieldDescription checkboxFieldDescription">@Globalize["AllowRemoteAccessHelp"]</div>
+        </div>
+        <DashboardCheckBox LabelClass="checkboxContainer" Class="chkIsAdmin" Label="@Globalize["OptionAllowUserToManageServer"]" @bind-Value="_isAdmin" />
+        <DashboardCheckBox LabelClass="checkboxContainer" Class="chkEnableCollectionManagement" Label="@Globalize["AllowCollectionManagement"]" @bind-Value="_collectionManagement" />
+        <DashboardCheckBox LabelClass="checkboxContainer" Class="chkEnableSubtitleManagement" Label="@Globalize["AllowSubtitleManagement"]" @bind-Value="_subtitleManagement" />
+        <div id="featureAccessFields" class="verticalSection">
+            <h2 class="paperListLabel">@Globalize["HeaderFeatureAccess"]</h2>
+            <div class="checkboxList paperList" style="padding:.5em 1em;">
+                <DashboardCheckBox Class="chkEnableLiveTvAccess" Label="@Globalize["OptionAllowBrowsingLiveTv"]" @bind-Value="_liveTvAccess" />
+                <DashboardCheckBox Class="chkManageLiveTv" Label="@Globalize["OptionAllowManageLiveTv"]" @bind-Value="_liveTvManagement" />
+            </div>
+        </div>
+        <div class="verticalSection">
+            <h2 class="paperListLabel">@Globalize["HeaderPlayback"]</h2>
+            <div class="checkboxList paperList" style="padding:.5em 1em;">
+                <DashboardCheckBox Class="chkEnableMediaPlayback" Label="@Globalize["OptionAllowMediaPlayback"]" @bind-Value="_mediaPlayback" />
+                <DashboardCheckBox Class="chkEnableAudioPlaybackTranscoding" Label="@Globalize["OptionAllowAudioPlaybackTranscoding"]" @bind-Value="_audioTranscoding" />
+                <DashboardCheckBox Class="chkEnableVideoPlaybackTranscoding" Label="@Globalize["OptionAllowVideoPlaybackTranscoding"]" @bind-Value="_videoTranscoding" />
+                <DashboardCheckBox Class="chkEnableVideoPlaybackRemuxing" Label="@Globalize["OptionAllowVideoPlaybackRemuxing"]" @bind-Value="_remuxing" />
+                <DashboardCheckBox Class="chkForceRemoteSourceTranscoding" Label="@Globalize["OptionForceRemoteSourceTranscoding"]" @bind-Value="_forceRemoteTranscoding" />
+            </div>
+            <div class="fieldDescription">@Globalize["OptionAllowMediaPlaybackTranscodingHelp"]</div>
+        </div>
+        <br />
+        <div class="verticalSection">
+            <EmbyInput Id="txtRemoteClientBitrateLimit" Type="number" Label="@Globalize["LabelRemoteClientBitrateLimit"]" @bind-Value="_bitrateLimit"
+                       inputmode="decimal" pattern="[0-9]*(.[0-9]+)?" min="0" step=".25">
+                <div class="fieldDescription">@Globalize["LabelRemoteClientBitrateLimitHelp"]</div>
+                <div class="fieldDescription">@Globalize["LabelUserRemoteClientBitrateLimitHelp"]</div>
+            </EmbyInput>
+        </div>
+        <div class="verticalSection">
+            <EmbySelect Id="selectSyncPlayAccess" ContainerClass="fldSelectSyncPlayAccess" Label="@Globalize["LabelSyncPlayAccess"]"
+                        Description="@Globalize["SyncPlayAccessHelp"]" @bind-Value="_syncPlayAccess">
+                <option value="CreateAndJoinGroups">@Globalize["LabelSyncPlayAccessCreateAndJoinGroups"]</option>
+                <option value="JoinGroups">@Globalize["LabelSyncPlayAccessJoinGroups"]</option>
+                <option value="None">@Globalize["LabelSyncPlayAccessNone"]</option>
+            </EmbySelect>
+        </div>
+        <div class="verticalSection">
+            <h2 class="checkboxListLabel" style="margin-bottom:1em;">@Globalize["HeaderAllowMediaDeletionFrom"]</h2>
+            <div class="checkboxList paperList checkboxList-paperList">
+                <DashboardCheckBox LabelClass="checkboxContainer" Class="chkEnableDeleteAllFolders" Label="@Globalize["AllLibraries"]" @bind-Value="_deleteAll" />
+                <div class="@("deleteAccess" + (_deleteAll ? " hide" : null))">
+                    @foreach (var folder in _deleteFolders)
+                    {
+                        <DashboardCheckBox @key="folder.Id" Class="chkFolder" Label="@folder.Name" data-id="@UserPages.IdText(folder.Id)"
+                                           Value="@CanDeleteFrom(folder)" ValueChanged="@(on => SetDeleteFrom(folder, on))" />
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="verticalSection">
+            <h2 class="checkboxListLabel">@Globalize["HeaderRemoteControl"]</h2>
+            <div class="checkboxList paperList" style="padding:.5em 1em;">
+                <DashboardCheckBox Class="chkEnableRemoteControlOtherUsers" Label="@Globalize["OptionAllowRemoteControlOthers"]" @bind-Value="_remoteControlOthers" />
+                <DashboardCheckBox Class="chkRemoteControlSharedDevices" Label="@Globalize["OptionAllowRemoteSharedDevices"]" @bind-Value="_sharedDeviceControl" />
+            </div>
+            <div class="fieldDescription">@Globalize["OptionAllowRemoteSharedDevicesHelp"]</div>
+        </div>
+        <h2 class="checkboxListLabel">@Globalize["Other"]</h2>
+        <div class="checkboxContainer checkboxContainer-withDescription">
+            <DashboardCheckBox Class="chkEnableDownloading" Label="@Globalize["OptionAllowContentDownload"]" @bind-Value="_downloading" />
+            <div class="fieldDescription checkboxFieldDescription">@Globalize["OptionAllowContentDownloadHelp"]</div>
+        </div>
+        <div id="fldIsEnabled" class="checkboxContainer checkboxContainer-withDescription">
+            <DashboardCheckBox Class="chkDisabled" Label="@Globalize["OptionDisableUser"]" @bind-Value="_isDisabled" />
+            <div class="fieldDescription checkboxFieldDescription">@Globalize["OptionDisableUserHelp"]</div>
+        </div>
+        <div id="fldIsHidden" class="checkboxContainer checkboxContainer-withDescription">
+            <DashboardCheckBox Class="chkIsHidden" Label="@Globalize["OptionHideUser"]" @bind-Value="_isHidden" />
+            <div class="fieldDescription checkboxFieldDescription">@Globalize["OptionHideUserFromLoginHelp"]</div>
+        </div>
+        <br />
+        <div class="verticalSection">
+            <EmbyInput Id="txtLoginAttemptsBeforeLockout" Type="number"
+                       Label="@Globalize["LabelUserLoginAttemptsBeforeLockout"]" @bind-Value="_loginAttempts" min="-1" step="1">
+                <div class="fieldDescription">@Globalize["OptionLoginAttemptsBeforeLockout"]</div>
+                <div class="fieldDescription">@Globalize["OptionLoginAttemptsBeforeLockoutHelp"]</div>
+            </EmbyInput>
+        </div>
+        <br />
+        <div class="verticalSection">
+            <EmbyInput Id="txtMaxActiveSessions" Type="number"
+                       Label="@Globalize["LabelUserMaxActiveSessions"]" @bind-Value="_maxSessions" min="0" step="1">
+                <div class="fieldDescription">@Globalize["OptionMaxActiveSessions"]</div>
+                <div class="fieldDescription">@Globalize["OptionMaxActiveSessionsHelp"]</div>
+            </EmbyInput>
+        </div>
+        <br />
+        <div>
+            <EmbyButton Type="submit" Class="raised button-submit block">
+                <span>@Globalize["Save"]</span>
+            </EmbyButton>
+            <EmbyButton id="btnCancel" Class="raised button-cancel block" OnClick="@(() => Router.Back())">
+                <span>@Globalize["ButtonCancel"]</span>
+            </EmbyButton>
+        </div>
+    </form>
+</div>
+
+@code {
+    private readonly HashSet<Guid> _deleteFrom = [];
+    private UserDto? _shown;
+    private List<NameIdPair> _authProviders = [];
+    private List<NameIdPair> _resetProviders = [];
+    private List<BaseItemDto> _deleteFolders = [];
+    private bool _remoteAccessAvailable;
+
+    private string? _name;
+    private string? _authProviderId;
+    private string? _resetProviderId;
+    private string? _bitrateLimit;
+    private string? _loginAttempts;
+    private string? _maxSessions;
+    private string? _syncPlayAccess;
+    private bool _remoteAccess;
+    private bool _isAdmin;
+    private bool _collectionManagement;
+    private bool _subtitleManagement;
+    private bool _liveTvAccess;
+    private bool _liveTvManagement;
+    private bool _mediaPlayback;
+    private bool _audioTranscoding;
+    private bool _videoTranscoding;
+    private bool _remuxing;
+    private bool _forceRemoteTranscoding;
+    private bool _deleteAll;
+    private bool _remoteControlOthers;
+    private bool _sharedDeviceControl;
+    private bool _downloading;
+    private bool _isDisabled;
+    private bool _isHidden;
+
+    /// <summary>The user that is edited.</summary>
+    [Parameter, EditorRequired]
+    public UserDto User { get; set; } = default!;
+
+    protected override void OnParametersSet()
+    {
+        // Shows the user again when the editor has fetched a newer copy.
+        if (!ReferenceEquals(_shown, User))
+        {
+            _shown = User;
+            ShowUser();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authProviders = Quietly(() => Api.Client.Auth.Providers.GetAsync());
+        var resetProviders = Quietly(() => Api.Client.Auth.PasswordResetProviders.GetAsync());
+        var folders = Quietly(() => Api.Client.Library.MediaFolders.GetAsync(request => request.QueryParameters.IsHidden = false));
+        var channels = Quietly(() => Api.Client.Channels.GetAsync(request => request.QueryParameters.SupportsMediaDeletion = true));
+        var network = Quietly(() => Api.GetJsonAsync<JsonElement>("System/Configuration/network"));
+
+        _authProviders = await authProviders ?? [];
+        _resetProviders = await resetProviders ?? [];
+        ShowProviders();
+
+        // What can be deleted from: the libraries, then the channels that allow it.
+        _deleteFolders = [.. (await folders)?.Items ?? [], .. (await channels)?.Items ?? []];
+        ShowDeleteFolders();
+
+        var config = await network;
+        _remoteAccessAvailable = config.ValueKind == JsonValueKind.Object
+            && config.TryGetProperty("EnableRemoteAccess", out var enabled)
+            && enabled.ValueKind == JsonValueKind.True;
+    }
+
+    private static async Task<T?> Quietly<T>(Func<Task<T?>> load)
+    {
+        try
+        {
+            return await load();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[UserProfile] unable to load: " + ex.Message);
+            return default;
+        }
+    }
+
+    private void ShowUser()
+    {
+        var policy = User.Policy;
+        _name = User.Name ?? string.Empty;
+        _isAdmin = policy?.IsAdministrator == true;
+        _isDisabled = policy?.IsDisabled == true;
+        _isHidden = policy?.IsHidden == true;
+        _collectionManagement = policy?.EnableCollectionManagement == true;
+        _subtitleManagement = policy?.EnableSubtitleManagement == true;
+        _sharedDeviceControl = policy?.EnableSharedDeviceControl == true;
+        _remoteControlOthers = policy?.EnableRemoteControlOfOtherUsers == true;
+        _downloading = policy?.EnableContentDownloading == true;
+        _liveTvManagement = policy?.EnableLiveTvManagement == true;
+        _liveTvAccess = policy?.EnableLiveTvAccess == true;
+        _mediaPlayback = policy?.EnableMediaPlayback == true;
+        _audioTranscoding = policy?.EnableAudioPlaybackTranscoding == true;
+        _videoTranscoding = policy?.EnableVideoPlaybackTranscoding == true;
+        _remuxing = policy?.EnablePlaybackRemuxing == true;
+        _forceRemoteTranscoding = policy?.ForceRemoteSourceTranscoding == true;
+        _remoteAccess = policy?.EnableRemoteAccess != false;
+        _bitrateLimit = policy?.RemoteClientBitrateLimit is { } limit && limit > 0
+            ? (limit / 1e6).ToString("0.######", CultureInfo.InvariantCulture)
+            : string.Empty;
+        _loginAttempts = policy?.LoginAttemptsBeforeLockout?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        _maxSessions = policy?.MaxActiveSessions?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        _syncPlayAccess = policy?.SyncPlayAccess?.ToString();
+
+        _deleteAll = policy?.EnableContentDeletion == true;
+        ShowDeleteFolders();
+        ShowProviders();
+    }
+
+    // Which folders are ticked: those of the user, or every one while everything may be deleted.
+    private void ShowDeleteFolders()
+    {
+        _deleteFrom.Clear();
+        if (User.Policy?.EnableContentDeletion == true)
+        {
+            _deleteFrom.UnionWith(_deleteFolders.Select(folder => folder.Id).OfType<Guid>());
+            return;
+        }
+
+        foreach (var folder in User.Policy?.EnableContentDeletionFromFolders ?? [])
+        {
+            if (Guid.TryParse(folder, out var id))
+            {
+                _deleteFrom.Add(id);
+            }
+        }
+    }
+
+    // The user's provider when the server offers it, otherwise the first one (what the
+    // original's select shows then); without a provider list the user's value is kept.
+    private void ShowProviders()
+    {
+        _authProviderId = Pick(_authProviders, User.Policy?.AuthenticationProviderId);
+        _resetProviderId = Pick(_resetProviders, User.Policy?.PasswordResetProviderId);
+    }
+
+    private static string? Pick(List<NameIdPair> providers, string? current) =>
+        providers.Count == 0 || providers.Any(provider => provider.Id == current) ? current : providers[0].Id;
+
+    private void SetDeleteFrom(BaseItemDto folder, bool on)
+    {
+        if (folder.Id is not { } id)
+        {
+            return;
+        }
+
+        if (on)
+        {
+            _deleteFrom.Add(id);
+        }
+        else
+        {
+            _deleteFrom.Remove(id);
+        }
+    }
+
+    private bool CanDeleteFrom(BaseItemDto folder) => folder.Id is { } id && _deleteFrom.Contains(id);
+
+    private static int ParseInt(string? text) =>
+        int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : 0;
+
+    private async Task SaveAsync()
+    {
+        if (User.Id is not { } id || User.Policy is not { } policy)
+        {
+            return;
+        }
+
+        Loading.Show();
+        User.Name = (_name ?? string.Empty).Trim();
+        policy.IsAdministrator = _isAdmin;
+        policy.IsHidden = _isHidden;
+        policy.IsDisabled = _isDisabled;
+        policy.EnableRemoteControlOfOtherUsers = _remoteControlOthers;
+        policy.EnableLiveTvManagement = _liveTvManagement;
+        policy.EnableLiveTvAccess = _liveTvAccess;
+        policy.EnableSharedDeviceControl = _sharedDeviceControl;
+        policy.EnableMediaPlayback = _mediaPlayback;
+        policy.EnableAudioPlaybackTranscoding = _audioTranscoding;
+        policy.EnableVideoPlaybackTranscoding = _videoTranscoding;
+        policy.EnablePlaybackRemuxing = _remuxing;
+        policy.EnableCollectionManagement = _collectionManagement;
+        policy.EnableSubtitleManagement = _subtitleManagement;
+        policy.ForceRemoteSourceTranscoding = _forceRemoteTranscoding;
+        policy.EnableContentDownloading = _downloading;
+        policy.EnableRemoteAccess = _remoteAccess;
+        policy.RemoteClientBitrateLimit = double.TryParse(_bitrateLimit, NumberStyles.Float, CultureInfo.InvariantCulture, out var megabits)
+            ? (int)Math.Floor(1e6 * megabits)
+            : 0;
+        policy.LoginAttemptsBeforeLockout = ParseInt(_loginAttempts);
+        policy.MaxActiveSessions = ParseInt(_maxSessions);
+        policy.AuthenticationProviderId = _authProviderId ?? string.Empty;
+        policy.PasswordResetProviderId = _resetProviderId ?? string.Empty;
+        policy.EnableContentDeletion = _deleteAll;
+        policy.EnableContentDeletionFromFolders = _deleteAll
+            ? []
+            : _deleteFolders.Where(CanDeleteFrom).Select(folder => UserPages.IdText(folder.Id)).ToList();
+        policy.SyncPlayAccess = Enum.TryParse<UserPolicy_SyncPlayAccess>(_syncPlayAccess, out var access) ? access : policy.SyncPlayAccess;
+
+        try
+        {
+            await Api.Client.Users.PostAsync(User, request => request.QueryParameters.UserId = id);
+            await Api.Client.Users[id].Policy.PostAsync(policy);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[UserProfile] saving the user failed: " + ex.Message);
+            Loading.Hide();
+            Toasts.Show(Globalize["ErrorDefault"]);
+            return;
+        }
+
+        Cache.Clear();
+        if (id == Api.UserId)
+        {
+            // The name and rights of the signed-in user are shown in the shell.
+            try
+            {
+                await Api.RefreshUserAsync();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                AppLog.Warn("[UserProfile] unable to refresh the signed-in user: " + ex.Message);
+            }
+        }
+
+        Loading.Hide();
+        // The original opens this message on the user list it returns to.
+        Toasts.Show(Globalize["SettingsSaved"]);
+        Router.Navigate("/dashboard/users");
+    }
+}

@@ -1,0 +1,102 @@
+@* The users of the server. Port of apps/dashboard/routes/users/index.tsx. *@
+@attribute [Route("/dashboard/users")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject AppRouter Router
+@inject Globalize Globalize
+
+<Page Id="userProfilesPage" Title="@Globalize["HeaderUsers"]" Class="mainAnimatedPage type-interior userProfilesPage fullWidthContent">
+    @if (_users is null)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            <div class="verticalSection">
+                <DashboardSectionTitle Title="@Globalize["HeaderUsers"]" ButtonId="btnAddUser" ButtonTitle="@Globalize["ButtonAddUser"]" ButtonIcon="add"
+                                       OnButtonClick="@(() => Router.Navigate("/dashboard/users/add"))" />
+            </div>
+            <div class="localUsers itemsContainer vertical-wrap">
+                @foreach (var user in _users)
+                {
+                    <DashboardUserCard @key="user.Id" User="user" OnMenu="ShowMenuAsync" />
+                }
+            </div>
+        </div>
+    }
+</Page>
+
+@code {
+    private List<UserDto>? _users;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _users = await Api.Client.Users.GetAsync() ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Users] unable to load the users: " + ex.Message);
+            _users ??= [];
+        }
+    }
+
+    private async Task ShowMenuAsync(UserDto user)
+    {
+        if (user.Id is not { } id)
+        {
+            return;
+        }
+
+        var choice = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        {
+            Items =
+            [
+                new ActionSheetItem { Id = "open", Name = Globalize["ButtonEditUser"], Icon = "mode_edit" },
+                new ActionSheetItem { Id = "access", Name = Globalize["ButtonLibraryAccess"], Icon = "lock" },
+                new ActionSheetItem { Id = "parentalcontrol", Name = Globalize["ButtonParentalControl"], Icon = "person" },
+                new ActionSheetItem { Id = "delete", Name = Globalize["Delete"], Icon = "delete" },
+            ],
+        });
+
+        switch (choice)
+        {
+            case "open":
+                Router.Navigate($"/dashboard/users/{id:N}/profile");
+                break;
+            case "access":
+            case "parentalcontrol":
+                Router.Navigate($"/dashboard/users/{id:N}/{choice}");
+                break;
+            case "delete":
+                await DeleteAsync(id, user.Name);
+                break;
+        }
+    }
+
+    private async Task DeleteAsync(Guid id, string? name)
+    {
+        var title = string.IsNullOrEmpty(name) ? Globalize["DeleteUser"] : Globalize.Translate("DeleteName", name);
+        if (!await Dialogs.ConfirmAsync(Globalize["DeleteUserConfirmation"], title, Globalize["Delete"], destructive: true))
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.Users[id].DeleteAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Users] deleting the user failed: " + ex.Message);
+        }
+
+        await LoadAsync();
+    }
+}

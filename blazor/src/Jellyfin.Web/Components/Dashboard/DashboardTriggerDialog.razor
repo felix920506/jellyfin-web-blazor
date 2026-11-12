@@ -1,0 +1,111 @@
+@* Asks when a scheduled task should run; closes with the new TaskTriggerInfo.
+   Port of features/tasks/components/NewTriggerForm.tsx. *@
+@namespace Jellyfin.Web.Components
+@inject Globalize Globalize
+@inject TaskTriggerText TriggerText
+
+<form class="jf-dashboard-dialog-form jf-dashboard-trigger-dialog" @onsubmit="Add" @onsubmit:preventDefault="true">
+    <h2 class="jf-dashboard-dialog-title">@Globalize["ButtonAddScheduledTaskTrigger"]</h2>
+    <div class="jf-dashboard-dialog-content">
+        <div class="jf-dashboard-form">
+            <MudSelect T="TaskTriggerInfo_Type" @bind-Value="_type" Variant="Variant.Filled" FullWidth="true"
+                       Label="@Globalize["LabelTriggerType"]" Class="jf-dashboard-trigger-type">
+                <MudSelectItem T="TaskTriggerInfo_Type" Value="TaskTriggerInfo_Type.DailyTrigger">@Globalize["OptionDaily"]</MudSelectItem>
+                <MudSelectItem T="TaskTriggerInfo_Type" Value="TaskTriggerInfo_Type.WeeklyTrigger">@Globalize["OptionWeekly"]</MudSelectItem>
+                <MudSelectItem T="TaskTriggerInfo_Type" Value="TaskTriggerInfo_Type.IntervalTrigger">@Globalize["OptionOnInterval"]</MudSelectItem>
+                <MudSelectItem T="TaskTriggerInfo_Type" Value="TaskTriggerInfo_Type.StartupTrigger">@Globalize["OnApplicationStartup"]</MudSelectItem>
+            </MudSelect>
+
+            @if (_type == TaskTriggerInfo_Type.WeeklyTrigger)
+            {
+                <MudSelect T="TaskTriggerInfo_DayOfWeek" @bind-Value="_day" Variant="Variant.Filled" FullWidth="true"
+                           Label="@Globalize["LabelDay"]" Class="jf-dashboard-trigger-day">
+                    @foreach (var day in Enum.GetValues<TaskTriggerInfo_DayOfWeek>())
+                    {
+                        <MudSelectItem T="TaskTriggerInfo_DayOfWeek" Value="day">@Globalize[day.ToString()]</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+
+            @if (_type is TaskTriggerInfo_Type.DailyTrigger or TaskTriggerInfo_Type.WeeklyTrigger)
+            {
+                <MudSelect T="long" @bind-Value="_timeOfDay" Variant="Variant.Filled" FullWidth="true"
+                           Label="@Globalize["LabelTime"]" Class="jf-dashboard-trigger-time">
+                    @foreach (var option in _timeOptions)
+                    {
+                        <MudSelectItem T="long" Value="option.Ticks">@option.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+
+            @if (_type == TaskTriggerInfo_Type.IntervalTrigger)
+            {
+                <MudSelect T="long" @bind-Value="_interval" Variant="Variant.Filled" FullWidth="true"
+                           Label="@Globalize["LabelEveryXMinutes"]" Class="jf-dashboard-trigger-interval">
+                    @foreach (var option in _intervalOptions)
+                    {
+                        <MudSelectItem T="long" Value="option.Ticks">@option.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+
+            <MudNumericField T="double?" @bind-Value="_timeLimit" Variant="Variant.Filled" FullWidth="true" Min="1" Step="0.5"
+                             Label="@Globalize["LabelTimeLimitHours"]" InputId="jf-dashboard-trigger-limit" />
+        </div>
+    </div>
+    <div class="jf-dashboard-dialog-actions">
+        <MudButton Variant="Variant.Text" Color="Color.Primary" data-id="cancel" OnClick="@(() => Dialog.Cancel())">@Globalize["ButtonCancel"]</MudButton>
+        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" data-id="ok">@Globalize["Add"]</MudButton>
+    </div>
+</form>
+
+@code {
+    private const double TicksPerHour = 36e9;
+
+    private List<TickOption> _timeOptions = [];
+    private List<TickOption> _intervalOptions = [];
+    private TaskTriggerInfo_Type _type = TaskTriggerInfo_Type.DailyTrigger;
+    private TaskTriggerInfo_DayOfWeek _day = TaskTriggerInfo_DayOfWeek.Sunday;
+    private long _timeOfDay;
+    private long _interval;
+    private double? _timeLimit;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    protected override void OnInitialized()
+    {
+        _timeOptions = TriggerText.TimeOfDayOptions();
+        _intervalOptions = TriggerText.IntervalOptions();
+        _interval = _intervalOptions[0].Ticks;
+    }
+
+    private void Add() => Dialog.Close(Build(_type, _day, _timeOfDay, _interval, _timeLimit));
+
+    /// <summary>The trigger for the dialog's choices: only the fields its type uses are set.</summary>
+    public static TaskTriggerInfo Build(TaskTriggerInfo_Type type, TaskTriggerInfo_DayOfWeek day, long timeOfDayTicks, long intervalTicks, double? timeLimitHours)
+    {
+        var trigger = new TaskTriggerInfo { Type = type };
+        if (type == TaskTriggerInfo_Type.WeeklyTrigger)
+        {
+            trigger.DayOfWeek = day;
+        }
+
+        if (type is TaskTriggerInfo_Type.DailyTrigger or TaskTriggerInfo_Type.WeeklyTrigger)
+        {
+            trigger.TimeOfDayTicks = timeOfDayTicks;
+        }
+
+        if (type == TaskTriggerInfo_Type.IntervalTrigger)
+        {
+            trigger.IntervalTicks = intervalTicks;
+        }
+
+        if (timeLimitHours is { } hours)
+        {
+            trigger.MaxRuntimeTicks = (long)(hours * TicksPerHour);
+        }
+
+        return trigger;
+    }
+}

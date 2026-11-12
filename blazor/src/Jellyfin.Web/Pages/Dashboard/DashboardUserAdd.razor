@@ -1,0 +1,136 @@
+@* Creates a user. Port of apps/dashboard/routes/users/add.tsx. *@
+@attribute [Route("/dashboard/users/add")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<Page Id="newUserPage" Class="mainAnimatedPage type-interior">
+    @if (_folders is null)
+    {
+        <DashboardLoading />
+    }
+    <div class="content-primary">
+        <div class="verticalSection">
+            <DashboardSectionTitle Title="@Globalize["HeaderAddUser"]" />
+        </div>
+        <form class="newUserProfileForm" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+            <EmbyInput Id="txtUsername" Label="@Globalize["LabelName"]" Required="true" @bind-Value="_name"
+                       Description="@Globalize["LabelUsernameAllowedCharactersHelp"]" />
+            <EmbyInput Id="txtPassword" Type="password" Label="@Globalize["LabelPassword"]" @bind-Value="_password" />
+
+            <DashboardAccessContainer ContainerClass="folderAccessContainer" HeaderTitle="HeaderLibraryAccess"
+                                      CheckBoxClass="chkEnableAllFolders" CheckBoxTitle="OptionEnableAccessToAllLibraries"
+                                      ListContainerClass="folderAccessListContainer" AccessClass="folderAccess"
+                                      ListTitle="HeaderLibraries" Description="LibraryAccessHelp" @bind-All="_allFolders">
+                @foreach (var folder in _folders ?? [])
+                {
+                    <DashboardCheckBox @key="folder.Id" Class="chkFolder" Label="@folder.Name" data-id="@UserPages.IdText(folder.Id)"
+                                       Value="@IsChecked(_enabledFolders, folder)" ValueChanged="@(on => Check(_enabledFolders, folder, on))" />
+                }
+            </DashboardAccessContainer>
+
+            <DashboardAccessContainer ContainerClass="channelAccessContainer verticalSection-extrabottompadding" Hidden="@(_channels.Count == 0)"
+                                      HeaderTitle="HeaderChannelAccess"
+                                      CheckBoxClass="chkEnableAllChannels" CheckBoxTitle="OptionEnableAccessToAllChannels"
+                                      ListContainerClass="channelAccessListContainer" AccessClass="channelAccess"
+                                      ListTitle="Channels" Description="ChannelAccessHelp" @bind-All="_allChannels">
+                @foreach (var channel in _channels)
+                {
+                    <DashboardCheckBox @key="channel.Id" Class="chkChannel" Label="@channel.Name" data-id="@UserPages.IdText(channel.Id)"
+                                       Value="@IsChecked(_enabledChannels, channel)" ValueChanged="@(on => Check(_enabledChannels, channel, on))" />
+                }
+            </DashboardAccessContainer>
+
+            <div>
+                <EmbyButton Type="submit" Class="raised button-submit block">
+                    <span>@Globalize["Save"]</span>
+                </EmbyButton>
+                <EmbyButton id="btnCancel" Class="raised button-cancel block" OnClick="@(() => Router.Back())">
+                    <span>@Globalize["ButtonCancel"]</span>
+                </EmbyButton>
+            </div>
+        </form>
+    </div>
+</Page>
+
+@code {
+    private readonly HashSet<Guid> _enabledFolders = [];
+    private readonly HashSet<Guid> _enabledChannels = [];
+    private List<BaseItemDto>? _folders;
+    private List<BaseItemDto> _channels = [];
+    private string? _name;
+    private string? _password;
+    private bool _allFolders;
+    private bool _allChannels;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var folders = Api.Client.Library.MediaFolders.GetAsync();
+            var channels = Api.Client.Channels.GetAsync();
+            _channels = (await channels)?.Items ?? [];
+            _folders = (await folders)?.Items ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[UserAdd] unable to load the libraries and channels: " + ex.Message);
+            _folders ??= [];
+        }
+    }
+
+    private static bool IsChecked(HashSet<Guid> set, BaseItemDto item) => item.Id is { } id && set.Contains(id);
+
+    private static void Check(HashSet<Guid> set, BaseItemDto item, bool on)
+    {
+        if (item.Id is not { } id)
+        {
+            return;
+        }
+
+        if (on)
+        {
+            set.Add(id);
+        }
+        else
+        {
+            set.Remove(id);
+        }
+    }
+
+    // The checked entries in the order of the list, as the original reads them from the page.
+    private static List<Guid?> Checked(HashSet<Guid> set, IEnumerable<BaseItemDto> items) =>
+        items.Where(item => IsChecked(set, item)).Select(item => item.Id).ToList();
+
+    private async Task SaveAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var user = await Api.Client.Users.New.PostAsync(new CreateUserByName { Name = _name ?? string.Empty, Password = _password ?? string.Empty });
+            if (user?.Id is not { } id || user.Policy is not { } policy)
+            {
+                throw new InvalidOperationException("Unexpected null user id or policy");
+            }
+
+            policy.EnableAllFolders = _allFolders;
+            policy.EnabledFolders = _allFolders ? [] : Checked(_enabledFolders, _folders ?? []);
+            policy.EnableAllChannels = _allChannels;
+            policy.EnabledChannels = _allChannels ? [] : Checked(_enabledChannels, _channels);
+
+            await Api.Client.Users[id].Policy.PostAsync(policy);
+            Loading.Hide();
+            Router.Navigate($"/dashboard/users/{id:N}/profile");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[UserAdd] creating the user failed: " + ex.Message);
+            Loading.Hide();
+            Toasts.Show(Globalize["ErrorDefault"]);
+        }
+    }
+}

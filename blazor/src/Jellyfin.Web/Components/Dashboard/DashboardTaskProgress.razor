@@ -1,0 +1,19 @@
+@* The progress of a running scheduled task. Port of features/tasks/components/TaskProgress.tsx. *@
+@namespace Jellyfin.Web.Components
+
+<div class="jf-dashboard-task-progress">
+    @if (Info.CurrentProgressPercentage is { } progress)
+    {
+        <MudProgressLinear Color="Color.Primary" Value="progress" Class="jf-dashboard-task-progress-bar" />
+        <span class="jf-dashboard-task-progress-text">@((int)Math.Round(progress, MidpointRounding.AwayFromZero))%</span>
+    }
+    else
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="jf-dashboard-task-progress-bar" />
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public TaskInfo Info { get; set; } = default!;
+}

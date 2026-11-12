@@ -1,0 +1,658 @@
+@* The user editor (/dashboard/users/{id}/{tab}) with its profile, access and parental control tabs. *@
+@using System.Net
+@using System.Text.Json
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Jellyfin.Web.Tests.User
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private static readonly Guid Alice = SettingsTestExtensions.OtherUserId;
+    private static readonly Guid Movies = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+    private static readonly Guid Shows = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000002");
+    private static readonly Guid Radio = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000003");
+
+    private static string N(Guid id) => id.ToString("N");
+
+    private void ScriptAlice(object? policy = null) =>
+        this.ScriptUser(Alice, new { Id = Alice, Name = "alice", Policy = policy ?? new { IsAdministrator = false } });
+
+    private void ScriptFolders()
+    {
+        App.Server.OnGet("/Library/MediaFolders", new
+        {
+            Items = new[] { new { Id = Movies, Name = "Movies" }, new { Id = Shows, Name = "Shows" } },
+        });
+        App.Server.OnGet("/Channels", new { Items = new[] { new { Id = Radio, Name = "Radio" } } });
+        App.Server.OnGet("/Devices", new
+        {
+            Items = new object[]
+            {
+                new { Id = "tv", Name = "Living room TV", AppName = "Jellyfin Android TV" },
+                new { Id = "chrome", Name = "Chrome", CustomName = "Kitchen", AppName = "Jellyfin Web" },
+            },
+        });
+    }
+
+    private JsonElement PostedPolicy() => Assert.Single(App.Server.RequestsTo("/Policy")).JsonBody();
+
+    private static Task CheckAsync<TComponent>(IRenderedComponent<TComponent> cut, string selector, bool on)
+        where TComponent : IComponent => cut.Find(selector).ChangeAsync(new ChangeEventArgs { Value = on });
+
+    private static Task TypeAsync<TComponent>(IRenderedComponent<TComponent> cut, string selector, string text)
+        where TComponent : IComponent => cut.Find(selector).InputAsync(new ChangeEventArgs { Value = text });
+
+    // ---- the page ----
+
+    private IRenderedComponent<DashboardUserEdit> RenderEditor(string tab = "profile")
+    {
+        var cut = RenderAt<DashboardUserEdit>($"/dashboard/users/{N(Alice)}/{tab}", page => page
+            .Add(p => p.UserId, N(Alice))
+            .Add(p => p.Tab, tab));
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-dashboard-user-name")));
+        return cut;
+    }
+
+    [Fact]
+    public void The_editor_shows_the_user_and_four_tabs()
+    {
+        SignIn(admin: true);
+        ScriptAlice();
+
+        var cut = RenderEditor();
+
+        Assert.Equal("alice", cut.Find(".jf-dashboard-user-name").TextContent);
+        Assert.Equal(
+            [this.T("Profile"), this.T("TabAccess"), this.T("TabParentalControl"), this.T("HeaderPassword")],
+            cut.FindAll(".jf-dashboard-tabs .mud-tab").Select(tab => tab.TextContent.Trim()));
+        Assert.Equal(this.T("Profile"), cut.Find(".jf-dashboard-tabs .mud-tab-active").TextContent.Trim());
+        Assert.NotNull(cut.Find("form.editUserProfileForm"));
+        Assert.Equal("alice", Get<ShellState>().Title);
+    }
+
+    [Theory]
+    [InlineData("access", "TabAccess", "form.userLibraryAccessForm")]
+    [InlineData("parentalcontrol", "TabParentalControl", "form.userParentalControlForm")]
+    [InlineData("password", "HeaderPassword", ".readOnlyContent form")]
+    public void The_address_names_the_tab(string tab, string title, string content)
+    {
+        SignIn(admin: true);
+        ScriptAlice();
+
+        var cut = RenderEditor(tab);
+
+        cut.Eventually(() => Assert.Equal(this.T(title), cut.Find(".jf-dashboard-tabs .mud-tab-active").TextContent.Trim()));
+        cut.Eventually(() => Assert.NotNull(cut.Find(content)));
+        Assert.Empty(cut.FindAll("form.editUserProfileForm"));
+    }
+
+    [Fact]
+    public void The_short_address_with_a_query_leads_to_the_same_tab()
+    {
+        SignIn(admin: true);
+        ScriptAlice();
+
+        var cut = RenderAt<DashboardUserEdit>($"/dashboard/users/access?userId={N(Alice)}", page => page.Add(p => p.UserId, N(Alice)));
+
+        cut.Eventually(() => Assert.NotNull(cut.Find("form.userLibraryAccessForm")));
+        Assert.Equal(this.T("TabAccess"), cut.Find(".jf-dashboard-tabs .mud-tab-active").TextContent.Trim());
+    }
+
+    [Fact]
+    public async Task Choosing_a_tab_changes_the_address()
+    {
+        SignIn(admin: true);
+        ScriptAlice();
+        var cut = RenderEditor();
+
+        await cut.FindAll(".jf-dashboard-tabs .mud-tab")[2].ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.EndsWith($"/dashboard/users/{N(Alice)}/parentalcontrol", App.Browser.Hash, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void An_error_is_shown_for_a_user_that_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+
+        var cut = RenderAt<DashboardUserEdit>($"/dashboard/users/{N(Alice)}/profile", page => page
+            .Add(p => p.UserId, N(Alice))
+            .Add(p => p.Tab, "profile"));
+
+        cut.Eventually(() => Assert.Equal(this.T("UsersEditPageError"), cut.Find(".jf-dashboard-user-error").TextContent.Trim()));
+        Assert.Empty(cut.FindAll(".jf-dashboard-tabs"));
+        Assert.Empty(cut.FindAll("form"));
+    }
+
+    // ---- profile ----
+
+    private static UserDto AliceDto(Action<UserPolicy>? change = null)
+    {
+        var policy = new UserPolicy
+        {
+            IsAdministrator = false,
+            IsDisabled = false,
+            IsHidden = true,
+            EnableMediaPlayback = true,
+            EnableAudioPlaybackTranscoding = true,
+            EnableVideoPlaybackTranscoding = false,
+            EnablePlaybackRemuxing = true,
+            EnableLiveTvAccess = true,
+            EnableRemoteAccess = true,
+            EnableContentDeletion = false,
+            EnableContentDeletionFromFolders = [N(Shows)],
+            RemoteClientBitrateLimit = 1_500_000,
+            LoginAttemptsBeforeLockout = 3,
+            MaxActiveSessions = 2,
+            SyncPlayAccess = UserPolicy_SyncPlayAccess.JoinGroups,
+            AuthenticationProviderId = "Ldap",
+            PasswordResetProviderId = "DefaultReset",
+            EnableAllFolders = true,
+        };
+        change?.Invoke(policy);
+        return new UserDto { Id = Alice, Name = "alice", Policy = policy };
+    }
+
+    private void ScriptProfileData(bool remoteAccess = true, bool twoProviders = true)
+    {
+        App.Server.OnGet("/Auth/Providers", twoProviders
+            ? new[] { new { Name = "Default", Id = "Default" }, new { Name = "LDAP", Id = "Ldap" } }
+            : new[] { new { Name = "Default", Id = "Default" } });
+        App.Server.OnGet("/Auth/PasswordResetProviders", new[] { new { Name = "Default", Id = "DefaultReset" } });
+        App.Server.OnGet("/Library/MediaFolders", new
+        {
+            Items = new[] { new { Id = Movies, Name = "Movies" }, new { Id = Shows, Name = "Shows" } },
+        });
+        App.Server.OnGet("/Channels", new { Items = new[] { new { Id = Radio, Name = "Radio" } } });
+        App.Server.OnGet("/System/Configuration/network", new { EnableRemoteAccess = remoteAccess });
+    }
+
+    private IRenderedComponent<DashboardUserProfileTab> RenderProfile(UserDto? user = null, int folders = 3)
+    {
+        var cut = Render<DashboardUserProfileTab>(tab => tab.Add(t => t.User, user ?? AliceDto()));
+        cut.Eventually(() => Assert.Equal(folders, cut.FindAll(".deleteAccess input.chkFolder").Count));
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/System/Configuration/network")));
+        return cut;
+    }
+
+    [Fact]
+    public void The_profile_shows_the_users_rights()
+    {
+        SignIn(admin: true);
+        ScriptProfileData();
+
+        var cut = RenderProfile();
+
+        cut.Eventually(() => Assert.False(cut.Find(".fldRemoteAccess").HasClass("hide")));
+        Assert.Equal("alice", cut.Find("#txtUserName").Value());
+        Assert.False(cut.Find("input.chkIsAdmin").IsChecked());
+        Assert.True(cut.Find("input.chkIsHidden").IsChecked());
+        Assert.False(cut.Find("input.chkDisabled").IsChecked());
+        Assert.True(cut.Find("input.chkEnableMediaPlayback").IsChecked());
+        Assert.True(cut.Find("input.chkEnableAudioPlaybackTranscoding").IsChecked());
+        Assert.False(cut.Find("input.chkEnableVideoPlaybackTranscoding").IsChecked());
+        Assert.True(cut.Find("input.chkEnableVideoPlaybackRemuxing").IsChecked());
+        Assert.True(cut.Find("input.chkEnableLiveTvAccess").IsChecked());
+        Assert.False(cut.Find("input.chkManageLiveTv").IsChecked());
+        Assert.True(cut.Find("input.chkRemoteAccess").IsChecked());
+        Assert.Equal("1.5", cut.Find("#txtRemoteClientBitrateLimit").Value());
+        Assert.Equal("3", cut.Find("#txtLoginAttemptsBeforeLockout").Value());
+        Assert.Equal("2", cut.Find("#txtMaxActiveSessions").Value());
+        Assert.True(cut.Find(".disabledUserBanner").HasClass("hide"));
+        Assert.Equal($"#/mypreferencesmenu?userId={N(Alice)}", cut.Find(".lnkEditUserPreferences").GetAttribute("href"));
+
+        // Two sign-in providers are a choice, a single password reset provider is not.
+        Assert.False(cut.Find(".fldSelectLoginProvider").HasClass("hide"));
+        Assert.True(cut.Find(".fldSelectPasswordResetProvider").HasClass("hide"));
+        Assert.Equal(["Default", "LDAP"], cut.FindAll("#selectLoginProvider option").Select(option => option.TextContent));
+
+        // Libraries, then the channels that allow deleting.
+        Assert.Equal([N(Movies), N(Shows), N(Radio)], cut.FindAll(".deleteAccess input.chkFolder").Select(box => box.GetAttribute("data-id")));
+        Assert.Equal([false, true, false], cut.FindAll(".deleteAccess input.chkFolder").Select(box => box.IsChecked()));
+        Assert.False(cut.Find("input.chkEnableDeleteAllFolders").IsChecked());
+        Assert.False(cut.Find(".deleteAccess").HasClass("hide"));
+        Assert.Equal("false", Assert.Single(App.Server.RequestsTo("/Library/MediaFolders")).Query("isHidden"));
+        Assert.Equal("true", Assert.Single(App.Server.RequestsTo("/Channels")).Query("supportsMediaDeletion"));
+    }
+
+    [Fact]
+    public void A_disabled_user_and_a_closed_server_show_differently()
+    {
+        SignIn(admin: true);
+        ScriptProfileData(remoteAccess: false, twoProviders: false);
+
+        var cut = RenderProfile(AliceDto(policy =>
+        {
+            policy.IsDisabled = true;
+            policy.EnableContentDeletion = true;
+            policy.RemoteClientBitrateLimit = 0;
+        }));
+
+        Assert.False(cut.Find(".disabledUserBanner").HasClass("hide"));
+        Assert.True(cut.Find("input.chkDisabled").IsChecked());
+        Assert.True(cut.Find(".fldRemoteAccess").HasClass("hide"));
+        Assert.True(cut.Find(".fldSelectLoginProvider").HasClass("hide"));
+        Assert.True(string.IsNullOrEmpty(cut.Find("#txtRemoteClientBitrateLimit").Value()));
+        // Deleting from everywhere ticks every folder and hides the list.
+        Assert.True(cut.Find("input.chkEnableDeleteAllFolders").IsChecked());
+        Assert.True(cut.Find(".deleteAccess").HasClass("hide"));
+        Assert.All(cut.FindAll(".deleteAccess input.chkFolder"), box => Assert.True(box.IsChecked()));
+    }
+
+    [Fact]
+    public async Task Saving_the_profile_updates_the_user_and_the_policy()
+    {
+        SignIn(admin: true);
+        ScriptProfileData();
+        App.Server.OnPost("/Users");
+        App.Server.OnPost("/Policy");
+        var cut = RenderProfile();
+
+        await TypeAsync(cut, "#txtUserName", " alicia ");
+        await CheckAsync(cut, "input.chkIsAdmin", true);
+        await CheckAsync(cut, "input.chkIsHidden", false);
+        await CheckAsync(cut, "input.chkEnableVideoPlaybackTranscoding", true);
+        await CheckAsync(cut, "input.chkEnableMediaPlayback", false);
+        await CheckAsync(cut, "input.chkRemoteAccess", false);
+        await CheckAsync(cut, "input.chkEnableDownloading", true);
+        await TypeAsync(cut, "#txtRemoteClientBitrateLimit", "2.25");
+        await TypeAsync(cut, "#txtLoginAttemptsBeforeLockout", "-1");
+        await TypeAsync(cut, "#txtMaxActiveSessions", string.Empty);
+        await cut.Find("#selectSyncPlayAccess").ChangeAsync(new ChangeEventArgs { Value = "None" });
+        await cut.Find("#selectLoginProvider").ChangeAsync(new ChangeEventArgs { Value = "Default" });
+        await CheckAsync(cut, $".deleteAccess input.chkFolder[data-id='{N(Movies)}']", true);
+        await CheckAsync(cut, $".deleteAccess input.chkFolder[data-id='{N(Shows)}']", false);
+        await cut.Find("form.editUserProfileForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.EndsWith("/dashboard/users", App.Browser.Hash, StringComparison.Ordinal));
+        var update = Assert.Single(App.Server.RequestsTo("/Users"), request => request.Method == HttpMethod.Post);
+        Assert.True(update.QueryIs("userId", Alice));
+        Assert.Equal("alicia", update.JsonBody().Text("Name"));
+        var policy = PostedPolicy();
+        Assert.Contains(N(Alice), App.Server.RequestsTo("/Policy")[0].Path.Replace("-", string.Empty, StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+        Assert.True(policy.Flag("IsAdministrator"));
+        Assert.False(policy.Flag("IsHidden"));
+        Assert.False(policy.Flag("IsDisabled"));
+        Assert.True(policy.Flag("EnableVideoPlaybackTranscoding"));
+        Assert.False(policy.Flag("EnableMediaPlayback"));
+        Assert.True(policy.Flag("EnableAudioPlaybackTranscoding"));
+        Assert.False(policy.Flag("EnableRemoteAccess"));
+        Assert.True(policy.Flag("EnableContentDownloading"));
+        Assert.Equal(2_250_000, policy.GetProperty("RemoteClientBitrateLimit").GetInt32());
+        Assert.Equal(-1, policy.GetProperty("LoginAttemptsBeforeLockout").GetInt32());
+        Assert.Equal(0, policy.GetProperty("MaxActiveSessions").GetInt32());
+        Assert.Equal("None", policy.Text("SyncPlayAccess"));
+        Assert.Equal("Default", policy.Text("AuthenticationProviderId"));
+        Assert.Equal("DefaultReset", policy.Text("PasswordResetProviderId"));
+        Assert.False(policy.Flag("EnableContentDeletion"));
+        Assert.Equal([N(Movies)], policy.GetProperty("EnableContentDeletionFromFolders").EnumerateArray().Select(id => id.GetString()));
+        // What this tab does not show stays as it was.
+        Assert.True(policy.Flag("EnableAllFolders"));
+        Assert.Equal([this.T("SettingsSaved")], this.Toasts());
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task Deleting_from_everywhere_sends_no_folder_list()
+    {
+        SignIn(admin: true);
+        ScriptProfileData();
+        App.Server.OnPost("/Users");
+        App.Server.OnPost("/Policy");
+        var cut = RenderProfile();
+
+        await CheckAsync(cut, "input.chkEnableDeleteAllFolders", true);
+        await cut.Find("form.editUserProfileForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Policy")));
+        var policy = PostedPolicy();
+        Assert.True(policy.Flag("EnableContentDeletion"));
+        Assert.Empty(policy.GetProperty("EnableContentDeletionFromFolders").EnumerateArray());
+        Assert.Equal(1_500_000, policy.GetProperty("RemoteClientBitrateLimit").GetInt32());
+        Assert.Equal("JoinGroups", policy.Text("SyncPlayAccess"));
+        Assert.Equal("Ldap", policy.Text("AuthenticationProviderId"));
+    }
+
+    [Fact]
+    public async Task A_refused_profile_is_reported()
+    {
+        SignIn(admin: true);
+        ScriptProfileData();
+        App.Server.OnPost("/Users", _ => FakeHttp.Status(HttpStatusCode.BadRequest));
+        var cut = RenderProfile();
+        var hash = App.Browser.Hash;
+
+        await cut.Find("form.editUserProfileForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal([this.T("ErrorDefault")], this.Toasts()));
+        Assert.Empty(App.Server.RequestsTo("/Policy"));
+        Assert.Equal(hash, App.Browser.Hash);
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public void The_profile_is_usable_when_the_server_data_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+
+        var cut = RenderProfile(folders: 0);
+
+        Assert.Equal("alice", cut.Find("#txtUserName").Value());
+        Assert.True(cut.Find(".fldRemoteAccess").HasClass("hide"));
+        Assert.True(cut.Find(".fldSelectLoginProvider").HasClass("hide"));
+    }
+
+    // ---- access ----
+
+    private IRenderedComponent<DashboardUserAccessTab> RenderAccess(int devices = 2)
+    {
+        var cut = Render<DashboardUserAccessTab>(tab => tab.Add(t => t.UserId, Alice));
+        cut.Eventually(() => Assert.Equal(devices, cut.FindAll("input.chkDevice").Count));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        return cut;
+    }
+
+    private static object AccessPolicy(bool admin = false) => new
+    {
+        IsAdministrator = admin,
+        IsHidden = true,
+        EnableAllFolders = false,
+        EnabledFolders = new[] { Movies },
+        EnableAllChannels = true,
+        EnabledChannels = Array.Empty<Guid>(),
+        EnableAllDevices = false,
+        EnabledDevices = new[] { "tv" },
+        BlockedMediaFolders = new[] { Shows },
+    };
+
+    [Fact]
+    public void The_access_tab_shows_what_the_user_may_use()
+    {
+        SignIn(admin: true);
+        ScriptAlice(AccessPolicy());
+        ScriptFolders();
+
+        var cut = RenderAccess();
+
+        Assert.False(cut.Find("input.chkEnableAllFolders").IsChecked());
+        Assert.False(cut.Find(".folderAccessListContainer").HasClass("hide"));
+        Assert.Equal([true, false], cut.FindAll("input.chkFolder").Select(box => box.IsChecked()));
+        // With "all" on, the list is hidden and every entry ticked.
+        Assert.True(cut.Find("input.chkEnableAllChannels").IsChecked());
+        Assert.True(cut.Find(".channelAccessListContainer").HasClass("hide"));
+        Assert.All(cut.FindAll("input.chkChannel"), box => Assert.True(box.IsChecked()));
+        Assert.False(cut.Find(".deviceAccessContainer").HasClass("hide"));
+        Assert.Equal(["tv", "chrome"], cut.FindAll("input.chkDevice").Select(box => box.GetAttribute("data-id")));
+        Assert.Equal([true, false], cut.FindAll("input.chkDevice").Select(box => box.IsChecked()));
+        Assert.Contains("Kitchen - Jellyfin Web", cut.Find(".deviceAccess").TextContent, StringComparison.Ordinal);
+        Assert.Equal("false", Assert.Single(App.Server.RequestsTo("/Library/MediaFolders")).Query("isHidden"));
+    }
+
+    [Fact]
+    public void An_administrator_is_not_limited_to_devices()
+    {
+        SignIn(admin: true);
+        ScriptAlice(AccessPolicy(admin: true));
+        ScriptFolders();
+
+        var cut = RenderAccess();
+
+        Assert.True(cut.Find(".deviceAccessContainer").HasClass("hide"));
+        Assert.False(cut.Find(".folderAccessContainer").HasClass("hide"));
+    }
+
+    [Fact]
+    public async Task Saving_the_access_changes_the_current_policy()
+    {
+        SignIn(admin: true);
+        ScriptAlice(AccessPolicy());
+        ScriptFolders();
+        App.Server.OnPost("/Policy");
+        var cut = RenderAccess();
+
+        await CheckAsync(cut, $"input.chkFolder[data-id='{N(Shows)}']", true);
+        await CheckAsync(cut, "input.chkEnableAllChannels", false);
+        await CheckAsync(cut, $"input.chkChannel[data-id='{N(Radio)}']", false);
+        await CheckAsync(cut, "input.chkEnableAllDevices", true);
+        await cut.Find("form.userLibraryAccessForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal([this.T("SettingsSaved")], this.Toasts()));
+        var policy = PostedPolicy();
+        Assert.False(policy.Flag("EnableAllFolders"));
+        Assert.Equal([Movies, Shows], policy.GetProperty("EnabledFolders").EnumerateArray().Select(id => id.GetGuid()));
+        Assert.False(policy.Flag("EnableAllChannels"));
+        Assert.Empty(policy.GetProperty("EnabledChannels").EnumerateArray());
+        Assert.True(policy.Flag("EnableAllDevices"));
+        Assert.Empty(policy.GetProperty("EnabledDevices").EnumerateArray());
+        // The rest is the policy as the server has it; the block lists are dropped as in the original.
+        Assert.True(policy.Flag("IsHidden"));
+        Assert.False(policy.TryGetProperty("BlockedMediaFolders", out var blocked) && blocked.ValueKind != JsonValueKind.Null);
+        Assert.Equal(2, this.UserLoads(Alice).Count);
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task A_refused_access_change_is_reported()
+    {
+        SignIn(admin: true);
+        ScriptAlice(AccessPolicy());
+        ScriptFolders();
+        var cut = RenderAccess();
+
+        await cut.Find("form.userLibraryAccessForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal([this.T("ErrorDefault")], this.Toasts()));
+        Assert.False(this.IsLoading());
+    }
+
+    // ---- parental control ----
+
+    private void ScriptRatings() => App.Server.OnGet("/Localization/ParentalRatings", new object[]
+    {
+        new { Name = "G", RatingScore = new { score = 0 } },
+        new { Name = "PG", RatingScore = new { score = 10 } },
+        new { Name = "TV-PG", RatingScore = new { score = 10 } },
+        new { Name = "R", RatingScore = new { score = 17 } },
+    });
+
+    private static object ParentalPolicy(bool admin = false) => new
+    {
+        IsAdministrator = admin,
+        IsHidden = true,
+        MaxParentalRating = 10,
+        BlockUnratedItems = new[] { "Movie", "Book" },
+        AllowedTags = new[] { "kids" },
+        BlockedTags = new[] { "horror", "gore" },
+        AccessSchedules = new[] { new { DayOfWeek = "Monday", StartHour = 8.0, EndHour = 20.5 } },
+    };
+
+    private IRenderedComponent<DashboardUserParentalTab> RenderParental()
+    {
+        var cut = Render<DashboardUserParentalTab>(tab => tab.Add(t => t.UserId, Alice));
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Localization/ParentalRatings")));
+        cut.Eventually(() => Assert.False(this.IsLoading()));
+        return cut;
+    }
+
+    [Fact]
+    public void The_parental_control_tab_shows_the_users_limits()
+    {
+        SignIn(admin: true);
+        ScriptAlice(ParentalPolicy());
+        ScriptRatings();
+
+        var cut = RenderParental();
+
+        Assert.Equal([string.Empty, "G", "PG/TV-PG", "R"], cut.FindAll("#selectMaxParentalRating option").Select(option => option.TextContent));
+        Assert.Equal([string.Empty, "0", "1", "2"], cut.FindAll("#selectMaxParentalRating option").Select(option => option.GetAttribute("value")));
+        Assert.Equal(
+            ["Book", "Movie"],
+            cut.FindAll("input.chkUnratedItem").Where(box => box.IsChecked()).Select(box => box.GetAttribute("data-itemtype")));
+        Assert.Equal(7, cut.FindAll("input.chkUnratedItem").Count);
+        Assert.Equal(["kids"], cut.FindAll(".allowedTag.btnDeleteTag").Select(tag => tag.GetAttribute("data-tag")));
+        Assert.Equal(["horror", "gore"], cut.FindAll(".blockedTag.btnDeleteTag").Select(tag => tag.GetAttribute("data-tag")));
+        var schedule = Assert.Single(cut.FindAll(".liSchedule"));
+        Assert.Equal("Monday", schedule.GetAttribute("data-day"));
+        Assert.Equal("8", schedule.GetAttribute("data-start"));
+        Assert.Equal("20.5", schedule.GetAttribute("data-end"));
+        Assert.Equal(this.T("Monday"), schedule.QuerySelector("h3")!.TextContent);
+        Assert.False(cut.Find(".accessScheduleSection").HasClass("hide"));
+    }
+
+    [Fact]
+    public void An_administrator_has_no_access_schedule()
+    {
+        SignIn(admin: true);
+        ScriptAlice(ParentalPolicy(admin: true));
+        ScriptRatings();
+
+        var cut = RenderParental();
+
+        Assert.True(cut.Find(".accessScheduleSection").HasClass("hide"));
+    }
+
+    [Fact]
+    public async Task Saving_the_parental_control_changes_the_current_policy()
+    {
+        SignIn(admin: true);
+        ScriptAlice(ParentalPolicy());
+        ScriptRatings();
+        App.Server.OnPost("/Policy");
+        var dialogs = this.RenderDialogs();
+        var cut = RenderParental();
+
+        await cut.Find("#selectMaxParentalRating").ChangeAsync(new ChangeEventArgs { Value = "2" });
+        await CheckAsync(cut, "input.chkUnratedItem[data-itemtype=Movie]", false);
+        await CheckAsync(cut, "input.chkUnratedItem[data-itemtype=Series]", true);
+        await cut.Find(".blockedTag.btnDeleteTag[data-tag=horror]").ClickAsync(new MouseEventArgs());
+        await this.Settle(() => cut.Find("#btnAddAllowedTag").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("#txtInput")));
+        await dialogs.Find("#txtInput").InputAsync(new ChangeEventArgs { Value = "family" });
+        await this.Settle(() => dialogs.Find("form").SubmitAsync());
+        cut.Eventually(() => Assert.Equal(2, cut.FindAll(".allowedTag.btnDeleteTag").Count));
+        await cut.Find(".liSchedule .btnDelete").ClickAsync(new MouseEventArgs());
+        await cut.Find("form.userParentalControlForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal([this.T("SettingsSaved")], this.Toasts()));
+        var policy = PostedPolicy();
+        Assert.Equal(17, policy.GetProperty("MaxParentalRating").GetInt32());
+        Assert.Equal(["Book", "Series"], policy.GetProperty("BlockUnratedItems").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(["kids", "family"], policy.GetProperty("AllowedTags").EnumerateArray().Select(tag => tag.GetString()));
+        Assert.Equal(["gore"], policy.GetProperty("BlockedTags").EnumerateArray().Select(tag => tag.GetString()));
+        Assert.Empty(policy.GetProperty("AccessSchedules").EnumerateArray());
+        Assert.True(policy.Flag("IsHidden"));
+        Assert.Equal(2, this.UserLoads(Alice).Count);
+    }
+
+    [Fact]
+    public async Task No_rating_takes_the_limit_away()
+    {
+        SignIn(admin: true);
+        ScriptAlice(ParentalPolicy());
+        ScriptRatings();
+        App.Server.OnPost("/Policy");
+        var cut = RenderParental();
+
+        await cut.Find("#selectMaxParentalRating").ChangeAsync(new ChangeEventArgs { Value = string.Empty });
+        await cut.Find("form.userParentalControlForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Policy")));
+        var policy = PostedPolicy();
+        Assert.False(policy.TryGetProperty("MaxParentalRating", out var rating) && rating.ValueKind != JsonValueKind.Null);
+        Assert.Single(policy.GetProperty("AccessSchedules").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task A_tag_is_not_added_twice()
+    {
+        SignIn(admin: true);
+        ScriptAlice(ParentalPolicy());
+        ScriptRatings();
+        var dialogs = this.RenderDialogs();
+        var cut = RenderParental();
+
+        await this.Settle(() => cut.Find("#btnAddBlockedTag").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("#txtInput")));
+        await dialogs.Find("#txtInput").InputAsync(new ChangeEventArgs { Value = "gore" });
+        await this.Settle(() => dialogs.Find("form").SubmitAsync());
+
+        cut.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+        Assert.Equal(["horror", "gore"], cut.FindAll(".blockedTag.btnDeleteTag").Select(tag => tag.GetAttribute("data-tag")));
+    }
+
+    [Fact]
+    public async Task An_access_schedule_is_added_from_its_dialog()
+    {
+        SignIn(admin: true);
+        ScriptAlice(ParentalPolicy());
+        ScriptRatings();
+        App.Server.OnPost("/Policy");
+        var dialogs = this.RenderDialogs();
+        var cut = RenderParental();
+
+        await this.Settle(() => cut.Find("#btnAddSchedule").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("form.scheduleForm")));
+        Assert.Equal(10, dialogs.FindAll("#selectDay option").Count);
+        Assert.Equal(49, dialogs.FindAll("#selectStart option").Count);
+        await dialogs.Find("#selectDay").ChangeAsync(new ChangeEventArgs { Value = "Weekend" });
+        await dialogs.Find("#selectStart").ChangeAsync(new ChangeEventArgs { Value = "9.5" });
+        await dialogs.Find("#selectEnd").ChangeAsync(new ChangeEventArgs { Value = "24" });
+        await this.Settle(() => dialogs.Find("form.scheduleForm").SubmitAsync());
+
+        cut.Eventually(() => Assert.Equal(2, cut.FindAll(".liSchedule").Count));
+        var added = cut.FindAll(".liSchedule")[1];
+        Assert.Equal("Weekend", added.GetAttribute("data-day"));
+        Assert.Equal("9.5", added.GetAttribute("data-start"));
+        Assert.Equal("24", added.GetAttribute("data-end"));
+
+        await cut.Find("form.userParentalControlForm").SubmitAsync();
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Policy")));
+        var schedules = PostedPolicy().GetProperty("AccessSchedules").EnumerateArray().ToList();
+        Assert.Equal(2, schedules.Count);
+        Assert.Equal("Weekend", schedules[1].Text("DayOfWeek"));
+        Assert.Equal(9.5, schedules[1].GetProperty("StartHour").GetDouble());
+        Assert.Equal(24, schedules[1].GetProperty("EndHour").GetDouble());
+    }
+
+    [Fact]
+    public async Task A_schedule_must_end_after_it_starts()
+    {
+        SignIn(admin: true);
+        ScriptAlice(ParentalPolicy());
+        ScriptRatings();
+        var dialogs = this.RenderDialogs();
+        var cut = RenderParental();
+
+        await this.Settle(() => cut.Find("#btnAddSchedule").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("form.scheduleForm")));
+        await dialogs.Find("#selectStart").ChangeAsync(new ChangeEventArgs { Value = "12" });
+        await dialogs.Find("#selectEnd").ChangeAsync(new ChangeEventArgs { Value = "8" });
+        await this.Settle(() => dialogs.Find("form.scheduleForm").SubmitAsync());
+
+        // The message opens on top; the schedule dialog stays.
+        dialogs.Eventually(() => Assert.Equal(2, this.Dialogs().Dialogs.Count));
+        Assert.Contains(this.T("ErrorStartHourGreaterThanEnd"), dialogs.Markup, StringComparison.Ordinal);
+        Assert.Single(cut.FindAll(".liSchedule"));
+    }
+
+    [Fact]
+    public async Task A_refused_parental_control_change_is_reported()
+    {
+        SignIn(admin: true);
+        ScriptAlice(ParentalPolicy());
+        ScriptRatings();
+        var cut = RenderParental();
+
+        await cut.Find("form.userParentalControlForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal([this.T("ErrorDefault")], this.Toasts()));
+        Assert.False(this.IsLoading());
+    }
+}

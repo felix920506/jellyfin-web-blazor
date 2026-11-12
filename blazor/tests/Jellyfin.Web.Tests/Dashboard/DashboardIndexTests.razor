@@ -1,0 +1,377 @@
+@* The dashboard's start page (/dashboard). *@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.DependencyInjection
+@inherits DashboardTestContext
+
+@code {
+    private const long GiB = 1024L * 1024 * 1024;
+    private static readonly Guid FilmId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+
+    private static object Folder(string path, long used = GiB, long free = 3 * GiB) =>
+        new { Path = path, UsedSpace = used, FreeSpace = free, StorageType = "Fixed", DeviceId = "/dev/sda1" };
+
+    private static object ScanTask(string state = "Idle", double? progress = null) =>
+        new { Id = "scan", Key = "RefreshLibrary", Name = "Scan Media Library", Category = "Library", State = state, CurrentProgressPercentage = progress };
+
+    private static object PlayingSession() => new
+    {
+        Id = "s1",
+        DeviceId = "d1",
+        DeviceName = "Chrome",
+        Client = "Jellyfin Web",
+        ApplicationVersion = "10.11.0",
+        UserName = "alice",
+        UserId = Guid.NewGuid(),
+        ServerId = TestApp.ServerId,
+        SupportsRemoteControl = true,
+        LastActivityDate = Now.AddMinutes(-1),
+        NowPlayingItem = new { Id = FilmId, Name = "Big Film", Type = "Movie", ProductionYear = 1999, RunTimeTicks = 72_000_000_000L, BackdropImageTags = new[] { "bd" } },
+        PlayState = new { PositionTicks = 18_000_000_000L, IsPaused = false, PlayMethod = "DirectPlay" },
+    };
+
+    private static object IdleSession(string id = "s2", string device = "Pixel", int secondsAgo = 300) => new
+    {
+        Id = id,
+        DeviceId = "device-" + id,
+        DeviceName = device,
+        Client = "Jellyfin Android",
+        ApplicationVersion = "2.6",
+        UserName = "bob",
+        UserId = Guid.NewGuid(),
+        LastActivityDate = Now.AddSeconds(-secondsAgo),
+    };
+
+    private void ScriptPage(object[]? tasks = null, object[]? sessions = null, object[]? activity = null, object[]? alerts = null)
+    {
+        App.Server.OnGet("/System/Info", new { ServerName = "Attic", Version = "10.11.0.0" });
+        App.Server.OnGet("/Items/Counts", new { MovieCount = 12, SeriesCount = 3, EpisodeCount = 40, AlbumCount = 0, SongCount = 0, MusicVideoCount = 0, BookCount = 0, BoxSetCount = 2 });
+        App.Server.OnGet("/ScheduledTasks", tasks ?? [ScanTask()]);
+        App.Server.OnGet("/Sessions", sessions ?? []);
+        App.Server.OnGet("/System/ActivityLog/Entries", request => new
+        {
+            Items = request.Query("hasUserId") == "true" ? activity ?? [] : alerts ?? [],
+            TotalRecordCount = 0,
+        });
+        App.Server.OnGet("/System/Info/Storage", new
+        {
+            CacheFolder = Folder("/cache"),
+            ImageCacheFolder = Folder("/cache/images"),
+            ProgramDataFolder = Folder("/data", used: 95, free: 5),
+            LogFolder = Folder("/log"),
+            InternalMetadataFolder = Folder("/metadata"),
+            TranscodingTempFolder = Folder("/transcodes"),
+            WebFolder = Folder("/web"),
+        });
+    }
+
+    private IRenderedComponent<DashboardIndex> RenderPage()
+    {
+        var cut = Render<DashboardIndex>();
+        cut.Eventually(() => Assert.NotEmpty(App.Server.RequestsTo("/System/Info/Storage")));
+        return cut;
+    }
+
+    [Fact]
+    public void The_page_shows_the_server_its_library_and_its_folders()
+    {
+        SignIn(admin: true);
+        ScriptPage();
+
+        var cut = RenderPage();
+
+        cut.Eventually(() => Assert.Equal("Attic", cut.Find(".jf-dashboard-server-name").TextContent));
+        Assert.Equal("10.11.0", cut.Find(".jf-dashboard-server-version").TextContent);
+        cut.Eventually(() => Assert.Equal(["12", "3", "40", "2"], cut.FindAll(".jf-dashboard-count-value").Select(value => value.TextContent.Trim())));
+        Assert.Equal(3, cut.FindAll(".jf-dashboard-count-card").Count);
+        cut.Eventually(() => Assert.Equal(
+            ["/cache", "/cache/images", "/data", "/log", "/metadata", "/transcodes", "/web"],
+            cut.FindAll(".jf-dashboard-storage-path").Select(path => path.TextContent)));
+        Assert.Equal("1.0 GiB / 4.0 GiB", cut.FindAll(".jf-dashboard-storage-size")[0].TextContent);
+        Assert.Equal("95.0 Bytes / 100.0 Bytes", cut.FindAll(".jf-dashboard-storage-size")[2].TextContent);
+        Assert.Equal(
+            [this.T("LabelCache"), this.T("LabelImageCache"), this.T("LabelProgramData"), this.T("LabelLogs"), this.T("LabelMetadata"), this.T("LabelTranscodes"), this.T("LabelWeb")],
+            cut.FindAll(".jf-dashboard-storage-item .mud-list-item-text > span").Select(label => label.TextContent));
+        Assert.Equal(
+            ["#/dashboard/settings", "#/dashboard/devices", "#/dashboard/activity?useractivity=true", "#/dashboard/settings"],
+            cut.FindAll("a.jf-dashboard-widget-title").Select(title => title.GetAttribute("href")));
+        Assert.Empty(cut.FindAll(".jf-dashboard-running-tasks"));
+        Assert.Empty(cut.FindAll(".jf-dashboard-alerts"));
+    }
+
+    [Fact]
+    public void The_page_asks_the_server_as_the_original_does()
+    {
+        SignIn(admin: true);
+        ScriptPage();
+
+        var cut = RenderPage();
+
+        cut.Eventually(() => Assert.Equal(2, App.Server.RequestsTo("/System/ActivityLog/Entries").Count));
+        Assert.Equal("false", Assert.Single(App.Server.RequestsTo("/ScheduledTasks")).Query("isHidden"));
+        Assert.Equal("960", Assert.Single(App.Server.RequestsTo("/Sessions")).Query("activeWithinSeconds"));
+        var activity = App.Server.RequestsTo("/System/ActivityLog/Entries").Single(request => request.Query("hasUserId") == "true");
+        Assert.Equal("7", activity.Query("limit"));
+        Assert.Equal("0", activity.Query("startIndex"));
+        Assert.Equal(Now.AddDays(-1), DateTimeOffset.Parse(activity.Query("minDate")!, System.Globalization.CultureInfo.InvariantCulture));
+        var alerts = App.Server.RequestsTo("/System/ActivityLog/Entries").Single(request => request.Query("hasUserId") == "false");
+        Assert.Equal("4", alerts.Query("limit"));
+        Assert.Equal(Now.AddDays(-7), DateTimeOffset.Parse(alerts.Query("minDate")!, System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Single(App.Server.RequestsTo("/Items/Counts"));
+    }
+
+    [Fact]
+    public void The_page_survives_a_server_that_answers_nothing()
+    {
+        SignIn(admin: true);
+
+        var cut = RenderPage();
+
+        cut.Eventually(() => Assert.Equal(7, App.Server.Requests.Count(request => request.Method == HttpMethod.Get)));
+        Assert.NotNull(cut.Find("#dashboardPage"));
+        Assert.Empty(cut.FindAll(".jf-dashboard-server-name"));
+        Assert.Equal(7, cut.FindAll(".jf-dashboard-storage-item").Count);
+        Assert.All(cut.FindAll(".jf-dashboard-storage-size"), size => Assert.Equal("? / ?", size.TextContent));
+        Assert.NotNull(cut.Find(".jf-dashboard-skeletons"));
+        Assert.Empty(cut.FindAll(".jf-dashboard-device-card"));
+        Assert.True(cut.Find(".jf-dashboard-scan").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void Recent_activity_and_alerts_are_listed()
+    {
+        SignIn(admin: true);
+        ScriptPage(
+            activity:
+            [
+                new { Id = 1, Name = "alice is playing Big Film", ShortOverview = "on Chrome", Severity = "Information", Date = Now.AddHours(-2) },
+                new { Id = 2, Name = "bob signed in", Severity = "Information", Date = Now.AddDays(-1) },
+            ],
+            alerts: [new { Id = 3, Name = "Scan failed", ShortOverview = "not shown", Severity = "Error", Date = Now.AddDays(-3) }]);
+
+        var cut = RenderPage();
+
+        cut.Eventually(() => Assert.Equal(2, cut.FindAll(".jf-dashboard-activity .jf-dashboard-activity-item").Count));
+        var first = cut.FindAll(".jf-dashboard-activity .jf-dashboard-activity-item")[0];
+        Assert.Equal("#/dashboard/activity?useractivity=true", first.GetAttribute("href"));
+        Assert.Equal("alice is playing Big Film", first.QuerySelector(".jf-dashboard-activity-name")!.TextContent);
+        Assert.Equal(
+            ["today at 2024-05-15 10:00:00", "on Chrome"],
+            first.QuerySelectorAll(".jf-dashboard-activity-detail").Select(detail => detail.TextContent));
+        var second = cut.FindAll(".jf-dashboard-activity .jf-dashboard-activity-item")[1];
+        Assert.Equal(["yesterday at 2024-05-14 12:00:00"], second.QuerySelectorAll(".jf-dashboard-activity-detail").Select(detail => detail.TextContent));
+
+        cut.Eventually(() => Assert.Single(cut.FindAll(".jf-dashboard-alerts .jf-dashboard-activity-item")));
+        var alert = cut.Find(".jf-dashboard-alerts .jf-dashboard-activity-item");
+        Assert.Equal("#/dashboard/activity?useractivity=false", alert.GetAttribute("href"));
+        Assert.Equal("Scan failed", alert.QuerySelector(".jf-dashboard-activity-name")!.TextContent);
+        Assert.Equal(["last 2024-05-12 12:00:00 at 2024-05-12 12:00:00"], alert.QuerySelectorAll(".jf-dashboard-activity-detail").Select(detail => detail.TextContent));
+        Assert.NotNull(alert.QuerySelector(".mud-avatar.mud-avatar-filled-error"));
+    }
+
+    [Fact]
+    public void An_active_device_shows_what_it_plays()
+    {
+        SignIn(admin: true);
+        ScriptPage(sessions: [PlayingSession(), IdleSession()]);
+
+        var cut = RenderPage();
+
+        cut.Eventually(() => Assert.Equal(2, cut.FindAll(".jf-dashboard-device-card").Count));
+        var playing = cut.Find(".jf-dashboard-device-card[data-deviceid='d1']");
+        Assert.Equal("generated/assets/img/devices/chrome.svg", playing.QuerySelector("img.jf-dashboard-device-icon")!.GetAttribute("src"));
+        Assert.Equal(
+            ["Chrome", "Jellyfin Web 10.11.0", "Big Film", "1999"],
+            playing.QuerySelectorAll(".jf-dashboard-device-names .mud-typography").Select(text => text.TextContent));
+        Assert.Equal("30:00 / 2:00:00", playing.QuerySelector(".jf-dashboard-device-time")!.TextContent);
+        Assert.Equal("25", playing.QuerySelector(".jf-dashboard-device-progress")!.GetAttribute("aria-valuenow"));
+        Assert.Contains(
+            $"/Items/{FilmId:N}/Images/Backdrop",
+            playing.QuerySelector(".jf-dashboard-device-media")!.GetAttribute("style"),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("alice", playing.QuerySelector(".jf-dashboard-device-user")!.TextContent.Trim());
+        Assert.NotNull(playing.QuerySelector(".jf-dashboard-device-playpause"));
+        Assert.NotNull(playing.QuerySelector(".jf-dashboard-device-stop"));
+        Assert.NotNull(playing.QuerySelector(".jf-dashboard-device-playbackinfo"));
+        Assert.NotNull(playing.QuerySelector(".jf-dashboard-device-message"));
+
+        var idle = cut.Find(".jf-dashboard-device-card[data-deviceid='device-s2']");
+        Assert.Equal("generated/assets/img/devices/android.svg", idle.QuerySelector("img.jf-dashboard-device-icon")!.GetAttribute("src"));
+        Assert.Contains(Get<Globalize>().Translate("LastSeen", "5 minutes ago"), idle.TextContent, StringComparison.Ordinal);
+        Assert.Null(idle.QuerySelector(".jf-dashboard-device-time"));
+        Assert.Null(idle.QuerySelector(".jf-dashboard-device-progress"));
+        Assert.Null(idle.QuerySelector(".jf-dashboard-device-playpause"));
+        Assert.Null(idle.QuerySelector(".jf-dashboard-device-playbackinfo"));
+        Assert.Null(idle.QuerySelector(".jf-dashboard-device-message"));
+    }
+
+    [Fact]
+    public async Task A_playing_device_can_be_paused_and_stopped()
+    {
+        SignIn(admin: true);
+        ScriptPage(sessions: [PlayingSession()]);
+        App.Server.OnPost("/Sessions/s1/Playing/PlayPause");
+        App.Server.OnPost("/Sessions/s1/Playing/Stop");
+        var cut = RenderPage();
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-dashboard-device-playpause")));
+        Assert.Equal(this.T("ButtonPause"), cut.Find(".jf-dashboard-device-playpause").GetAttribute("aria-label"));
+
+        await cut.Find(".jf-dashboard-device-playpause").ClickAsync(new MouseEventArgs());
+        await cut.Find(".jf-dashboard-device-stop").ClickAsync(new MouseEventArgs());
+
+        Assert.Single(App.Server.RequestsTo("/Sessions/s1/Playing/PlayPause"));
+        Assert.Single(App.Server.RequestsTo("/Sessions/s1/Playing/Stop"));
+    }
+
+    [Fact]
+    public async Task A_message_can_be_sent_to_a_device()
+    {
+        SignIn(admin: true);
+        ScriptPage(sessions: [PlayingSession()]);
+        App.Server.OnPost("/Sessions/s1/Message");
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-dashboard-device-message")));
+
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-device-message"));
+        Assert.Equal(this.T("HeaderSendMessage"), dialogs.Find(".jf-dashboard-dialog-title").TextContent);
+        Assert.Equal(this.T("ButtonSend"), dialogs.Find("[data-id=ok]").TextContent.Trim());
+        await ConfirmDialogAsync(dialogs, "Dinner is ready");
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Sessions/s1/Message")));
+        var body = App.Server.RequestsTo("/Sessions/s1/Message")[0].JsonBody();
+        Assert.Equal("Dinner is ready", body.Text("Text"));
+        Assert.Equal(5000, body.GetProperty("TimeoutMs").GetInt32());
+        Assert.Empty(this.Dialogs().Dialogs);
+    }
+
+    [Fact]
+    public async Task No_message_is_sent_when_the_dialog_is_cancelled()
+    {
+        SignIn(admin: true);
+        ScriptPage(sessions: [PlayingSession()]);
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-dashboard-device-message")));
+
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-device-message"));
+        Assert.Empty(dialogs.FindAll("[data-id=cancel]"));
+        this.Dialogs().Dialogs[0].Cancel();
+
+        cut.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+        Assert.Empty(App.Server.RequestsTo("/Sessions/s1/Message"));
+    }
+
+    [Fact]
+    public async Task The_play_method_of_a_device_is_explained()
+    {
+        SignIn(admin: true);
+        ScriptPage(sessions: [PlayingSession()]);
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+        cut.Eventually(() => Assert.NotNull(cut.Find(".jf-dashboard-device-playbackinfo")));
+
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-device-playbackinfo"));
+
+        Assert.Equal(this.T("DirectPlaying"), dialogs.Find(".jf-dashboard-dialog-title").TextContent);
+        Assert.Equal(this.T("DirectPlayHelp"), dialogs.Find(".jf-dashboard-dialog-text").TextContent);
+        Assert.Empty(dialogs.FindAll("[data-id=cancel]"));
+        Assert.Equal(this.T("ButtonGotIt"), dialogs.Find("[data-id=ok]").TextContent.Trim());
+    }
+
+    [Fact]
+    public void Devices_follow_the_live_updates_of_the_server()
+    {
+        SignIn(admin: true);
+        ScriptPage(sessions: [IdleSession()]);
+        var cut = RenderPage();
+        cut.Eventually(() => Assert.Single(cut.FindAll(".jf-dashboard-device-card")));
+
+        Push("Sessions", new[] { PlayingSession(), IdleSession("s3", "Tablet", secondsAgo: 30), IdleSession("s4", "Forgotten phone", secondsAgo: 120) });
+
+        cut.Eventually(() => Assert.Equal(3, cut.FindAll(".jf-dashboard-device-card").Count));
+        Assert.Equal(
+            ["device-s2", "d1", "device-s3"],
+            cut.FindAll(".jf-dashboard-device-card").Select(card => card.GetAttribute("data-deviceid")));
+    }
+
+    [Fact]
+    public async Task The_library_scan_is_started_from_the_page()
+    {
+        SignIn(admin: true);
+        ScriptPage();
+        App.Server.OnPost("/ScheduledTasks/Running/scan");
+        var cut = RenderPage();
+        cut.Eventually(() => Assert.False(cut.Find(".jf-dashboard-scan").HasAttribute("disabled")));
+
+        await cut.Find(".jf-dashboard-scan").ClickAsync(new MouseEventArgs());
+
+        Assert.Single(App.Server.RequestsTo("/ScheduledTasks/Running/scan"));
+    }
+
+    [Fact]
+    public void Running_tasks_show_their_progress_as_the_server_reports_it()
+    {
+        SignIn(admin: true);
+        ScriptPage();
+        var cut = RenderPage();
+        cut.Eventually(() => Assert.False(cut.Find(".jf-dashboard-scan").HasAttribute("disabled")));
+
+        Push("ScheduledTasksInfo", new[] { ScanTask("Running", 42.4) });
+
+        cut.Eventually(() => Assert.Single(cut.FindAll(".jf-dashboard-running-task")));
+        Assert.Contains("Scan Media Library", cut.Find(".jf-dashboard-running-task").TextContent, StringComparison.Ordinal);
+        Assert.Equal("42%", cut.Find(".jf-dashboard-task-progress-text").TextContent);
+        Assert.True(cut.Find(".jf-dashboard-scan").HasAttribute("disabled"));
+
+        Push("ScheduledTasksInfo", new[] { ScanTask() });
+
+        cut.Eventually(() => Assert.Empty(cut.FindAll(".jf-dashboard-running-task")));
+        Assert.False(cut.Find(".jf-dashboard-scan").HasAttribute("disabled"));
+    }
+
+    [Theory]
+    [InlineData(".jf-dashboard-restart", "Restart", "MessageConfirmRestart", "/System/Restart")]
+    [InlineData(".jf-dashboard-shutdown", "ButtonShutdown", "MessageConfirmShutdown", "/System/Shutdown")]
+    public async Task The_server_is_restarted_or_shut_down_after_a_confirmation(string button, string title, string message, string path)
+    {
+        SignIn(admin: true);
+        ScriptPage();
+        App.Server.OnPost(path);
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find(button));
+        Assert.Equal(this.T(title), dialogs.Find(".jf-dashboard-dialog-title").TextContent);
+        Assert.Equal(this.T(message), dialogs.Find(".jf-dashboard-dialog-text").TextContent);
+        Assert.Equal(this.T(title), dialogs.Find("[data-id=ok]").TextContent.Trim());
+        Assert.Empty(App.Server.RequestsTo(path));
+        await ConfirmDialogAsync(dialogs);
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo(path)));
+        Assert.Equal(HttpMethod.Post, App.Server.RequestsTo(path)[0].Method);
+    }
+
+    [Theory]
+    [InlineData(".jf-dashboard-restart", "/System/Restart")]
+    [InlineData(".jf-dashboard-shutdown", "/System/Shutdown")]
+    public async Task The_server_keeps_running_when_the_question_is_cancelled(string button, string path)
+    {
+        SignIn(admin: true);
+        ScriptPage();
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find(button));
+        await CancelDialogAsync(dialogs);
+
+        cut.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+        Assert.Empty(App.Server.RequestsTo(path));
+    }
+}

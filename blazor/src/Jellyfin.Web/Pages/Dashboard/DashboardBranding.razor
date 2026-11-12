@@ -1,0 +1,231 @@
+@* The login page's splash screen, disclaimer and custom CSS. Port of apps/dashboard/routes/branding/index.tsx. *@
+@attribute [Route("/dashboard/branding")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Net.Http.Headers
+@inject JellyfinApi Api
+@inject Globalize Globalize
+
+<Page Id="brandingPage" Title="@Globalize["HeaderBranding"]" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["BrandingLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    <MudText Typo="Typo.h1">@Globalize["HeaderBranding"]</MudText>
+
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    @if (_error is not null)
+                    {
+                        <MudAlert Severity="Severity.Error" Class="jf-dashboard-branding-error">@Globalize[_error]</MudAlert>
+                    }
+
+                    <div class="jf-dashboard-branding-splash">
+                        <div class="jf-dashboard-branding-preview">
+                            <MudPaper Class="jf-dashboard-image">
+                                @if (_splashEnabled && _splashUrl is not null)
+                                {
+                                    <img class="jf-dashboard-branding-image" src="@_splashUrl" width="100%" />
+                                }
+                                else
+                                {
+                                    <MudIcon Icon="@MdIcon.Of("image_not_supported")" Class="jf-dashboard-image-fallback" />
+                                }
+                            </MudPaper>
+                        </div>
+                        <div class="jf-dashboard-branding-controls">
+                            <MudSwitch T="bool" Value="_splashEnabled" ValueChanged="SetSplashEnabledAsync" Color="Color.Primary"
+                                       Label="@Globalize["EnableSplashScreen"]" Class="jf-dashboard-branding-enable" />
+
+                            <MudText Typo="Typo.body2">@Globalize["CustomSplashScreenSize"]</MudText>
+
+                            <label class="mud-button-root mud-button mud-button-outlined mud-button-outlined-primary mud-button-outlined-size-medium mud-ripple jf-dashboard-branding-upload @(_splashEnabled ? null : "mud-disabled")">
+                                <InputFile accept="image/*" hidden disabled="@(!_splashEnabled)" OnChange="UploadAsync" />
+                                <span class="mud-button-label">
+                                    <span class="mud-button-icon-start mud-button-icon-size-medium"><MudIcon Icon="@MdIcon.Of("upload")" /></span>
+                                    @Globalize["UploadCustomImage"]
+                                </span>
+                            </label>
+
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@MdIcon.Of("delete")" Disabled="!_splashEnabled"
+                                       Class="jf-dashboard-branding-delete" OnClick="DeleteSplashAsync">@Globalize["DeleteCustomImage"]</MudButton>
+                        </div>
+                    </div>
+
+                    <MudTextField T="string" @bind-Value="_loginDisclaimer" Variant="Variant.Filled" FullWidth="true" Lines="5" MaxLines="5"
+                                  Label="@Globalize["LabelLoginDisclaimer"]" HelperText="@Globalize["LabelLoginDisclaimerHelp"]"
+                                  InputId="jf-dashboard-branding-disclaimer" Class="jf-dashboard-mono" />
+
+                    <MudTextField T="string" @bind-Value="_customCss" Variant="Variant.Filled" FullWidth="true" Lines="5" MaxLines="20" Sizing="InputSizing.Auto"
+                                  Label="@Globalize["LabelCustomCss"]" HelperText="@Globalize["LabelCustomCssHelp"]" spellcheck="false"
+                                  InputId="jf-dashboard-branding-css" Class="jf-dashboard-mono" />
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private const string SplashscreenPath = "Branding/Splashscreen";
+
+    private BrandingOptionsDto _loaded = new();
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+    private string? _error;
+    private bool _splashEnabled;
+    private string? _splashUrl;
+    private string? _loginDisclaimer;
+    private string? _customCss;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _loaded = await Api.Client.Branding.Configuration.GetAsync() ?? new BrandingOptionsDto();
+            _splashEnabled = _loaded.SplashscreenEnabled ?? false;
+            _loginDisclaimer = _loaded.LoginDisclaimer;
+            _customCss = _loaded.CustomCss;
+            RefreshSplashUrl();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Branding] unable to load the branding options: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    // A new address every time, so that the browser does not show the image it has cached.
+    private void RefreshSplashUrl() =>
+        _splashUrl = Api.GetUrl(SplashscreenPath, ("t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+
+    // The switch takes effect at once, with the texts as they were loaded (not as they are being edited).
+    private async Task SetSplashEnabledAsync(bool enabled)
+    {
+        _splashEnabled = enabled;
+        try
+        {
+            await Api.Client.System.Configuration.Branding.PostAsync(new BrandingOptionsDto
+            {
+                CustomCss = _loaded.CustomCss,
+                LoginDisclaimer = _loaded.LoginDisclaimer,
+                SplashscreenEnabled = enabled,
+            });
+            _loaded.SplashscreenEnabled = enabled;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Branding] switching the splash screen failed: " + ex.Message);
+        }
+    }
+
+    private async Task UploadAsync(InputFileChangeEventArgs args)
+    {
+        _error = null;
+        if (args.FileCount == 0)
+        {
+            return;
+        }
+
+        var file = args.File;
+        string base64;
+        try
+        {
+            await using var stream = file.OpenReadStream(long.MaxValue);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            base64 = Convert.ToBase64String(buffer.GetBuffer(), 0, (int)buffer.Length);
+        }
+        catch (OperationCanceledException)
+        {
+            _error = "ImageUploadCancelled";
+            return;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("[Branding] reading the image failed: " + ex.Message);
+            _error = "ImageUploadFailed";
+            return;
+        }
+
+        try
+        {
+            // The server expects the image base64 encoded, with the image's own content type.
+            using var request = new HttpRequestMessage(HttpMethod.Post, Api.GetUrl(SplashscreenPath));
+            request.Headers.TryAddWithoutValidation("Authorization", Api.AuthorizationHeader());
+            request.Content = new StringContent(base64);
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue(
+                string.IsNullOrEmpty(file.ContentType) ? "application/octet-stream" : file.ContentType);
+            using var response = await Api.Http.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            _splashUrl = $"data:{file.ContentType};base64,{base64}";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Branding] uploading the splash screen failed: " + ex.Message);
+            _error = "ImageUploadFailed";
+        }
+    }
+
+    private async Task DeleteSplashAsync()
+    {
+        _error = null;
+        try
+        {
+            await Api.Client.Branding.Splashscreen.DeleteAsync();
+            RefreshSplashUrl();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Branding] deleting the splash screen failed: " + ex.Message);
+            _error = "ImageDeleteFailed";
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        _saving = true;
+        _saved = false;
+        try
+        {
+            var options = new BrandingOptionsDto
+            {
+                CustomCss = _customCss,
+                LoginDisclaimer = _loginDisclaimer,
+                SplashscreenEnabled = _splashEnabled,
+            };
+            await Api.Client.System.Configuration.Branding.PostAsync(options);
+            _loaded = options;
+            _saved = true;
+            RefreshSplashUrl();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Branding] saving the branding options failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

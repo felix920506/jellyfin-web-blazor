@@ -1,0 +1,299 @@
+@* The server's activity log. Port of apps/dashboard/routes/activity/index.tsx: paging, sorting
+   and filtering happen on the server. *@
+@attribute [Route("/dashboard/activity")]
+@attribute [Access(AccessLevel.Admin)]
+@attribute [KeepOnQueryChange("useractivity")]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject Globalize Globalize
+
+<Page Id="serverActivityPage" Title="@Globalize["HeaderActivity"]" Class="mainAnimatedPage type-interior">
+    <div class="content-primary jf-dashboard-table-page">
+        @if (_failed)
+        {
+            <MudAlert Severity="Severity.Error">@Globalize["ActivitiesLoadError"]</MudAlert>
+        }
+        else
+        {
+            <div class="jf-dashboard-table-heading">
+                <MudText Typo="Typo.h1">@Globalize["HeaderActivity"]</MudText>
+            </div>
+            <MudTable T="ActivityLogEntry" @ref="_table" ServerData="LoadEntriesAsync" Dense="true" Hover="true" Elevation="1"
+                      Breakpoint="Breakpoint.None" HorizontalScrollbar="true" RowsPerPage="PageSize" Class="jf-dashboard-table">
+                <ToolBarContent>
+                    <MudToggleGroup T="string" Value="_view" ValueChanged="OnViewChanged" SelectionMode="SelectionMode.SingleSelection"
+                                    Size="Size.Small" Color="Color.Primary" Class="jf-dashboard-activity-views">
+                        <MudToggleItem Value="@ViewAll" Text="@Globalize["All"]" />
+                        <MudToggleItem Value="@ViewUser" Text="@Globalize["LabelUser"]" />
+                        <MudToggleItem Value="@ViewSystem" Text="@Globalize["LabelSystem"]" />
+                    </MudToggleGroup>
+                    <MudSpacer />
+                    <MudIconButton Icon="@MdIcon.Of(_showFilters ? "filter_list_off" : "filter_list")" Class="jf-dashboard-table-filter-toggle"
+                                   title="@Globalize["Filter"]" aria-label="@Globalize["Filter"]" OnClick="ToggleFilters" />
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>
+                        <MudTableSortLabel T="ActivityLogEntry" SortLabel="DateCreated" InitialDirection="SortDirection.Descending">@Globalize["LabelTime"]</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh Class="jf-dashboard-table-center">
+                        <MudTableSortLabel T="ActivityLogEntry" SortLabel="LogSeverity">@Globalize["LabelLevel"]</MudTableSortLabel>
+                        @if (_showFilters)
+                        {
+                            <select class="jf-dashboard-table-filter jf-dashboard-activity-filter-severity" aria-label="@Globalize["LabelLevel"]"
+                                    value="@_severity" @onchange="@(e => SetFilterAsync(ref _severity, e))">
+                                <option value=""></option>
+                                @foreach (var level in Levels)
+                                {
+                                    <option value="@level">@Globalize["LogLevel." + level]</option>
+                                }
+                            </select>
+                        }
+                    </MudTh>
+                    @if (ShowUsers)
+                    {
+                        <MudTh Class="jf-dashboard-table-center">
+                            <MudTableSortLabel T="ActivityLogEntry" SortLabel="Username">@Globalize["LabelUser"]</MudTableSortLabel>
+                            @if (_showFilters)
+                            {
+                                <select class="jf-dashboard-table-filter jf-dashboard-activity-filter-user" aria-label="@Globalize["LabelUser"]"
+                                        value="@_username" @onchange="@(e => SetFilterAsync(ref _username, e))">
+                                    <option value=""></option>
+                                    @foreach (var name in _users.Values.Select(user => user.Name).Where(name => !string.IsNullOrEmpty(name)).Order(StringComparer.CurrentCultureIgnoreCase))
+                                    {
+                                        <option value="@name">@name</option>
+                                    }
+                                </select>
+                            }
+                        </MudTh>
+                    }
+                    <MudTh>
+                        <MudTableSortLabel T="ActivityLogEntry" SortLabel="Name">@Globalize["LabelName"]</MudTableSortLabel>
+                        @if (_showFilters)
+                        {
+                            <input class="jf-dashboard-table-filter jf-dashboard-activity-filter-name" type="search" aria-label="@Globalize["LabelName"]"
+                                   value="@_name" @onchange="@(e => SetFilterAsync(ref _name, e))" />
+                        }
+                    </MudTh>
+                    <MudTh>
+                        <MudTableSortLabel T="ActivityLogEntry" SortLabel="ShortOverview">@Globalize["LabelOverview"]</MudTableSortLabel>
+                        @if (_showFilters)
+                        {
+                            <input class="jf-dashboard-table-filter jf-dashboard-activity-filter-overview" type="search" aria-label="@Globalize["LabelOverview"]"
+                                   value="@_overview" @onchange="@(e => SetFilterAsync(ref _overview, e))" />
+                        }
+                    </MudTh>
+                    <MudTh>
+                        <MudTableSortLabel T="ActivityLogEntry" SortLabel="Type">@Globalize["LabelType"]</MudTableSortLabel>
+                        @if (_showFilters)
+                        {
+                            <input class="jf-dashboard-table-filter jf-dashboard-activity-filter-type" type="search" aria-label="@Globalize["LabelType"]"
+                                   value="@_type" @onchange="@(e => SetFilterAsync(ref _type, e))" />
+                        }
+                    </MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd Class="jf-dashboard-table-date">@DashboardFormat.DateTime(Globalize, context.Date)</MudTd>
+                    <MudTd Class="jf-dashboard-table-center">
+                        @if (context.Severity is { } severity)
+                        {
+                            var text = Globalize["LogLevel." + severity];
+                            <MudChip T="string" Size="Size.Small" Color="@DashboardActivityItem.SeverityColor(severity)" title="@text">@text</MudChip>
+                        }
+                    </MudTd>
+                    @if (ShowUsers)
+                    {
+                        <MudTd Class="jf-dashboard-table-center">
+                            <DashboardUserAvatarButton User="@UserOf(context)" />
+                        </MudTd>
+                    }
+                    <MudTd>@context.Name</MudTd>
+                    <MudTd>
+                        @if ((context.ShortOverview ?? context.Overview) is { Length: > 0 } overview)
+                        {
+                            <div class="jf-dashboard-activity-overview">
+                                <div class="jf-dashboard-activity-overview-text" title="@overview">@overview</div>
+                                @if (!string.IsNullOrEmpty(context.ShortOverview) && !string.IsNullOrEmpty(context.Overview))
+                                {
+                                    <MudTooltip Text="@context.Overview" Placement="Placement.Top" Arrow="true" ShowOnClick="true" ShowOnHover="false" ShowOnFocus="false">
+                                        <MudIconButton Icon="@MdIcon.Of("info")" Class="jf-dashboard-activity-overview-more" />
+                                    </MudTooltip>
+                                }
+                            </div>
+                        }
+                    </MudTd>
+                    <MudTd>@context.Type</MudTd>
+                    <MudTd>
+                        @if (!string.IsNullOrEmpty(context.ItemId))
+                        {
+                            <MudIconButton Icon="@MdIcon.Of("perm_media")" Size="Size.Large" Class="jf-dashboard-activity-item-link"
+                                           title="@Globalize["LabelMediaDetails"]" Href="@("#/details?id=" + context.ItemId)" />
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="PageSizes" />
+                </PagerContent>
+            </MudTable>
+        }
+    </div>
+</Page>
+
+@code {
+    private const int PageSize = 25;
+    private const string ViewAll = "All";
+    private const string ViewUser = "User";
+    private const string ViewSystem = "System";
+
+    private static readonly int[] PageSizes = [5, 10, 15, 20, 25, 30, 50, 100];
+    private static readonly string[] Levels = ["Trace", "Debug", "Information", "Warning", "Error", "Critical", "None"];
+
+    private MudTable<ActivityLogEntry>? _table;
+    private Dictionary<Guid, UserDto> _users = [];
+    private string _view = ViewAll;
+    private string? _appliedParameter = "\0";
+    private bool _showFilters;
+    private bool _failed;
+    private string? _severity;
+    private string? _username;
+    private string? _name;
+    private string? _overview;
+    private string? _type;
+
+    /// <summary>"true" shows what users did, "false" what the server did, nothing both.</summary>
+    [Parameter]
+    public string? UserActivity { get; set; }
+
+    private bool ShowUsers => _view != ViewSystem;
+
+    /// <summary>Port of getActivityView(): the view a "useractivity" query value stands for.</summary>
+    public static string ViewOf(string? parameter) => parameter switch
+    {
+        null => ViewAll,
+        _ when parameter.Equals("true", StringComparison.OrdinalIgnoreCase) || parameter == "1" => ViewUser,
+        _ => ViewSystem,
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var users = await Api.Client.Users.GetAsync() ?? [];
+            _users = users.Where(user => user.Id is not null).ToDictionary(user => user.Id!.Value);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Activity] unable to load the users: " + ex.Message);
+            _failed = true;
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_appliedParameter == UserActivity)
+        {
+            return;
+        }
+
+        // The address changed (a link of the start page, back/forward): show its view.
+        var first = _appliedParameter == "\0";
+        _appliedParameter = UserActivity;
+        var view = ViewOf(UserActivity);
+        if (view != _view)
+        {
+            _view = view;
+            if (!first && _table is not null)
+            {
+                await _table.ReloadServerData();
+            }
+        }
+    }
+
+    private async Task<TableData<ActivityLogEntry>> LoadEntriesAsync(TableState state, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await Api.Client.System.ActivityLog.Entries.GetAsync(
+                request =>
+                {
+                    var query = request.QueryParameters;
+                    query.StartIndex = state.Page * state.PageSize;
+                    query.Limit = state.PageSize;
+                    query.HasUserId = _view == ViewAll ? null : _view == ViewUser;
+                    query.Name = NullIfEmpty(_name);
+                    query.Type = NullIfEmpty(_type);
+                    query.ShortOverview = NullIfEmpty(_overview);
+                    query.Username = NullIfEmpty(_username);
+                    query.Severity = DashboardFormat.EnumOrNull(query.Severity, _severity);
+                    var sorted = state.SortDirection != SortDirection.None && !string.IsNullOrEmpty(state.SortLabel);
+                    query.SortBy = DashboardFormat.Enums(query.SortBy, sorted ? state.SortLabel! : "DateCreated");
+                    query.SortOrder = DashboardFormat.Enums(
+                        query.SortOrder, sorted && state.SortDirection == SortDirection.Ascending ? "Ascending" : "Descending");
+                },
+                cancellationToken);
+            return new TableData<ActivityLogEntry> { Items = result?.Items ?? [], TotalItems = result?.TotalRecordCount ?? 0 };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Activity] unable to load the entries: " + ex.Message);
+            _failed = true;
+            StateHasChanged();
+            return new TableData<ActivityLogEntry> { Items = [], TotalItems = 0 };
+        }
+    }
+
+    private UserDto? UserOf(ActivityLogEntry entry) =>
+        entry.UserId is { } id && _users.TryGetValue(id, out var user) ? user : null;
+
+    private async Task OnViewChanged(string? view)
+    {
+        // The selected view cannot be switched off.
+        if (view is null || view == _view)
+        {
+            return;
+        }
+
+        _view = view;
+        _appliedParameter = view == ViewAll ? null : view == ViewUser ? "true" : "false";
+        Router.Navigate("/dashboard/activity" + (_appliedParameter is null ? null : "?useractivity=" + _appliedParameter), replace: true);
+        await ReloadFirstPageAsync();
+    }
+
+    private async Task ToggleFilters()
+    {
+        _showFilters = !_showFilters;
+        if (!_showFilters && (_severity ?? _username ?? _name ?? _overview ?? _type) is not null)
+        {
+            // Hidden filters do not apply, as nobody could tell why entries are missing.
+            _severity = _username = _name = _overview = _type = null;
+            await ReloadFirstPageAsync();
+        }
+    }
+
+    private Task SetFilterAsync(ref string? filter, ChangeEventArgs e)
+    {
+        filter = NullIfEmpty(e.Value?.ToString());
+        return ReloadFirstPageAsync();
+    }
+
+    private async Task ReloadFirstPageAsync()
+    {
+        if (_table is null)
+        {
+            return;
+        }
+
+        if (_table.CurrentPage != 0)
+        {
+            // Going to another page loads it.
+            _table.NavigateTo(0);
+        }
+        else
+        {
+            await _table.ReloadServerData();
+        }
+    }
+
+    private static string? NullIfEmpty(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+}

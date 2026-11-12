@@ -1,0 +1,27 @@
+@* A checkbox of the user forms. Port of elements/CheckBoxElement.tsx. *@
+@namespace Jellyfin.Web.Components
+
+<div class="sectioncheckbox">
+    <EmbyCheckbox Class="@Class" LabelClass="@LabelClass" Label="@Label" Value="Value" ValueChanged="ValueChanged" @attributes="Attributes" />
+</div>
+
+@code {
+    /// <summary>The class of the input, which names the setting as in the original.</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? LabelClass { get; set; }
+
+    [Parameter]
+    public string? Label { get; set; }
+
+    [Parameter]
+    public bool Value { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> ValueChanged { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+}
