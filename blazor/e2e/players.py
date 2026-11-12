@@ -1,7 +1,8 @@
 """Managed players: photo slideshow and EPUB/PDF/CBZ readers on desktop and phone widths.
 
 YouTube is covered by unit tests because the private test server intentionally has no external
-YouTube dependency. Run with: JELLYFIN_URL=http://localhost:18105 ./dev e2e players.py
+YouTube dependency. Start the server with JELLYFIN_SEED_PLAYERS=1 JELLYFIN_INSTANCE=players JELLYFIN_PORT=18105
+scripts/test-server.sh up, then run with: JELLYFIN_URL=http://localhost:18105 ./dev e2e players.py
 """
 import json
 import sys

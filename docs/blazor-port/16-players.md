@@ -32,7 +32,7 @@ photo, EPUB, PDF and CBZ fixtures and adds Photos/Books libraries to the throwaw
 Run the browser coverage with:
 
 ```sh
-JELLYFIN_INSTANCE=players JELLYFIN_PORT=18105 ./scripts/test-server.sh up
+JELLYFIN_SEED_PLAYERS=1 JELLYFIN_INSTANCE=players JELLYFIN_PORT=18105 ./scripts/test-server.sh up
 JELLYFIN_URL=http://localhost:18105 ./dev e2e players.py
 ```
 
