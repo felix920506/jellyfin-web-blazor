@@ -1,8 +1,9 @@
 @* A menu of choices. Port of components/actionSheet/actionSheet.ts (non-TV layout). *@
 @inject Globalize Globalize
 @inject AppHost AppHost
+@inject IActionSheetPositioner Positioner
 
-<div class="actionSheetContent @(Centered ? "actionSheetContent-centered" : null)">
+<div @ref="_content" class="actionSheetContent @(Centered ? "actionSheetContent-centered" : null)">
     @if (!string.IsNullOrEmpty(Options.Title))
     {
         <h1 class="actionSheetTitle">@Options.Title</h1>
@@ -54,6 +55,8 @@
 </div>
 
 @code {
+    private ElementReference _content;
+
     [CascadingParameter]
     public DialogInstance Dialog { get; set; } = default!;
 
@@ -64,4 +67,13 @@
 
     // Items line up on their icons; without icons a titled sheet is centred.
     private bool Centered => !string.IsNullOrEmpty(Options.Title) && !HasIcons;
+
+    // positionTo: the sheet opens at the element it belongs to instead of the middle of the window.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && Options.PositionTo is not null)
+        {
+            await Positioner.PositionAsync(_content, Options);
+        }
+    }
 }

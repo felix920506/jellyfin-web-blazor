@@ -195,7 +195,6 @@ public class ItemActionsTests : ItemsTestContext
     [InlineData("programdialog")]
     [InlineData("setplaylistindex")]
     [InlineData("playmenu")]
-    [InlineData("addtoplaylist")]
     public async Task Actions_of_other_workstreams_say_that_they_are_not_available(string action)
     {
         SignIn();
@@ -224,11 +223,16 @@ public class ItemActionsTests : ItemsTestContext
         SignIn(admin: true);
         App.Server.OnGet("/Items/" + TestItems.Id(1), TestItems.Movie(1, "Movie"));
 
-        await Actions.ExecuteAsync(Movie(), ItemAction.Edit);
+        var editing = Actions.ExecuteAsync(Movie(), ItemAction.Edit);
+        var editor = await NextDialogAsync();
 
         var request = Assert.Single(App.Server.Requests);
         Assert.Equal(TestApp.UserId.ToString("N"), request.Query("userId"));
-        Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);
+
+        // The metadata editor of the item dialogs opens for the loaded item.
+        editor.Cancel();
+        await editing;
+        Assert.Empty(Toasts);
     }
 
     [Fact]

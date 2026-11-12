@@ -1,0 +1,284 @@
+@namespace Jellyfin.Web.Components
+@* "Edit subtitles". Port of components/subtitleeditor/subtitleeditor.js and its template. *@
+@using System.Text.Json.Nodes
+@inject ItemDialogApi Api
+@inject JellyfinApi Jellyfin
+@inject AppDialogs Dialogs
+@inject UserSettings UserSettings
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["Subtitles"]</h3>
+    <a rel="noopener noreferrer" data-autohide="true" class="emby-button button-link btnHelp flex align-items-center"
+       href="https://jellyfin.org/docs/general/server/media/external-files" target="_blank"
+       style="margin-left:auto;margin-right:.5em;padding:.25em;" title="@Globalize["Help"]">
+        <Icon Name="info" />
+        <span style="margin-left:.25em;">@Globalize["Help"]</span>
+    </a>
+</div>
+
+<div class="formDialogContent smoothScrollY">
+    <div class="dialogContentInner dialog-content-centered">
+        <div class="@("subtitleList" + (Subtitles.Count == 0 ? " hide" : null))" style="margin-bottom:2em;">
+            @if (Subtitles.Count > 0)
+            {
+                <h2>@Globalize["MySubtitles"]</h2>
+                <div>
+                    @foreach (var stream in Subtitles)
+                    {
+                        var index = stream.Text("Index");
+                        var path = stream.Text("Path");
+                        <div class="listItem listItem-border listItem-noborder" data-index="@index" @key="index">
+                            <span class="listItemIcon material-icons closed_caption" aria-hidden="true"></span>
+                            <div class="listItemBody two-line">
+                                <div>@stream.Text("DisplayTitle")</div>
+                                @if (!string.IsNullOrEmpty(path))
+                                {
+                                    <div class="secondary listItemBodyText">@path</div>
+                                }
+                            </div>
+                            @if (!string.IsNullOrEmpty(path))
+                            {
+                                <IconButton Icon="delete" Class="btnDelete listItemButton" Title="@Globalize["Delete"]" data-index="@index"
+                                            OnClick="() => DeleteAsync(index)" />
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <h2>@Globalize["SearchForSubtitles"]</h2>
+
+        <p class="@("originalFile" + (string.IsNullOrEmpty(_item.Text("Path")) ? " hide" : null))" style="margin: 1.5em 0;">
+            <span class="originalSubtitleFileLabel secondaryText">@Globalize["File"]</span>
+            <span class="pathValue">@SubtitleLyricsLogic.FileName(_item.Text("Path"))</span>
+        </p>
+
+        <form class="subtitleSearchForm" style="max-width: none;" @onsubmit="SearchAsync" @onsubmit:preventDefault="true">
+            <div class="flex align-items-center">
+                <EditorSelect Id="selectLanguage" Label="@Globalize["LabelLanguage"]" ContainerClass="flex-grow" ContainerStyle="margin-bottom: 0;"
+                              Required="true" autofocus="autofocus" @bind-Value="_language">
+                    @foreach (var culture in _cultures)
+                    {
+                        <option value="@culture.Text("ThreeLetterISOLanguageName")">@culture.Text("DisplayName")</option>
+                    }
+                </EditorSelect>
+                <button type="submit" class="paper-icon-button-light btnSearchSubtitles flex-shrink-zero emby-select-iconbutton" title="@Globalize["Search"]">
+                    <Icon Name="search" />
+                </button>
+                <button type="button" class="paper-icon-button-light btnOpenUploadMenu flex-shrink-zero emby-select-iconbutton" title="@Globalize["Upload"]"
+                        @onclick="UploadAsync">
+                    <Icon Name="add" />
+                </button>
+            </div>
+            <button type="submit" class="emby-button raised btnSubmit block button-submit hide">@Globalize["Search"]</button>
+        </form>
+        <br />
+
+        <div class="subtitleResults">
+            @foreach (var (provider, results) in SubtitleLyricsLogic.GroupByProvider(_results, result => result.Text("ProviderName")))
+            {
+                <h2>@provider</h2>
+                <div>
+                    @foreach (var result in results)
+                    {
+                        var id = result.Text("Id");
+                        var features = SubtitleLyricsLogic.SubtitleFeatures(result);
+                        var comment = result.Text("Comment");
+                        var format = result.Text("Format");
+                        var frameRate = result.Text("FrameRate");
+                        <div class="listItem listItem-border" data-subid="@id" @key="id">
+                            <span class="listItemIcon material-icons closed_caption" aria-hidden="true"></span>
+                            <div class="@("listItemBody " + (!string.IsNullOrEmpty(comment) || features.Count > 0 ? "three-line" : "two-line"))">
+                                <div>@result.Text("Name")</div>
+                                <div class="secondary listItemBodyText">
+                                    @if (!string.IsNullOrEmpty(format))
+                                    {
+                                        <span style="margin-right:1em;">@Globalize.Translate("FormatValue", format)</span>
+                                    }
+                                    @if (result.Text("DownloadCount") is { } downloads)
+                                    {
+                                        <span style="margin-right:1em;">@Globalize.Translate("DownloadsValue", downloads)</span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(frameRate) && frameRate != "0")
+                                    {
+                                        <span>@(Globalize.Translate("Framerate") + ": " + frameRate)</span>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrEmpty(comment))
+                                {
+                                    <div class="secondary listItemBodyText" style="white-space:pre-line;">@comment</div>
+                                }
+                                @if (features.Count > 0)
+                                {
+                                    <div class="secondary listItemBodyText">
+                                        @foreach (var feature in features)
+                                        {
+                                            <span class="inline-flex align-items-center justify-content-center subtitleFeaturePillow">@Globalize[feature]</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                            <IconButton Icon="file_download" Class="btnDownload listItemButton" data-subid="@id" OnClick="() => DownloadAsync(id)" />
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="@("noSearchResults" + (_noResults ? null : " hide"))">@Globalize["NoSubtitleSearchResultsFound"]</div>
+    </div>
+</div>
+
+@code {
+    private const string LanguageSetting = "subtitleeditor-language";
+
+    private JsonObject? _item;
+    private IReadOnlyList<JsonNode?> _cultures = [];
+    private IReadOnlyList<JsonNode?> _results = [];
+    private string? _language;
+    private bool _noResults;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The id of the video whose subtitles are edited.</summary>
+    [Parameter, EditorRequired]
+    public string ItemId { get; set; } = string.Empty;
+
+    /// <summary>Told whether a subtitle was downloaded, uploaded or deleted.</summary>
+    [Parameter]
+    public DialogChanges Changes { get; set; } = new();
+
+    private IReadOnlyList<JsonNode?> Subtitles => [.. _item.List("MediaStreams").Where(stream => stream.Text("Type") == "Subtitle")];
+
+    /// <summary>
+    /// Opens the editor (<c>subtitleEditor.show(itemId, serverId)</c>). True when subtitles were changed,
+    /// which is when the original resolves.
+    /// </summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, string itemId)
+    {
+        var changes = new DialogChanges();
+        await dialogs.ShowAsync<SubtitleEditor>(
+            new Dictionary<string, object?>
+            {
+                [nameof(ItemId)] = itemId,
+                [nameof(Changes)] = changes
+            },
+            new AppDialogOptions { Class = "formDialog subtitleEditorDialog" });
+        return changes.HasChanges;
+    }
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    // Port of reload() and fillLanguages(): the last searched language, else the user's subtitle language.
+    private async Task ReloadAsync()
+    {
+        Loading.Show();
+        try
+        {
+            _item = await Api.GetItemAsync(ItemId);
+            _cultures = [.. await Api.GetArrayAsync("Localization/Cultures")];
+            var last = UserSettings.Get(LanguageSetting);
+            var preferred = Jellyfin.User?.Configuration?.SubtitleLanguagePreference;
+            _language = !string.IsNullOrEmpty(last) ? last
+                : !string.IsNullOrEmpty(preferred) ? preferred
+                : _language ?? _cultures.FirstOrDefault().Text("ThreeLetterISOLanguageName");
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Loading the subtitles failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+
+        StateHasChanged();
+    }
+
+    // Port of deleteLocalSubtitle().
+    private async Task DeleteAsync(string? index)
+    {
+        var confirmed = await Dialogs.ConfirmAsync(
+            Globalize.Translate("MessageAreYouSureDeleteSubtitles"),
+            Globalize.Translate("ConfirmDeletion"),
+            Globalize.Translate("Delete"),
+            destructive: true);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            await Api.DeleteAsync(Api.GetUrl($"Videos/{ItemId}/Subtitles/{index}"));
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Deleting the subtitle failed: " + exception.Message);
+            Loading.Hide();
+            return;
+        }
+
+        Changes.HasChanges = true;
+        await ReloadAsync();
+    }
+
+    // Port of searchForSubtitles() and renderSearchResults().
+    private async Task SearchAsync()
+    {
+        if (string.IsNullOrEmpty(_language))
+        {
+            return;
+        }
+
+        UserSettings.Set(LanguageSetting, _language);
+        Loading.Show();
+        try
+        {
+            _results = [.. await Api.GetArrayAsync($"Items/{ItemId}/RemoteSearch/Subtitles/{_language}")];
+            _noResults = _results.Count == 0;
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Searching for subtitles failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    // Port of downloadRemoteSubtitles().
+    private async Task DownloadAsync(string? id)
+    {
+        try
+        {
+            await Api.PostAsync(Api.GetUrl($"Items/{ItemId}/RemoteSearch/Subtitles/{id}"));
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Downloading the subtitle failed: " + exception.Message);
+            return;
+        }
+
+        Changes.HasChanges = true;
+        Toasts.Show(Globalize.Translate("MessageDownloadQueued"));
+    }
+
+    // Port of onOpenUploadMenu(): the uploader offers the same languages, with the selected one.
+    private async Task UploadAsync()
+    {
+        if (await SubtitleUploader.ShowAsync(Dialogs, ItemId, _cultures, _language))
+        {
+            Changes.HasChanges = true;
+            await ReloadAsync();
+        }
+    }
+}

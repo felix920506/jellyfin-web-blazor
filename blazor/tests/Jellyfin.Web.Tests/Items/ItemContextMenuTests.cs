@@ -516,9 +516,9 @@ public class ItemContextMenuExecutionTests : ItemsTestContext
     {
         SignIn(admin: true);
 
-        var result = await Menu.ExecuteAsync("edit", new ItemMenuOptions { Item = Movie() });
+        var result = await Menu.ExecuteAsync("record", new ItemMenuOptions { Item = Movie() });
 
-        Assert.Equal(new ItemMenuResult("edit"), result);
+        Assert.Equal(new ItemMenuResult("record"), result);
         Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);
     }
 
@@ -600,8 +600,8 @@ public class ItemCommandHandlerTests : ItemsTestContext
 
         Assert.True(handlers.CanHandle("edit", item));
         Assert.True(handlers.CanHandle("share", item));
-        Assert.False(handlers.CanHandle("identify", item));
-        Assert.Equal(ItemCommandResult.None, await handlers.ExecuteAsync("identify", item));
+        Assert.False(handlers.CanHandle("record", item));
+        Assert.Equal(ItemCommandResult.None, await handlers.ExecuteAsync("record", item));
         Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);
     }
 

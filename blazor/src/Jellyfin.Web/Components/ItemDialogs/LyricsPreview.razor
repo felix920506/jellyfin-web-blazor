@@ -1,0 +1,32 @@
+@namespace Jellyfin.Web.Components
+@* The preview of lyrics found by a remote search. Port of showLyricsPreview() of lyricseditor.js and lyricspreview.template.html. *@
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["HeaderPreviewLyrics"]</h3>
+</div>
+
+<div class="formDialogContent smoothScrollY">
+    <div class="dialogContentInner dialog-content-centered">
+        <div class="lyricsPreview" style="margin-bottom:2em;">
+            <h2>@Globalize["Lyrics"]</h2>
+            <div>@LyricsEditor.Lines(Lines)</div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The lines to show (see <see cref="SubtitleLyricsLogic.LyricLines"/>).</summary>
+    [Parameter]
+    public IReadOnlyList<string> Lines { get; set; } = [];
+
+    /// <summary>Opens the preview; completes when it is closed.</summary>
+    public static Task ShowAsync(AppDialogs dialogs, IReadOnlyList<string> lines) =>
+        dialogs.ShowAsync<LyricsPreview>(
+            new Dictionary<string, object?> { [nameof(Lines)] = lines },
+            new AppDialogOptions { Class = "formDialog lyricsEditorDialog" });
+}

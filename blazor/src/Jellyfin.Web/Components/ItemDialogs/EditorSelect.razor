@@ -1,0 +1,91 @@
+@namespace Jellyfin.Web.Components
+@* An emby-select of an item dialog: like EmbySelect, with the container id and classes of the original,
+   hiding by "hide" and an optional value store keyed by the select's id (see EditorInput). *@
+<div id="@ContainerId" class="@ContainerCss" style="@ContainerStyle">
+    <label class="selectLabel @(_focused ? "selectLabelFocused" : null)" for="@Id">@Label</label>
+    <select id="@Id" class="emby-select-withcolor emby-select @Class" value="@Current" required="@Required"
+            @onchange="OnChangeAsync" @onfocus="() => _focused = true" @onblur="() => _focused = false" @attributes="Attributes">
+        @ChildContent
+    </select>
+    <div class="selectArrowContainer">
+        <div style="visibility:hidden;display:none;">0</div>
+        <span class="selectArrow material-icons keyboard_arrow_down" aria-hidden="true"></span>
+    </div>
+    @if (Description is not null)
+    {
+        <div class="fieldDescription @DescriptionClass">@Description</div>
+    }
+</div>
+
+@code {
+    private bool _focused;
+
+    [Parameter, EditorRequired]
+    public string Id { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Label { get; set; }
+
+    /// <summary>The values of the editor's fields by element id; when set, <see cref="Value"/> is not used.</summary>
+    [Parameter]
+    public IDictionary<string, string?>? Store { get; set; }
+
+    [Parameter]
+    public string? Value { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    [Parameter]
+    public string? Description { get; set; }
+
+    /// <summary>Further classes of the description.</summary>
+    [Parameter]
+    public string? DescriptionClass { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? ContainerId { get; set; }
+
+    [Parameter]
+    public string? ContainerClass { get; set; }
+
+    [Parameter]
+    public string? ContainerStyle { get; set; }
+
+    /// <summary>Hides the container the way the original does (class "hide").</summary>
+    [Parameter]
+    public bool Hidden { get; set; }
+
+    [Parameter]
+    public bool Required { get; set; }
+
+    /// <summary>The <c>&lt;option&gt;</c> elements.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IReadOnlyDictionary<string, object>? Attributes { get; set; }
+
+    private string? Current => Store is null ? Value : Store.TryGetValue(Id, out var value) ? value : null;
+
+    private string ContainerCss =>
+        "selectContainer" + (string.IsNullOrEmpty(ContainerClass) ? null : " " + ContainerClass) + (Hidden ? " hide" : null);
+
+    private Task OnChangeAsync(ChangeEventArgs args)
+    {
+        var value = args.Value?.ToString();
+        if (Store is not null)
+        {
+            Store[Id] = value;
+        }
+        else
+        {
+            Value = value;
+        }
+
+        return ValueChanged.InvokeAsync(value);
+    }
+}

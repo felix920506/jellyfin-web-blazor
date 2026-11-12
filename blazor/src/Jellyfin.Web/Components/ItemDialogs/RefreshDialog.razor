@@ -1,0 +1,108 @@
+@namespace Jellyfin.Web.Components
+@* "Refresh metadata". Port of components/refreshdialog/refreshdialog.js. *@
+@inject ItemDialogApi Api
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["RefreshMetadata"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY" style="padding-top:2em;">
+    <div class="dialogContentInner dialog-content-centered">
+        <form style="margin:auto;" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <EditorSelect Id="selectMetadataRefreshMode" ContainerClass="fldSelectPlaylist" Label="@Globalize["LabelRefreshMode"]" @bind-Value="_mode">
+                <option value="scan">@Globalize["ScanForNewAndUpdatedFiles"]</option>
+                <option value="missing">@Globalize["SearchForMissingMetadata"]</option>
+                <option value="all">@Globalize["ReplaceAllMetadata"]</option>
+            </EditorSelect>
+            <EmbyCheckbox LabelClass="@("checkboxContainer fldReplaceExistingImages" + (IsScan ? " hide" : null))" Class="chkReplaceImages"
+                          Label="@Globalize["ReplaceExistingImages"]" @bind-Value="_replaceImages" />
+            <EmbyCheckbox LabelClass="@("checkboxContainer fldReplaceTrickplayImages" + (IsScan ? " hide" : null))" Class="chkReplaceTrickplayImages"
+                          Label="@Globalize["ReplaceTrickplayImages"]" @bind-Value="_replaceTrickplayImages" />
+            <div class="fieldDescription">@Globalize["RefreshDialogHelp"]</div>
+            <input type="hidden" class="fldSelectedItemIds" value="@string.Join(',', ItemIds)" />
+            <br />
+            <div class="formDialogFooter">
+                <button type="submit" class="emby-button raised btnSubmit block formDialogFooterItem button-submit">@Globalize["Refresh"]</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private string? _mode = "scan";
+    private bool _replaceImages;
+    private bool _replaceTrickplayImages;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The ids of the items to refresh (<c>itemIds</c>).</summary>
+    [Parameter]
+    public IReadOnlyList<string> ItemIds { get; set; } = [];
+
+    /// <summary>The mode selected at first: "scan", "missing" or "all" (<c>mode</c>).</summary>
+    [Parameter]
+    public string? Mode { get; set; }
+
+    private bool IsScan => _mode == "scan";
+
+    /// <summary>
+    /// Opens the dialog (<c>new RefreshDialog({ itemIds, serverId, mode }).show()</c>). True when the
+    /// refresh was queued.
+    /// </summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, IReadOnlyList<string> itemIds, string? mode = null) =>
+        await dialogs.ShowAsync<RefreshDialog>(new Dictionary<string, object?>
+        {
+            [nameof(ItemIds)] = itemIds,
+            [nameof(Mode)] = mode
+        }) is true;
+
+    protected override void OnInitialized()
+    {
+        if (!string.IsNullOrEmpty(Mode))
+        {
+            _mode = Mode;
+        }
+    }
+
+    private void SubmitAsync()
+    {
+        Loading.Show();
+        var replaceAllMetadata = _mode == "all";
+        var mode = IsScan ? "Default" : "FullRefresh";
+        var replaceAllImages = mode == "FullRefresh" && _replaceImages;
+        var replaceTrickplayImages = mode == "FullRefresh" && _replaceTrickplayImages;
+
+        foreach (var itemId in ItemIds)
+        {
+            // Like the original, the answers are not waited for: the server queues the refresh.
+            _ = RefreshAsync(Api.GetUrl(
+                $"Items/{itemId}/Refresh",
+                ("Recursive", true),
+                ("ImageRefreshMode", mode),
+                ("MetadataRefreshMode", mode),
+                ("ReplaceAllImages", replaceAllImages),
+                ("RegenerateTrickplay", replaceTrickplayImages),
+                ("ReplaceAllMetadata", replaceAllMetadata)));
+        }
+
+        Dialog.Close(true);
+        Toasts.Show(Globalize.Translate("RefreshQueued"));
+        Loading.Hide();
+    }
+
+    private async Task RefreshAsync(string url)
+    {
+        try
+        {
+            await Api.PostAsync(url);
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Queueing the refresh failed: " + exception.Message);
+        }
+    }
+}

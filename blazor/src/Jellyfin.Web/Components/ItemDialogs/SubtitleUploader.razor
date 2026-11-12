@@ -1,0 +1,160 @@
+@namespace Jellyfin.Web.Components
+@* Uploading a subtitle file. Port of components/subtitleuploader/subtitleuploader.js and its template. *@
+@using System.Text.Json.Nodes
+@inject ItemDialogApi Api
+@inject IItemDialogsInterop Interop
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["HeaderUploadSubtitle"]</h3>
+</div>
+
+<div class="formDialogContent">
+    <div class="dialogContentInner">
+        <form class="uploadSubtitleForm" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <div class="flex align-items-center" style="margin:1.5em 0;">
+                <h2 style="margin:0;">@Globalize["HeaderAddUpdateSubtitle"]</h2>
+                <button type="button" class="emby-button raised raised-mini btnBrowse" @onclick="BrowseAsync">
+                    <Icon Name="folder" />
+                    <span>@Globalize["Browse"]</span>
+                </button>
+            </div>
+            <div>
+                <div class="subtitleEditor-dropZone fieldDescription">
+                    <div id="labelDropSubtitle" class="@(_fileName is null ? null : "hide")">@Globalize["LabelDropSubtitleHere"]</div>
+                    <output id="subtitleOutput" class="flex align-items-center justify-content-center" style="position: absolute;top:0;left:0;right:0;bottom:0;width:100%;">
+                        @if (_fileName is not null)
+                        {
+                            <div><span class="material-icons subtitles" aria-hidden="true" style="transform: translateY(25%);"></span><span>@_fileName</span></div>
+                        }
+                    </output>
+                    <InputFile @ref="_input" OnChange="OnFileChangedAsync" accept=".sub,.srt,.vtt,.ass,.ssa,.mks" id="uploadSubtitle" name="uploadSubtitle"
+                               style="position: absolute;top:0;left:0;right:0;bottom:0;width:100%;opacity:0;" />
+                </div>
+                <div id="fldUpload" class="@(_fileName is null ? "hide" : null)">
+                    <br />
+                    <div class="checkboxContainer">
+                        <EmbyCheckbox Id="chkIsForced" Label="@Globalize["LabelIsForced"]" @bind-Value="_isForced" />
+                        <EmbyCheckbox Id="chkIsHearingImpaired" Label="@Globalize["LabelIsHearingImpaired"]" @bind-Value="_isHearingImpaired" />
+                    </div>
+                    <EditorSelect Id="selectLanguage" Label="@Globalize["LabelLanguage"]" ContainerClass="flex-grow" Required="true" @bind-Value="_language">
+                        @foreach (var culture in Languages)
+                        {
+                            <option value="@culture.Text("ThreeLetterISOLanguageName")">@culture.Text("DisplayName")</option>
+                        }
+                    </EditorSelect>
+                    <button type="submit" class="emby-button raised button-submit block">
+                        <span>@Globalize["Upload"]</span>
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private InputFile? _input;
+    private byte[]? _data;
+    private string? _fileName;
+    private string? _language;
+    private bool _isForced;
+    private bool _isHearingImpaired;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The video the subtitle is for.</summary>
+    [Parameter, EditorRequired]
+    public string ItemId { get; set; } = string.Empty;
+
+    /// <summary>The languages to choose from: the cultures of <c>Localization/Cultures</c>.</summary>
+    [Parameter]
+    public IReadOnlyList<JsonNode?> Languages { get; set; } = [];
+
+    /// <summary>The three-letter code of the language selected at first.</summary>
+    [Parameter]
+    public string? Language { get; set; }
+
+    /// <summary>
+    /// Opens the uploader (<c>subtitleUploader.show({ languages, itemId, serverId })</c>). True when a
+    /// subtitle was uploaded.
+    /// </summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, string itemId, IReadOnlyList<JsonNode?> languages, string? language = null) =>
+        await dialogs.ShowAsync<SubtitleUploader>(
+            new Dictionary<string, object?>
+            {
+                [nameof(ItemId)] = itemId,
+                [nameof(Languages)] = languages,
+                [nameof(Language)] = language
+            },
+            new AppDialogOptions { Class = "formDialog subtitleUploaderDialog" }) is true;
+
+    protected override void OnInitialized() =>
+        _language = !string.IsNullOrEmpty(Language) ? Language : Languages.FirstOrDefault().Text("ThreeLetterISOLanguageName");
+
+    private async Task BrowseAsync()
+    {
+        if (_input?.Element is { } element)
+        {
+            await Interop.ClickAsync(element);
+        }
+    }
+
+    // Port of setFiles(): a file of another kind clears the form.
+    private async Task OnFileChangedAsync(InputFileChangeEventArgs args)
+    {
+        var file = args.FileCount > 0 ? args.File : null;
+        _data = null;
+        _fileName = null;
+        if (file is null || !SubtitleLyricsLogic.HasExtension(file.Name, SubtitleLyricsLogic.SubtitleExtensions))
+        {
+            return;
+        }
+
+        try
+        {
+            _data = await ItemDialogApi.ReadFileAsync(file);
+            _fileName = file.Name;
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or JSException)
+        {
+            AppLog.Warn("Reading the subtitle file failed: " + exception.Message);
+            Loading.Hide();
+            Toasts.Show(Globalize.Translate("MessageFileReadError"));
+        }
+    }
+
+    // Port of onSubmit(): getSubtitleApi(api).uploadSubtitle({ itemId, uploadSubtitleDto }).
+    private async Task SubmitAsync()
+    {
+        if (_data is null || _fileName is null)
+        {
+            Toasts.Show(Globalize.Translate("MessageSubtitleFileTypeAllowed"));
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            await Api.PostAsync(Api.GetUrl($"Videos/{ItemId}/Subtitles"), new JsonObject
+            {
+                ["Data"] = SubtitleLyricsLogic.Base64(_data),
+                ["Language"] = _language,
+                ["IsForced"] = _isForced,
+                ["Format"] = SubtitleLyricsLogic.SubtitleFormat(_fileName),
+                ["IsHearingImpaired"] = _isHearingImpaired
+            });
+            Loading.Hide();
+            Dialog.Close(true);
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            // The original leaves the loading indicator up when the upload fails; the port takes it down.
+            AppLog.Warn("Uploading the subtitle failed: " + exception.Message);
+            Loading.Hide();
+        }
+    }
+}

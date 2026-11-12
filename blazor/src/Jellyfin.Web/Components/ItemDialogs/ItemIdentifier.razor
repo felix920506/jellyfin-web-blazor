@@ -1,0 +1,241 @@
+@namespace Jellyfin.Web.Components
+@* "Identify". Port of components/itemidentifier/itemidentifier.js and its template. *@
+@using System.Globalization
+@using System.Text.Json.Nodes
+@inject ItemDialogApi Api
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["Identify"]</h3>
+</div>
+
+<div class="formDialogContent smoothScrollY">
+    <div class="@("dialogContentInner" + (_view == View.Results ? null : " dialog-content-centered"))">
+        <form class="@("popupIdentifyForm" + (_view == View.Search ? null : " hide"))" style="margin:auto;" @onsubmit="SearchAsync" @onsubmit:preventDefault="true">
+            <p>@Globalize["HeaderIdentifyItemHelp"]</p>
+            <div class="@("padded-bottom fldPath" + (string.IsNullOrEmpty(Item.Text("Path")) ? " hide" : null))">
+                <div>@Globalize["LabelPath"]</div>
+                <div class="txtPath fieldDescription">@Item.Text("Path")</div>
+            </div>
+            <EditorInput Id="txtLookupName" Class="identifyField" data-lookup="Name" Label="@Globalize["LabelName"]" @bind-Value="_name" />
+            <EditorInput Id="txtLookupYear" Type="number" Class="identifyField" data-lookup="Year" pattern="[0-9]*" min="1800" Label="@Globalize["LabelYear"]"
+                         ContainerClass="fldLookupYear" Hidden="@(Item.Text("Type") is "Person" or "BoxSet")" @bind-Value="_year" />
+
+            <div class="identifyProviderIds">
+                @foreach (var idInfo in _idInfos)
+                {
+                    var key = idInfo.Text("Key") ?? string.Empty;
+                    <EditorInput Id="@("txtLookup" + key)" Class="txtLookupId" data-providerkey="@key" Store="_providerIds" @key="key"
+                                 Label="@Globalize.Translate("LabelDynamicExternalId", MetadataEditorLogic.ExternalIdName(idInfo, Globalize))" />
+                }
+            </div>
+
+            <div class="formDialogFooter">
+                <button type="submit" class="emby-button raised button-submit block formDialogFooterItem">
+                    <span>@Globalize["Search"]</span>
+                </button>
+            </div>
+        </form>
+
+        <div class="@("identificationSearchResults" + (_view == View.Results ? null : " hide"))">
+            <h1>@Globalize["SearchResults"]</h1>
+            <div class="identificationSearchResultList itemsContainer vertical-wrap">
+                @for (var i = 0; i < _results.Count; i++)
+                {
+                    var index = i;
+                    var result = _results[i];
+                    var imageUrl = result.Text("ImageUrl");
+                    var lines = ItemIdentifierLogic.ResultLines(result, Item.Text("Type"));
+                    <button type="button" class="@("card scalableCard " + Shape + "Card " + Shape + "Card-scalable")" data-index="@index" @key="index"
+                            @onclick="() => Select(result)">
+                        <div class="cardBox cardBox-bottompadded">
+                            <div class="cardScalable">
+                                <div class="@("cardPadder-" + Shape)"></div>
+                                <div class="cardContent searchImage">
+                                    @if (!string.IsNullOrEmpty(imageUrl))
+                                    {
+                                        <div class="cardImageContainer coveredImage" style="@($"background-image:url('{imageUrl}');")"></div>
+                                    }
+                                    else
+                                    {
+                                        <div class="cardImageContainer coveredImage defaultCardBackground defaultCardBackground1">
+                                            <div class="cardText cardCenteredText">@result.Text("Name")</div>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                            @for (var line = 0; line < lines.Count; line++)
+                            {
+                                <div class="@(line == 0 ? "cardText cardText-first cardTextCentered" : "cardText cardText-secondary cardTextCentered")">
+                                    @if (string.IsNullOrEmpty(lines[line]))
+                                    {
+                                        @((MarkupString)"&nbsp;")
+                                    }
+                                    else
+                                    {
+                                        @lines[line]
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </button>
+                }
+            </div>
+        </div>
+
+        <form class="@("identifyOptionsForm" + (_view == View.Options ? null : " hide"))" style="margin:auto;" @onsubmit="ApplyAsync" @onsubmit:preventDefault="true">
+            <br />
+            <div class="selectedSearchResult">
+                @if (_selected is not null)
+                {
+                    if (_selected.Text("ImageUrl") is { Length: > 0 } imageUrl)
+                    {
+                        <div style="display:flex;align-items:center;">
+                            <img src="@imageUrl" style="max-height:240px;" />
+                            <div style="margin-left:1em;">@SelectedText(_selected)</div>
+                        </div>
+                    }
+                    else
+                    {
+                        @SelectedText(_selected)
+                    }
+                }
+            </div>
+            <br />
+            <EmbyCheckbox Id="chkIdentifyReplaceImages" LabelClass="checkboxContainer" Label="@Globalize["ReplaceExistingImages"]" @bind-Value="_replaceImages" />
+
+            <div class="formDialogFooter">
+                <button type="submit" class="emby-button raised button-submit block btnSubmit formDialogFooterItem">
+                    <span>@Globalize["ButtonOk"]</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private enum View
+    {
+        Search,
+        Results,
+        Options
+    }
+
+    private readonly Dictionary<string, string?> _providerIds = [];
+    private IReadOnlyList<JsonNode?> _idInfos = [];
+    private IReadOnlyList<JsonNode?> _results = [];
+    private JsonNode? _selected;
+    private View _view = View.Search;
+    private string? _name;
+    private string? _year;
+    private bool _replaceImages = true;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The item to identify, as <see cref="ItemDialogApi.GetItemAsync"/> returns it.</summary>
+    [Parameter, EditorRequired]
+    public JsonObject Item { get; set; } = [];
+
+    private string Shape => ItemIdentifierLogic.CardShape(Item.Text("Type"));
+
+    /// <summary>
+    /// Opens the dialog for an item whose metadata is not locked (<c>itemIdentifier.show(itemId, serverId)</c>
+    /// after its own check, see <see cref="ItemDialogService.IdentifyAsync"/>). True when a search result
+    /// was applied to the item, which is when the original resolves.
+    /// </summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, JsonObject item) =>
+        await dialogs.ShowAsync<ItemIdentifier>(
+            new Dictionary<string, object?> { [nameof(Item)] = item },
+            new AppDialogOptions { Class = "formDialog recordingDialog identifyDialog" }) is true;
+
+    // Port of showIdentificationForm(): one field per external id of the item.
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _idInfos = [.. await Api.GetArrayAsync($"Items/{Item.Text("Id")}/ExternalIdInfos")];
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Loading the external ids failed: " + exception.Message);
+        }
+    }
+
+    // Port of searchForIdentificationResults() and showIdentificationSearchResults().
+    private async Task SearchAsync()
+    {
+        var ids = _idInfos.Select(idInfo => idInfo.Text("Key") ?? string.Empty)
+            .Select(key => (Key: key, Value: _providerIds.GetValueOrDefault("txtLookup" + key) ?? string.Empty))
+            .ToList();
+        var body = ItemIdentifierLogic.SearchBody(Item.Text("Id"), _name, _year, ids);
+        if (body is null)
+        {
+            Toasts.Show(Globalize.Translate("PleaseEnterNameOrId"));
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            _results = await Api.PostAsync(Api.GetUrl($"Items/RemoteSearch/{Item.Text("Type")}"), body) is JsonArray results ? [.. results] : [];
+            _view = View.Results;
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Searching for the item failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    // The name and, below it, the year of the chosen result.
+    private static RenderFragment SelectedText(JsonNode selected) => builder =>
+    {
+        builder.AddContent(0, selected.Text("Name"));
+        if (selected.Number("ProductionYear") is { } year and not 0)
+        {
+            builder.AddMarkupContent(1, "<br/>");
+            builder.AddContent(2, selected.Text("ProductionYear"));
+        }
+    };
+
+    // Port of showIdentifyOptions().
+    private void Select(JsonNode? result)
+    {
+        _selected = result;
+        _replaceImages = true;
+        _view = View.Options;
+    }
+
+    // Port of submitIdentficationResult(): the dialog closes whether the server took the result or not.
+    private async Task ApplyAsync()
+    {
+        if (_selected is null)
+        {
+            return;
+        }
+
+        Loading.Show();
+        var applied = false;
+        try
+        {
+            await Api.PostAsync(
+                Api.GetUrl($"Items/RemoteSearch/Apply/{Item.Text("Id")}", ("ReplaceAllImages", _replaceImages)),
+                _selected.DeepClone());
+            applied = true;
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn("Applying the search result failed: " + exception.Message);
+        }
+
+        Loading.Hide();
+        Dialog.Close(applied ? true : null);
+    }
+}

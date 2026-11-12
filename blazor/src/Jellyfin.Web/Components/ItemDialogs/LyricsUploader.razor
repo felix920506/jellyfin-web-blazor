@@ -1,0 +1,123 @@
+@namespace Jellyfin.Web.Components
+@* Uploading a lyrics file. Port of components/lyricsuploader/lyricsuploader.js and its template. *@
+@using System.Net.Http.Headers
+@inject ItemDialogApi Api
+@inject IItemDialogsInterop Interop
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["HeaderUploadLyrics"]</h3>
+</div>
+
+<div class="formDialogContent">
+    <div class="dialogContentInner">
+        <form class="uploadLyricsForm" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <div class="flex align-items-center" style="margin:1.5em 0;">
+                <h2 style="margin:0;">@Globalize["HeaderAddLyrics"]</h2>
+                <button type="button" class="emby-button raised raised-mini btnBrowse" @onclick="BrowseAsync">
+                    <Icon Name="folder" />
+                    <span>@Globalize["Browse"]</span>
+                </button>
+            </div>
+            <div>
+                <div class="lyricsEditor-dropZone fieldDescription">
+                    <div id="labelDropLyrics" class="@(_fileName is null ? null : "hide")">@Globalize["LabelDropLyricsHere"]</div>
+                    <output id="lyricsOutput" class="flex align-items-center justify-content-center" style="position: absolute;top:0;left:0;right:0;bottom:0;width:100%;">
+                        @if (_fileName is not null)
+                        {
+                            <div><span class="material-icons lyrics" aria-hidden="true" style="transform: translateY(25%);"></span><span>@_fileName</span></div>
+                        }
+                    </output>
+                    <InputFile @ref="_input" OnChange="OnFileChangedAsync" accept=".lrc,.txt" id="uploadLyrics" name="uploadLyrics"
+                               style="position: absolute;top:0;left:0;right:0;bottom:0;width:100%;opacity:0;" />
+                </div>
+                <div id="fldUpload" class="@(_fileName is null ? "hide" : null)">
+                    <br />
+                    <button type="submit" class="emby-button raised button-submit block">
+                        <span>@Globalize["Upload"]</span>
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private InputFile? _input;
+    private byte[]? _data;
+    private string? _fileName;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The song the lyrics are for.</summary>
+    [Parameter, EditorRequired]
+    public string ItemId { get; set; } = string.Empty;
+
+    /// <summary>Opens the uploader (<c>lyricsUploader.show({ itemId, serverId })</c>). True when lyrics were uploaded.</summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, string itemId) =>
+        await dialogs.ShowAsync<LyricsUploader>(
+            new Dictionary<string, object?> { [nameof(ItemId)] = itemId },
+            new AppDialogOptions { Class = "formDialog lyricsUploaderDialog" }) is true;
+
+    private async Task BrowseAsync()
+    {
+        if (_input?.Element is { } element)
+        {
+            await Interop.ClickAsync(element);
+        }
+    }
+
+    // Port of setFiles(): a file of another kind clears the form.
+    private async Task OnFileChangedAsync(InputFileChangeEventArgs args)
+    {
+        var file = args.FileCount > 0 ? args.File : null;
+        _data = null;
+        _fileName = null;
+        if (file is null || !SubtitleLyricsLogic.HasExtension(file.Name, SubtitleLyricsLogic.LyricsExtensions))
+        {
+            return;
+        }
+
+        try
+        {
+            _data = await ItemDialogApi.ReadFileAsync(file);
+            _fileName = file.Name;
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or JSException)
+        {
+            AppLog.Warn("Reading the lyrics file failed: " + exception.Message);
+            Loading.Hide();
+            Toasts.Show(Globalize.Translate("MessageFileReadError"));
+        }
+    }
+
+    // Port of onSubmit(): getLyricApi(api).uploadLyrics({ itemId, fileName, body }) sends the text as text/plain.
+    private async Task SubmitAsync()
+    {
+        if (_data is null || _fileName is null)
+        {
+            Toasts.Show(Globalize.Translate("MessageLyricsFileTypeAllowed"));
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            using var content = new StringContent(SubtitleLyricsLogic.Utf8(_data));
+            content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+            await Api.PostContentAsync(Api.GetUrl($"Audio/{ItemId}/Lyrics", ("fileName", _fileName)), content);
+            Loading.Hide();
+            Dialog.Close(true);
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            // The original leaves the loading indicator up when the upload fails; the port takes it down.
+            AppLog.Warn("Uploading the lyrics failed: " + exception.Message);
+            Loading.Hide();
+        }
+    }
+}

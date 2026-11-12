@@ -1,0 +1,23 @@
+// Item dialogs and editors (Components/ItemDialogs).
+//
+// The markup and the class names are the original's, so the original stylesheets apply unchanged. The one
+// thing that differs is the page around them: MudBlazor's stylesheet resets the margin of every element
+// (`* { margin: 0 }`), while the original templates of these dialogs lean on the browser's own margins for
+// their bare paragraphs and headings (the help text and "Search Results" of the identifier, the section
+// titles of the subtitle, lyrics and metadata editors). Those margins are put back here.
+//
+// The selectors have the weight of a single element, so any class rule or inline style of the original
+// (for example `<h2 style="margin:0;">`) still wins, as it does over the browser's defaults.
+:where(.identifyDialog, .subtitleEditorDialog, .lyricsEditorDialog, .editItemMetadataForm) {
+    p {
+        margin-block: 1em;
+    }
+
+    h1 {
+        margin-block: 0.67em;
+    }
+
+    h2 {
+        margin-block: 0.83em;
+    }
+}
