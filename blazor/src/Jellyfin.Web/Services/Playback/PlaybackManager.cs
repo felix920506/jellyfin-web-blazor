@@ -13,6 +13,7 @@ public sealed class ItemPlayOptions
     public int? SubtitleStreamIndex { get; set; }
     public int? SecondarySubtitleStreamIndex { get; set; }
     public long? StartPositionTicks { get; set; }
+    public int StartIndex { get; set; }
     public bool IsFirstItem { get; set; }
 
     public ItemPlayOptions Clone() => (ItemPlayOptions)MemberwiseClone();
@@ -62,6 +63,7 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
     private bool _playNextAfterEnded = true;
     private IDisposable? _progressTimer;
     private long _startingPlaySession;
+    private IReadOnlyList<BaseItemDto>? _pendingOtherItems;
 
     public PlaybackManager(
         JellyfinApi api,
@@ -219,7 +221,8 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
         return _players
             .Where(p => p.IsLocalPlayer)
             .OrderBy(p => p.Priority)
-            .FirstOrDefault(p => p.CanPlayMediaType(mediaType));
+            .FirstOrDefault(p => p.CanPlayMediaType(mediaType)
+                && (p is not IItemMediaPlayer itemPlayer || itemPlayer.CanPlayItem(item)));
     }
 
     private PlayerData Data(IMediaPlayer player)

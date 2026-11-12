@@ -735,11 +735,22 @@ public sealed partial class PlaybackManager
             return;
         }
 
-        if (!IsServerItem(item))
+        if (!IsServerItem(item) || item.MediaType is BaseItemDto_MediaType.Photo or BaseItemDto_MediaType.Book)
         {
-            // PORT-TODO(playback): items that are plain URLs (createStreamInfoFromUrlItem()) and books
-            // are played without the server in the original; nothing in the port produces such items.
-            throw new PlaybackRejectedException(reported: false, $"'{item.Name}' is not an item of the server");
+            if (player is not IPlaylistMediaPlayer managed)
+            {
+                throw new PlaybackRejectedException(reported: false, $"'{item.Name}' is not supported by the selected player");
+            }
+
+            var items = _pendingOtherItems ?? [item];
+            var managedStream = await managed.PlayItemsAsync(items, playOptions);
+            var managedData = Data(player);
+            managedData.IsChangingStream = false;
+            managedData.StreamInfo = managedStream;
+            _loading.Hide();
+            onPlaybackStarted();
+            OnPlaybackStarted(player, playOptions, managedStream, mediaSource: null);
+            return;
         }
 
         var mediaSourceId = playOptions.MediaSourceId;

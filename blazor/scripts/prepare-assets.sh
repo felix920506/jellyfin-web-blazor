@@ -44,6 +44,10 @@ vendor @jellyfin/ux-web 1.0.0 jellyfin-ux-web 'package/*.png' 'package/favicons/
 vendor hls.js 1.7.4 hls.js 'package/dist/hls.min.js'
 vendor markdown-it 14.3.3 markdown-it 'package/dist/markdown-it.min.js'
 vendor dompurify 2.5.9 dompurify 'package/dist/purify.min.js'
+vendor epubjs 0.3.93 epubjs 'package/dist/epub.min.js'
+vendor pdfjs-dist 3.11.174 pdfjs 'package/build/pdf.min.js' 'package/build/pdf.worker.min.js'
+vendor libarchive.js 2.0.2 libarchive 'package/dist/libarchive.js' 'package/dist/worker-bundle.js' 'package/dist/libarchive.wasm'
+vendor swiper 12.2.0 swiper 'package/swiper-bundle.min.js' 'package/swiper-bundle.min.css'
 for font in noto-sans noto-sans-hk noto-sans-jp noto-sans-kr noto-sans-sc noto-sans-tc; do
     vendor "@fontsource/$font" 5.3.0 "fontsource/$font" \
         'package/files/*-400-normal.woff2' 'package/files/*-700-normal.woff2'
