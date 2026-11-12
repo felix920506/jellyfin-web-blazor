@@ -1,0 +1,83 @@
+@namespace Jellyfin.Web.Components
+@*
+    A section of the details page with a horizontal row of cards ("More like this", cast, scenes…):
+    the markup of the scroller sections of controllers/itemDetails/index.html. Like the original's,
+    the section is hidden until it has items.
+*@
+<div id="@Id" @ref="_element" class="@CssClass">
+    <h2 id="@TitleId" class="sectionTitle sectionTitle-cards padded-right">@Title</h2>
+    <Scroller Class="padded-top-focusscale padded-bottom-focusscale no-padding" data-centerfocus="true">
+        <ItemsContainer id="@ContentId" Class="@ContainerClass" Items="Items" Fetch="Fetch" CardOptions="CardOptions" ItemsTemplate="ItemsTemplate"
+                        Context="@Context" ParentId="@ParentId" OnItemsChanged="OnItemsChanged" />
+    </Scroller>
+</div>
+
+@code {
+    /// <summary>The id of the section, e.g. "similarCollapsible".</summary>
+    [Parameter]
+    public string? Id { get; set; }
+
+    /// <summary>Classes besides "verticalSection detailVerticalSection".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>The title, already translated.</summary>
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public string? TitleId { get; set; }
+
+    /// <summary>The id of the items container, e.g. "castContent".</summary>
+    [Parameter]
+    public string? ContentId { get; set; }
+
+    /// <summary>Classes of the items container besides those of a scroll slider.</summary>
+    [Parameter]
+    public string? ContentClass { get; set; }
+
+    /// <summary>The items, when they are at hand. Use this or <see cref="Fetch"/>.</summary>
+    [Parameter]
+    public IReadOnlyList<BaseItemDto>? Items { get; set; }
+
+    [Parameter]
+    public Func<Task<IReadOnlyList<BaseItemDto>>>? Fetch { get; set; }
+
+    /// <summary>Draws the items as cards. Use this or <see cref="ItemsTemplate"/>.</summary>
+    [Parameter]
+    public CardOptions? CardOptions { get; set; }
+
+    [Parameter]
+    public RenderFragment<IReadOnlyList<BaseItemDto>>? ItemsTemplate { get; set; }
+
+    [Parameter]
+    public string? Context { get; set; }
+
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    /// <summary>The section shows from this many items on ("more from season" wants two).</summary>
+    [Parameter]
+    public int MinimumItems { get; set; } = 1;
+
+    /// <summary>Raised after the items changed.</summary>
+    [Parameter]
+    public EventCallback<IReadOnlyList<BaseItemDto>> ItemsChanged { get; set; }
+
+    private ElementReference _element;
+    private bool _hasItems;
+
+    /// <summary>The element of the section.</summary>
+    public ElementReference Element => _element;
+
+    private string CssClass =>
+        $"verticalSection detailVerticalSection emby-scroller-container {Class}".TrimEnd() + (_hasItems ? string.Empty : " hide");
+
+    private string ContainerClass => $"scrollSlider focuscontainer-x {ContentClass}".TrimEnd();
+
+    private Task OnItemsChanged(IReadOnlyList<BaseItemDto> items)
+    {
+        _hasItems = items.Count >= MinimumItems;
+        return ItemsChanged.InvokeAsync(items);
+    }
+}

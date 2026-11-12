@@ -1,0 +1,51 @@
+@namespace Jellyfin.Web.Components
+@*
+    A section of the details page whose items wrap or list instead of scrolling sideways: "Next up"
+    and "Upcoming on TV" of a series. The markup of those sections in
+    controllers/itemDetails/index.html; hidden until it has items.
+*@
+<div id="@Id" class="@($"verticalSection detailVerticalSection {Class}".TrimEnd() + (_hasItems ? null : " hide"))">
+    <h2 class="@TitleClass">@Title</h2>
+    <ItemsContainer id="@ContentId" Class="@ContentClass" Fetch="Fetch" CardOptions="CardOptions" ListOptions="ListOptions"
+                    Context="@Context" OnItemsChanged="OnItemsChanged" />
+</div>
+
+@code {
+    [Parameter]
+    public string? Id { get; set; }
+
+    /// <summary>Classes besides "verticalSection detailVerticalSection", e.g. "nextUpSection".</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    /// <summary>The title, already translated.</summary>
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public string TitleClass { get; set; } = "sectionTitle sectionTitle-cards";
+
+    [Parameter]
+    public string? ContentId { get; set; }
+
+    /// <summary>Classes of the items container, e.g. "vertical-wrap padded-right".</summary>
+    [Parameter]
+    public string? ContentClass { get; set; }
+
+    [Parameter, EditorRequired]
+    public Func<Task<IReadOnlyList<BaseItemDto>>>? Fetch { get; set; }
+
+    /// <summary>Draws the items as cards. Use this or <see cref="ListOptions"/>.</summary>
+    [Parameter]
+    public CardOptions? CardOptions { get; set; }
+
+    [Parameter]
+    public ListViewOptions? ListOptions { get; set; }
+
+    [Parameter]
+    public string? Context { get; set; }
+
+    private bool _hasItems;
+
+    private void OnItemsChanged(IReadOnlyList<BaseItemDto> items) => _hasItems = items.Count > 0;
+}

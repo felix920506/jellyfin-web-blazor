@@ -1,0 +1,117 @@
+@namespace Jellyfin.Web.Components
+@*
+    The entries of a playlist on the details page: port of scripts/playlistViewer.js. The page puts
+    it into #childrenContent.
+
+    Reordering: the original lets those who may edit the playlist drag the rows. Here each row gets
+    an "Up" and a "Down" button instead (the same server request as a drop); "Move to top", "Move to
+    bottom" and "Remove from playlist" are in the row's menu, as in the original.
+*@
+@inject DetailsQueries Queries
+@inject ItemQueries Items
+@inject Globalize Globalize
+@inject LoadingService Loading
+
+<ItemsContainer @ref="_container" Class="vertical-list" Fetch="_fetch" PlaylistId="@Item.IdText()" Context="@Context"
+                ListOptions="_options" OnCustomAction="_onCustomAction" />
+
+@code {
+    private const string MoveUp = "jf-playlist-up";
+    private const string MoveDown = "jf-playlist-down";
+
+    /// <summary>The playlist.</summary>
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    /// <summary>The context for item links.</summary>
+    [Parameter]
+    public string? Context { get; set; }
+
+    private ItemsContainer? _container;
+    private BaseItemDto? _applied;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _fetch;
+    private Func<string, BaseItemDto, Task>? _onCustomAction;
+    private ListViewOptions _options = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ReferenceEquals(_applied, Item))
+        {
+            return;
+        }
+
+        var item = _applied = Item;
+        var playlistId = item.IdText();
+        _onCustomAction ??= OnCustomActionAsync;
+        _options = GetOptions(playlistId, editable: false);
+        _fetch = () => Queries.GetPlaylistItemsAsync(playlistId);
+
+        bool editable;
+        try
+        {
+            editable = await Items.CanEditPlaylistAsync(playlistId);
+        }
+        catch (HttpRequestException)
+        {
+            // Without access to the playlist's permissions it is not editable.
+            editable = false;
+        }
+
+        if (editable && ReferenceEquals(_applied, item))
+        {
+            _options = GetOptions(playlistId, editable: true);
+        }
+    }
+
+    private ListViewOptions GetOptions(string playlistId, bool editable) => new()
+    {
+        ShowIndex = false,
+        Action = ItemAction.PlayAllFromHere,
+        PlaylistId = playlistId,
+        ShowParentTitle = true,
+        RightButtons = editable
+            ? [new ListRightButton(MoveUp, Globalize["Up"], "keyboard_arrow_up"), new ListRightButton(MoveDown, Globalize["Down"], "keyboard_arrow_down")]
+            : null
+    };
+
+    private async Task OnCustomActionAsync(string action, BaseItemDto entry)
+    {
+        if (_container is not { } container || string.IsNullOrEmpty(entry.PlaylistItemId))
+        {
+            return;
+        }
+
+        var entries = container.CurrentItems;
+        var index = -1;
+        for (var i = 0; i < entries.Count; i++)
+        {
+            if (entries[i].PlaylistItemId == entry.PlaylistItemId)
+            {
+                index = i;
+                break;
+            }
+        }
+
+        var newIndex = action == MoveUp ? index - 1 : action == MoveDown ? index + 1 : -1;
+        if (index < 0 || newIndex < 0 || newIndex >= entries.Count)
+        {
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            await Queries.MovePlaylistItemAsync(Item.IdText(), entry.PlaylistItemId, newIndex);
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Moving a playlist entry failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+
+        await container.RefreshAsync();
+    }
+}

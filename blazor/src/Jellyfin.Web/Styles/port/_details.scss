@@ -1,0 +1,80 @@
+// The item details page (Pages/Details, Components/Details) and the page backdrop
+// (Services/Details/Backdrop.cs): what the original does in script rather than in CSS.
+
+// --- Backdrop -----------------------------------------------------------------------------------
+// The two layers wwwroot/js/backdrop.js puts first into the body: the images
+// (.backdropContainer) and above them the theme's page background (.backgroundContainer), which
+// the theme makes see-through while a backdrop shows (.withBackdrop). Both step aside while a video
+// plays behind the page.
+.transparentDocument .jf-backdrop-background,
+.transparentDocument .jf-backdrop-images {
+    display: none;
+}
+
+// --- Text metrics -------------------------------------------------------------------------------
+// The original page inherits its text from html: 93% font size, line height 1.35 and the theme's
+// secondary text colour (themes/_base/_theme.scss); it relies on the browser's own margins for
+// paragraphs, headings and lists. The shell's stylesheet (MudBlazor) sets its typography and the
+// primary text colour on body and resets every margin and padding (`* { margin: 0; padding: 0 }`),
+// which makes the page 12.5% smaller, brighter, and moves its lines together. Inside the page the
+// original values apply again; :where() keeps the browser defaults below every original rule.
+#itemDetailPage {
+    color: var(--jf-palette-text-secondary, var(--mud-palette-text-secondary));
+    font-size: 1rem;
+    line-height: 1.35;
+    letter-spacing: normal;
+}
+
+:where(#itemDetailPage p, #itemDetailPage h3, #itemDetailPage ul, #itemDetailPage ol, #itemDetailPage pre) {
+    margin-block: 1em;
+}
+
+:where(#itemDetailPage h1) {
+    margin-block: 0.67em;
+}
+
+:where(#itemDetailPage h2) {
+    margin-block: 0.83em;
+}
+
+:where(#itemDetailPage h4) {
+    margin-block: 1.33em;
+}
+
+:where(#itemDetailPage h5) {
+    margin-block: 1.67em;
+}
+
+:where(#itemDetailPage h6) {
+    margin-block: 2.33em;
+}
+
+:where(#itemDetailPage ul, #itemDetailPage ol) {
+    padding-inline-start: 40px;
+}
+
+:where(#itemDetailPage blockquote) {
+    margin: 1em 40px;
+}
+
+:where(#itemDetailPage hr) {
+    margin-block: 0.5em;
+    border: 1px inset;
+}
+
+// --- Favorite button on narrow screens ----------------------------------------------------------
+// styles/videoosd.scss hides every .btnUserRating below 30em (`display: none !important`), meant for
+// the video OSD. The original loads that stylesheet together with the OSD; this port's bundle always
+// contains it, which removed the favorite button from the page on phones.
+@media all and (max-width: 30em) {
+    #itemDetailPage .mainDetailButtons .btnUserRating:not(.hide) {
+        display: flex !important;
+    }
+}
+
+// --- Collection ---------------------------------------------------------------------------------
+// The sections of a collection ("Movies", "Shows"…) stack; the items container around them would
+// lay them out in a row.
+.jf-collection-items {
+    display: block;
+}

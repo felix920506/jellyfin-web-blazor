@@ -1,0 +1,131 @@
+@namespace Jellyfin.Web.Components
+@*
+    The children of a folder on the details page (renderChildren of controllers/itemDetails): the
+    seasons of a series as cards, the episodes of a season and the tracks of an album as a list.
+    Like the original, other folders get the section with its title and no items.
+    The section is #listChildrenCollapsible (primary column) for the list view types and
+    #childrenCollapsible (secondary column) for the rest; the page places it.
+*@
+@implements IDisposable
+@inject DetailsQueries Queries
+@inject Globalize Globalize
+@inject AppHost Host
+@inject IBrowser Browser
+
+<div id="@(Primary ? "listChildrenCollapsible" : "childrenCollapsible")" class="@SectionClass">
+    <h2 class="@("sectionTitle sectionTitle-cards" + (HideTitle ? " hide" : null))">
+        <span>@Globalize[DetailsRules.ChildrenTitleKey(Item)]</span>
+    </h2>
+    <div id="@(Primary ? "childrenContent" : null)">
+        <ItemsContainer Class="@ContainerClass" style="text-align: left;" Fetch="_fetch" ParentId="@Item.IdText()" Context="@Context"
+                        OnItemsChanged="OnItemsChanged">
+            <ItemsTemplate Context="items">
+                @if (_type == "Series")
+                {
+                    <Cards Items="items" Options="SeasonCards" />
+                }
+                else if (_type == "Season")
+                {
+                    <ListView Items="items" Options="EpisodeList" />
+                }
+                else if (_type == "MusicAlbum")
+                {
+                    <ListView Items="items" Options="_trackList" />
+                }
+            </ItemsTemplate>
+        </ItemsContainer>
+    </div>
+</div>
+
+@code {
+    private static readonly CardOptions SeasonCards = new()
+    {
+        Shape = CardShape.OverflowPortrait,
+        ShowTitle = true,
+        CenterText = true,
+        OverlayPlayButton = true
+    };
+
+    /// <summary>The folder whose children show.</summary>
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    /// <summary>The context for item links, e.g. "tvshows".</summary>
+    [Parameter]
+    public string? Context { get; set; }
+
+    private BaseItemDto? _applied;
+    private Func<Task<IReadOnlyList<BaseItemDto>>>? _fetch;
+    private string? _type;
+    private bool _loaded;
+    private ListViewOptions _trackList = new();
+
+    private bool Primary => DetailsRules.ChildrenInPrimaryColumn(Item);
+
+    private bool HideTitle => DetailsRules.HideChildrenTitle(Item);
+
+    // enableScrollX: the seasons scroll sideways on small mobile devices.
+    private bool ScrollX => _type == "Series" && Host.Browser.Mobile && Browser.Environment.ScreenWidth <= 1000;
+
+    private string SectionClass =>
+        "verticalSection detailVerticalSection" + (HideTitle ? " verticalSection-extrabottompadding" : null) + (_loaded ? null : " hide");
+
+    private string ContainerClass
+    {
+        get
+        {
+            var layout = ScrollX ? "scrollX hiddenScrollX" : _type is "Season" or "MusicAlbum" ? "vertical-list" : "vertical-wrap";
+            return Host.IsMobileLayout ? layout : "padded-right " + layout;
+        }
+    }
+
+    private ListViewOptions EpisodeList => new()
+    {
+        ShowIndexNumber = false,
+        EnableOverview = true,
+        EnablePlayedButton = !Host.IsMobileLayout,
+        InfoButton = !Host.IsMobileLayout,
+        ImageSize = "large",
+        EnableSideMediaInfo = false,
+        Highlight = false,
+        Action = Host.Layout == LayoutMode.Desktop ? ItemAction.None : ItemAction.Link,
+        ImagePlayButton = true,
+        IncludeParentInfoInTitle = false
+    };
+
+    protected override void OnInitialized() => Host.LayoutChanged += OnLayoutChanged;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_applied, Item))
+        {
+            return;
+        }
+
+        var item = _applied = Item;
+        _type = item.TypeName();
+        _loaded = false;
+        _fetch = () => Queries.GetChildrenAsync(item);
+    }
+
+    public void Dispose() => Host.LayoutChanged -= OnLayoutChanged;
+
+    private void OnLayoutChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnItemsChanged(IReadOnlyList<BaseItemDto> items)
+    {
+        _loaded = true;
+        if (_type == "MusicAlbum")
+        {
+            _trackList = new ListViewOptions
+            {
+                ShowIndex = DetailsRules.ShowDiscs(items),
+                Index = "disc",
+                ShowIndexNumberLeft = true,
+                Action = ItemAction.PlayAllFromHere,
+                Image = false,
+                Artist = DetailsRules.ShowTrackArtists(items)
+            };
+        }
+    }
+}

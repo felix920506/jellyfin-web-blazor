@@ -1,0 +1,80 @@
+@namespace Jellyfin.Web.Components
+@*
+    The sections of the page of a person, genre, studio or artist: the items of each type that
+    belong to it, with a "more" link to the full list when there are more than the section shows.
+    Port of scripts/itemsByName.js (renderItems, loadItems); the page puts it into #childrenContent.
+    A section without items stays hidden.
+*@
+@inject DetailsQueries Queries
+@inject Globalize Globalize
+@inject JellyfinApi Api
+
+@foreach (var section in _sections)
+{
+    var state = _states[section];
+    <div class="@("verticalSection" + (state.Count > 0 ? null : " hide"))" data-type="@section.Type" @key="section.Type">
+        <div class="sectionTitleContainer sectionTitleContainer-cards">
+            <h2 class="sectionTitle sectionTitle-cards">@Globalize[section.TitleKey]</h2>
+            <a is="emby-linkbutton" href="@section.GetMoreUrl(Item)" class="@("clearLink emby-button" + (state.Total > section.Limit ? null : " hide"))" style="margin-left:1em;vertical-align:middle;"><button is="emby-button" type="button" class="raised more raised-mini noIcon emby-button">@Globalize["ButtonMore"]</button></a>
+        </div>
+        <ItemsContainer Class="padded-right vertical-wrap" Fetch="state.Fetch" CardOptions="state.CardOptions" Context="@Context" />
+    </div>
+}
+
+@code {
+    /// <summary>The person, genre, studio or artist.</summary>
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    /// <summary>The context for item links.</summary>
+    [Parameter]
+    public string? Context { get; set; }
+
+    private sealed class SectionState
+    {
+        public required Func<Task<IReadOnlyList<BaseItemDto>>> Fetch { get; init; }
+
+        public required CardOptions CardOptions { get; init; }
+
+        public int Count { get; set; }
+
+        public int Total { get; set; }
+    }
+
+    private readonly Dictionary<ItemsByNameSection, SectionState> _states = [];
+    private IReadOnlyList<ItemsByNameSection> _sections = [];
+    private BaseItemDto? _applied;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_applied, Item))
+        {
+            return;
+        }
+
+        var item = _applied = Item;
+        _sections = ItemsByNameSection.For(item);
+        _states.Clear();
+        foreach (var section in _sections)
+        {
+            _states[section] = new SectionState
+            {
+                Fetch = () => LoadAsync(item, section),
+                CardOptions = section.GetCardOptions()
+            };
+        }
+    }
+
+    private async Task<IReadOnlyList<BaseItemDto>> LoadAsync(BaseItemDto item, ItemsByNameSection section)
+    {
+        var result = await Queries.GetItemsByNameAsync(item, section, Api.User?.Configuration?.DisplayMissingEpisodes == true);
+        if (ReferenceEquals(_applied, item) && _states.TryGetValue(section, out var state))
+        {
+            state.Count = result.Items.Count;
+            state.Total = result.TotalRecordCount;
+            StateHasChanged();
+        }
+
+        return result.Items;
+    }
+}

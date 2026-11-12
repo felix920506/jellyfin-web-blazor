@@ -1,0 +1,36 @@
+@namespace Jellyfin.Web.Components
+@*
+    One of the round buttons below the title of the details page (.mainDetailButtons), with the
+    original's markup. Like the original's, a button that does not apply stays in the page, hidden.
+*@
+<button is="emby-button" type="button" class="@CssClass" title="@Title" data-action="@Action" @onclick="OnClick">
+    <div class="detailButton-content">
+        <span class="material-icons detailButton-icon @Icon" aria-hidden="true"></span>
+    </div>
+</button>
+
+@code {
+    /// <summary>The class that names the button, e.g. "btnPlay".</summary>
+    [Parameter, EditorRequired]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>The tooltip, already translated.</summary>
+    [Parameter]
+    public string? Title { get; set; }
+
+    /// <summary>The Material icon name.</summary>
+    [Parameter, EditorRequired]
+    public string Icon { get; set; } = string.Empty;
+
+    [Parameter]
+    public bool Visible { get; set; }
+
+    /// <summary>The original's data-action ("resume", "play").</summary>
+    [Parameter]
+    public string? Action { get; set; }
+
+    [Parameter]
+    public EventCallback OnClick { get; set; }
+
+    private string CssClass => $"button-flat {Name} detailButton emby-button" + (Visible ? string.Empty : " hide");
+}

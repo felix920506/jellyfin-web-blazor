@@ -1,0 +1,80 @@
+@namespace Jellyfin.Web.Components
+@*
+    The "Directors: …", "Genres: …" lines of the details page (.itemDetailsGroup): port of
+    components/itemDetails/ItemDetailsMetadataList.tsx, one line per kind that the item has.
+*@
+@inject Globalize Globalize
+@inject AppRouter Router
+
+<div class="itemDetailsGroup">
+    @foreach (var group in _groups)
+    {
+        <div>
+            <div class="detailsGroupItem">
+                <p class="label">@group.Label</p>
+                <div class="focuscontainer-x">
+                    @for (var i = 0; i < group.Links.Count; i++)
+                    {
+                        var link = group.Links[i];
+                        <span>@(i > 0 ? ", " : null)<a class="button-link emby-button" style="color:inherit" href="@link.Href">@link.Name</a></span>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly string[] PersonTypes = ["Author", "Creator", "Director", "Writer"];
+
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    public sealed record MetadataLink(string Name, string Href);
+
+    public sealed record MetadataGroup(string Kind, string Label, IReadOnlyList<MetadataLink> Links);
+
+    private IReadOnlyList<MetadataGroup> _groups = [];
+
+    protected override void OnParametersSet() => _groups = Build(Item, Globalize, Router);
+
+    /// <summary>The lines of an item, in the original's order: authors, creators, directors, writers, studios, genres.</summary>
+    public static IReadOnlyList<MetadataGroup> Build(BaseItemDto item, Globalize globalize, AppRouter router)
+    {
+        var context = DetailsRules.InferContext(item);
+        var options = new RouteOptions { Context = context };
+        var groups = new List<MetadataGroup>();
+
+        void Add(string kind, IEnumerable<(Guid? Id, string? Name)> entries, BaseItemDto_Type type)
+        {
+            var links = entries
+                .Select(entry => new MetadataLink(
+                    entry.Name ?? string.Empty,
+                    router.GetRouteUrl(new BaseItemDto { Id = entry.Id, Name = entry.Name, Type = type, ServerId = item.ServerId }, options)))
+                .ToList();
+            if (links.Count > 0)
+            {
+                groups.Add(new MetadataGroup(kind, globalize[links.Count > 1 ? kind + "s" : kind], links));
+            }
+        }
+
+        foreach (var personType in PersonTypes)
+        {
+            Add(
+                personType,
+                (item.People ?? []).Where(person => person.Type.ToApiString() == personType).Select(person => (person.Id, person.Name)),
+                BaseItemDto_Type.Person);
+        }
+
+        if (item.TypeName() is not ("BoxSet" or "Playlist"))
+        {
+            Add("Studio", (item.Studios ?? []).Select(studio => (studio.Id, studio.Name)), BaseItemDto_Type.Studio);
+        }
+
+        Add(
+            "Genre",
+            (item.GenreItems ?? []).Select(genre => (genre.Id, genre.Name)),
+            context == "music" ? BaseItemDto_Type.MusicGenre : BaseItemDto_Type.Genre);
+        return groups;
+    }
+}

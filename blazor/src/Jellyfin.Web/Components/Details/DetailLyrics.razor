@@ -1,0 +1,51 @@
+@namespace Jellyfin.Web.Components
+@*
+    The lyrics of a song on its details page (renderLyricsContainer of controllers/itemDetails):
+    the lines as plain text. The section stays hidden when the song has none or they cannot be read.
+*@
+@inject DetailsQueries Queries
+@inject Globalize Globalize
+
+<div id="lyricsSection" class="@("verticalSection-extrabottompadding detailVerticalSection lyricsContainer" + (_lines.Count > 0 ? null : " hide"))">
+    <h2 class="sectionTitle sectionTitle-cards padded-right">@Globalize["Lyrics"]</h2>
+    <div is="emby-itemscontainer" class="itemsContainer vertical-list lyricsLineContainer" dir="auto">
+        @foreach (var line in _lines)
+        {
+            @line<br />
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>The song.</summary>
+    [Parameter, EditorRequired]
+    public BaseItemDto Item { get; set; } = default!;
+
+    private BaseItemDto? _applied;
+    private IReadOnlyList<string> _lines = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ReferenceEquals(_applied, Item))
+        {
+            return;
+        }
+
+        var item = _applied = Item;
+        _lines = [];
+        IReadOnlyList<string> lines;
+        try
+        {
+            lines = await Queries.GetLyricsAsync(item.IdText());
+        }
+        catch (HttpRequestException)
+        {
+            lines = [];
+        }
+
+        if (ReferenceEquals(_applied, item))
+        {
+            _lines = lines;
+        }
+    }
+}
