@@ -6,14 +6,22 @@ PORT="${JELLYFIN_PORT:-18098}"
 URL="http://localhost:${PORT}"
 DATA="${JFWEB_CACHE:-$HOME/.cache/jellyfin-web-blazor}/testserver-${INSTANCE}"
 MEDIA="${DATA}/media"
-M3U="${MEDIA}/livetv.m3u"
-XML="${MEDIA}/livetv.xml"
+if [[ "${1:-}" == "--files-only" ]]; then
+    M3U="${MEDIA}/livetv-e2e.m3u"
+    XML="${MEDIA}/livetv-e2e.xml"
+    FILES_ONLY=1
+else
+    M3U="${MEDIA}/livetv.m3u"
+    XML="${MEDIA}/livetv.xml"
+    FILES_ONLY=0
+fi
 AUTH='MediaBrowser Client="seed-livetv", Device="seed-livetv", DeviceId="seed-livetv", Version="1"'
 
 api() {
     curl -fsS -X "$1" "$URL$2" -H "Authorization: $AUTH" -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
 
+if (( FILES_ONLY == 0 )); then
 token="$(api POST /Users/AuthenticateByName '{"Username":"admin","Pw":"jellyfin"}' | sed -E 's/.*"AccessToken":"([^"]+)".*/\1/')"
 authed() {
     curl -fsS -X "$1" "$URL$2" -H "Authorization: $AUTH, Token=\"$token\"" -H 'Content-Type: application/json' ${3:+-d "$3"}
@@ -22,6 +30,7 @@ authed() {
 user_id="$(authed GET /Users | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["Id"])')"
 policy="$(authed GET "/Users/${user_id}" | python3 -c 'import json,sys; x=json.load(sys.stdin)["Policy"]; x["EnableLiveTvManagement"]=True; print(json.dumps(x))')"
 authed POST "/Users/${user_id}/Policy" "$policy" >/dev/null
+fi
 
 mkdir -p "$MEDIA"
 cat > "$M3U" <<'EOF'
@@ -64,6 +73,11 @@ for day in -2 -1 0 1 2 3 4 5; do
 EOF
 done
 echo '</tv>' >> "$XML"
+
+if (( FILES_ONLY == 1 )); then
+    echo "Live TV fixtures written to $MEDIA"
+    exit 0
+fi
 
 tuner='{"Type":"m3u","Url":"/media/livetv.m3u","Source":"m3u","DeviceId":"jellyfin-livetv-m3u","FriendlyName":"Jellyfin Live TV M3U","TunerCount":6}'
 listing='{"Type":"xmltv","Path":"/media/livetv.xml","Enabled":true}'

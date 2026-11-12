@@ -40,9 +40,22 @@ unchanged.
   Metadata tests cover lazy media/Live TV roots, selected ancestors, tree labels, embedded versus
   dialog editor headers, and editor reloads. The existing metadata-editor suite also continues to
   cover its full field visibility and save payload contract.
-- Browser: `e2e/dashboard_livetv.py` is intended for the private `livetvadmin` server. Create
-  `/media/livetv-e2e.m3u` and `/media/livetv-e2e.xml` in that instance before running it, then
-  reset the instance immediately afterwards. `e2e/metadata.py` is safe against the shared server
+- Browser: `e2e/dashboard_livetv.py` is intended for the private `livetvadmin` server. Run these
+  exact commands; `--files-only` writes the fixtures on the host after `up` creates the instance,
+  without adding a tuner or provider:
+
+  ```sh
+  cd blazor
+  JELLYFIN_INSTANCE=livetvadmin JELLYFIN_PORT=18099 scripts/test-server.sh reset
+  JELLYFIN_INSTANCE=livetvadmin JELLYFIN_PORT=18099 scripts/test-server.sh up
+  JELLYFIN_INSTANCE=livetvadmin JELLYFIN_PORT=18099 scripts/seed-livetv.sh --files-only
+  JELLYFIN_URL=http://localhost:18099 ./dev e2e dashboard_livetv.py
+  JELLYFIN_INSTANCE=livetvadmin JELLYFIN_PORT=18099 scripts/test-server.sh reset
+  ```
+
+  The helper creates `/media/livetv-e2e.m3u` and `/media/livetv-e2e.xml` in the instance media
+  folder. `e2e/run` mounts `blazor/` read-only and does not mount that media folder into the
+  Playwright container, so this host-side step is required. `e2e/metadata.py` is safe against the shared server
   and does not save metadata.
 
 Schedules Direct needs a real external account/service, so its sign-in and lineup responses are

@@ -1,8 +1,12 @@
 """Live TV administration against its private Jellyfin test server.
 
-The private server has no tuner hardware.  The script creates an M3U playlist and XMLTV file in
-its mounted media directory, configures them through the ported forms, verifies the saved API
-state, and removes the provider and tuner before it exits.
+The private server has no tuner hardware.  Before running this script, create its host-side M3U
+playlist and XMLTV file with:
+
+    JELLYFIN_INSTANCE=livetvadmin JELLYFIN_PORT=18099 blazor/scripts/seed-livetv.sh --files-only
+
+The script configures the files through the ported forms, verifies the saved API state, and
+removes the provider and tuner before it exits.
 """
 import json
 import os
@@ -33,7 +37,6 @@ def open_page(page, route, selector):
 
 
 def main():
-    # The caller has already created these files in the private instance's media directory.
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = new_page(browser)
