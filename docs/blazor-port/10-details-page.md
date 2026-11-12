@@ -55,11 +55,11 @@ resume position for `btnPlay` when the item can be resumed and 0 for `btnReplay`
 - **`TrackSelection`**: version/video/audio/subtitle options and defaults of an item's media
   sources, independent of the page.
 - **`DetailsText`**: name lines with their links, artist links, external links, tags.
-- **`DetailsLiveTv`** (`PORT-TODO(livetv)`): the extension points of the Live TV workstream:
-  `RecordingFields(program)`, `SeriesTimerEditor(timer)`, `SeriesTimerSchedule(timer)`,
-  `ChannelGuide(channel)` return render fragments (now `null`), `CancelTimerAsync` and
-  `CancelSeriesTimerAsync` return whether the timer was cancelled (now `false`). The page already
-  decides when each shows, with the original rules.
+- **`DetailsLiveTv`**: the Live TV extension points are implemented:
+  `RecordingFields(program)`, `SeriesTimerEditor(timer)`, `SeriesTimerSchedule(timer)` and
+  `ChannelGuide(channel)` render the original controls and lists. `CancelTimerAsync` and
+  `CancelSeriesTimerAsync` confirm and call the matching Live TV delete endpoint. The page decides
+  when each shows with the original rules.
 - `PlayStateButton` and `RatingButton` (`Components/Items`) gained an optional `ContentClass`
   parameter (the `div.detailButton-content` around the icon).
 - `Components/Shell/UserViewNav.razor` highlights the library of the item on `/details`: it asks
@@ -98,9 +98,9 @@ this port changes:
 
 ## 5. Gaps
 
-- `PORT-TODO(livetv)`: record button and fields, series timer editor and schedule, channel
-  guide, cancelling timers (`DetailsLiveTv`); the buttons show per the original rules and do
-  nothing yet.
+- Live TV details controls are ported. The only intentional deviation is that the channel guide
+  uses the Blazor list container and groups by the browser's local calendar day; it keeps the
+  original classes, labels, fields and request parameters.
 - `PORT-TODO(details)`: the item's own website (`HomePageUrl`) is not in the SDK model, so it is
   missing from the external links.
 - Shared, not of this page: list-row overviews are plain text (`ListView`), scroller sections

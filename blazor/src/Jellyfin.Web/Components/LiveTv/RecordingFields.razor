@@ -1,0 +1,217 @@
+@namespace Jellyfin.Web.Components
+@*
+    The record buttons of a programme (components/recordingcreator/recordingfields.js + template):
+    record / do not record, record series / cancel series, and the links to the settings of the
+    timers. Used by the programme dialog and, without the wrapper, by the details page of a programme
+    (that page already has the .recordingFields element).
+*@
+@implements IDisposable
+@inject LiveTvData Data
+@inject RecordingHelper Recordings
+@inject AppDialogs Dialogs
+@inject ServerEvents Events
+@inject Globalize Globalize
+
+@if (!Bare)
+{
+    <div class="recordingFields">
+        @Buttons
+    </div>
+}
+else
+{
+    @Buttons
+}
+
+@code {
+    private static readonly string[] TimerMessages = ["TimerCreated", "TimerCancelled"];
+    private static readonly string[] SeriesTimerMessages = ["SeriesTimerCreated", "SeriesTimerCancelled"];
+
+    private readonly List<IDisposable> _subscriptions = [];
+    private string? _loadedFor;
+    private string? _timerId;
+    private string? _status;
+    private string? _seriesTimerId;
+    private bool _isSeries;
+    private bool _busy;
+    private bool _disposed;
+
+    /// <summary>The programme.</summary>
+    [Parameter, EditorRequired]
+    public string ProgramId { get; set; } = string.Empty;
+
+    /// <summary>Raised after a recording was scheduled or cancelled here (<c>recordingchanged</c>).</summary>
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    /// <summary>True on the details page, which already wraps these buttons in <c>.recordingFields</c>.</summary>
+    [Parameter]
+    public bool Bare { get; set; }
+
+    /// <summary>Whether anything was changed with these buttons (<c>hasChanged()</c>).</summary>
+    public bool HasChanged { get; private set; }
+
+    private bool HasTimer => !string.IsNullOrEmpty(_timerId) && _status != "Cancelled";
+
+    private bool HasSeriesTimer => !string.IsNullOrEmpty(_seriesTimerId);
+
+    /// <summary>The two rows of buttons, drawn once for both the wrapped and the bare form.</summary>
+    private RenderFragment Buttons => __builder =>
+    {
+        <div class="@("recordSeriesContainer recordingFields-buttons flex align-items-center" + (_isSeries ? null : " hide"))">
+            <div>
+                <button type="button" class="raised recordingButton seriesRecordingButton emby-button" disabled="@_busy" @onclick="ToggleSeriesAsync">
+                    <span class="@("material-icons recordingIcon fiber_smart_record" + (HasSeriesTimer ? " recordingIcon-active" : null))" aria-hidden="true"></span>
+                    <span class="buttonText">@Globalize[HasSeriesTimer ? "CancelSeries" : "RecordSeries"]</span>
+                </button>
+            </div>
+            <button type="button" class="@("button-flat secondaryText manageRecordingButton btnManageSeriesRecording emby-button" + (HasSeriesTimer ? null : " hide"))" @onclick="ManageSeriesAsync">
+                <span class="manageButtonText">@Globalize["SeriesSettings"]</span>
+            </button>
+        </div>
+        <div class="recordingFields-buttons flex align-items-center">
+            <div>
+                <button type="button" class="raised recordingButton singleRecordingButton emby-button" disabled="@_busy" @onclick="ToggleAsync">
+                    <span class="@("material-icons recordingIcon fiber_manual_record" + (HasTimer ? " recordingIcon-active" : null))" aria-hidden="true"></span>
+                    <span class="buttonText">@Globalize[HasTimer ? (_status == "InProgress" ? "StopRecording" : "DoNotRecord") : "Record"]</span>
+                </button>
+            </div>
+            <button type="button" class="@("button-flat secondaryText manageRecordingButton btnManageRecording emby-button" + (HasTimer ? null : " hide"))" @onclick="ManageAsync">
+                <span class="manageButtonText">@Globalize["Settings"]</span>
+            </button>
+        </div>
+    };
+
+    protected override void OnInitialized()
+    {
+        _subscriptions.Add(Events.Subscribe(TimerMessages, (_, data) => OnTimerChanged(data, _timerId)));
+        _subscriptions.Add(Events.Subscribe(SeriesTimerMessages, (_, data) => OnTimerChanged(data, _seriesTimerId)));
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedFor != ProgramId)
+        {
+            _loadedFor = ProgramId;
+            await FetchAsync();
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        foreach (var subscription in _subscriptions)
+        {
+            subscription.Dispose();
+        }
+    }
+
+    /// <summary>Reads the timers of the programme again (<c>refresh()</c>).</summary>
+    public async Task FetchAsync()
+    {
+        try
+        {
+            var program = await Data.GetProgramAsync(ProgramId);
+            if (program is null || _disposed)
+            {
+                return;
+            }
+
+            _timerId = program.TimerId;
+            _status = program.Status;
+            _seriesTimerId = program.SeriesTimerId;
+            _isSeries = program.IsSeries == true;
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn($"Live TV: loading the recording state of {ProgramId} failed: {exception.Message}");
+        }
+    }
+
+    private void OnTimerChanged(System.Text.Json.JsonElement data, string? ownId)
+    {
+        if (data.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            return;
+        }
+
+        var id = Member(data, "Id");
+        var programId = GuideProgram.Compact(Member(data, "ProgramId"));
+        if ((!string.IsNullOrEmpty(id) && id == ownId) || (!string.IsNullOrEmpty(programId) && programId == GuideProgram.Compact(ProgramId)))
+        {
+            _ = InvokeAsync(async () =>
+            {
+                await FetchAsync();
+                StateHasChanged();
+            });
+        }
+    }
+
+    private static string? Member(System.Text.Json.JsonElement data, string name) =>
+        data.TryGetProperty(name, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.String ? value.GetString() : null;
+
+    private async Task ToggleAsync()
+    {
+        HasChanged = true;
+        _busy = true;
+        try
+        {
+            var done = HasTimer ? await Recordings.CancelTimerAsync(_timerId!) : await Recordings.CreateRecordingAsync(ProgramId);
+            if (done)
+            {
+                await OnChanged.InvokeAsync();
+            }
+
+            await FetchAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ToggleSeriesAsync()
+    {
+        HasChanged = true;
+        _busy = true;
+        try
+        {
+            if (HasSeriesTimer)
+            {
+                await Recordings.CancelSeriesTimerAsync(_seriesTimerId!, "RecordingCancelled");
+            }
+            else if (!string.IsNullOrEmpty(_timerId))
+            {
+                await Recordings.ChangeRecordingToSeriesAsync(_timerId, ProgramId);
+            }
+            else
+            {
+                await Recordings.CreateRecordingAsync(ProgramId, true);
+            }
+
+            await FetchAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ManageAsync()
+    {
+        if (HasTimer)
+        {
+            await RecordingEditor.ShowAsync(Dialogs, _timerId!, enableCancel: false);
+            HasChanged = true;
+        }
+    }
+
+    private async Task ManageSeriesAsync()
+    {
+        if (HasSeriesTimer)
+        {
+            await SeriesRecordingEditor.ShowAsync(Dialogs, _seriesTimerId!, enableCancel: false);
+            HasChanged = true;
+        }
+    }
+}

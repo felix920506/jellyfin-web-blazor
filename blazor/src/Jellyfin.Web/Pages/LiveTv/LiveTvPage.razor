@@ -1,0 +1,9 @@
+@namespace Jellyfin.Web.Pages
+@*
+    The Live TV page of the modern layout (apps/modern/routes/livetv): the six tabs of
+    LiveTvRoutes.LiveTv, hosted by the shared library page.
+*@
+@attribute [Route("/livetv")]
+@attribute [Access(AccessLevel.User)]
+
+<LibraryPage Config="LiveTvRoutes.LiveTv" />

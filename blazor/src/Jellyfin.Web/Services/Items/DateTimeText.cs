@@ -70,5 +70,8 @@ public sealed class DateTimeText(Globalize globalize, IBrowser browser)
     public string FormatPlain(int value) => globalize.FormatNumber(value, NoGrouping);
 
     /// <summary>The calendar year of an instant in the user's time zone.</summary>
-    public int LocalYear(DateTimeOffset date) => date.ToOffset(TimeSpan.FromMinutes(browser.UtcOffsetMinutes(date))).Year;
+    public int LocalYear(DateTimeOffset date) => Local(date).Year;
+
+    /// <summary>The viewer's wall-clock reading of an instant (offset included, so the date is local).</summary>
+    public DateTimeOffset Local(DateTimeOffset date) => date.ToOffset(TimeSpan.FromMinutes(browser.UtcOffsetMinutes(date)));
 }

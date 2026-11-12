@@ -85,7 +85,7 @@
                     <div class="detailSection">
                         <TrackSelections Selection="_selection" SourceChanged="OnSourceChangedAsync" />
 
-                        @* PORT-TODO(livetv): the record button and its fields come from DetailsLiveTv. *@
+                        @* Live TV supplies the record button and its fields. *@
                         <div class="@("recordingFields" + (ShowRecordingFields(item) ? null : " hide"))" style="margin: 0.5em 0 1.5em;">
                             @if (ShowRecordingFields(item))
                             {
@@ -104,7 +104,6 @@
                             <div class="@("itemTags focuscontainer-x" + (_tags.Length > 0 ? null : " hide"))" style="margin: 0.7em 0; font-size: 92%;">@((MarkupString)_tags)</div>
                             <div class="@("itemExternalLinks focuscontainer-x" + (_links.Length > 0 ? null : " hide"))" style="margin: 0.7em 0; font-size: 92%;">@((MarkupString)_links)</div>
                             <div class="seriesRecordingEditor">
-                                @* PORT-TODO(livetv): the editor of a series timer comes from DetailsLiveTv. *@
                                 @if (item.TypeName() == "SeriesTimer")
                                 {
                                     @LiveTv.SeriesTimerEditor(item)
@@ -116,7 +115,6 @@
 
                         @if (item.TypeName() == "SeriesTimer")
                         {
-                            @* PORT-TODO(livetv): the schedule of a series timer comes from DetailsLiveTv. *@
                             var schedule = LiveTv.SeriesTimerSchedule(item);
                             <div id="seriesTimerScheduleSection" class="@("verticalSection detailVerticalSection" + (schedule is null ? " hide" : null))" style="margin-top: -3em;">
                                 <h2 class="sectionTitle">@Globalize["Schedule"]</h2>
@@ -141,7 +139,6 @@
 
                         @if (DetailsRules.ShowChannelGuide(item))
                         {
-                            @* PORT-TODO(livetv): the upcoming programmes of a channel come from DetailsLiveTv. *@
                             var guide = LiveTv.ChannelGuide(item);
                             <div class="@("programGuideSection verticalSection detailVerticalSection" + (guide is null ? " hide" : null))">
                                 <div class="programGuide">@guide</div>

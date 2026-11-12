@@ -76,7 +76,7 @@ public class ItemDialogCommandTests : ItemDialogsTestContext
         var timer = TestItems.Item(new { Id = MovieId, Name = type, ServerId = TestApp.ServerId });
         timer.EnsureExtras().TypeName = type;
 
-        Assert.False(Handlers.CanHandle(ItemCommand.Edit, timer));
+        Assert.True(Handlers.CanHandle(ItemCommand.Edit, timer));
         Assert.True(Handlers.CanHandle(ItemCommand.Refresh, timer));
     }
 

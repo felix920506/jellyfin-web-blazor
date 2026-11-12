@@ -1,0 +1,50 @@
+@namespace Jellyfin.Web.Components
+@*
+    The Series view (the series timers of liveTvTabContent): every series timer as a card, sorted by
+    name. The original sends no paging, filter or sort for this view.
+*@
+@inject LiveTvData Data
+@inject LoadingService Loading
+
+@if (_loaded && _items.Count == 0)
+{
+    <NoItemsMessage />
+}
+else
+{
+    <div class="padded-bottom-page">
+        <ItemsContainer Class="vertical-wrap padded-left padded-right" Items="_items" CardOptions="_cards" Context="@Content.CollectionType" />
+    </div>
+}
+
+@code {
+    private IReadOnlyList<Jellyfin.Sdk.Generated.Models.BaseItemDto> _items = [];
+    private CardOptions _cards = new();
+    private bool _loaded;
+
+    [Parameter, EditorRequired]
+    public LibraryTabContent Content { get; set; } = default!;
+
+    /// <summary>The library (?topParentId=); the series timers do not depend on it.</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cards = LibraryViewOptions.Cards(Content, new LibraryViewSettings());
+        Loading.Show();
+        try
+        {
+            _items = await Data.GetSeriesTimersAsync();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or System.Text.Json.JsonException)
+        {
+            AppLog.Warn("Live TV: loading the series timers failed: " + exception.Message);
+        }
+        finally
+        {
+            _loaded = true;
+            Loading.Hide();
+        }
+    }
+}

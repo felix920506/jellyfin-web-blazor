@@ -1,0 +1,131 @@
+@namespace Jellyfin.Web.Components
+@using System.Text.Json
+@using Jellyfin.Sdk.Generated.Models
+@*
+    The programme dialog (components/recordingcreator/recordingcreator.js): the programme, its record
+    buttons and, while it is on now, a Play button that plays the channel. Closing answers whether
+    a recording was scheduled or cancelled.
+*@
+@inject LiveTvData Data
+@inject IPlaybackManager Playback
+@inject MediaInfo Info
+@inject DateTimeText Dates
+@inject Globalize Globalize
+@inject LoadingService Loading
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Close(_changed)" />
+    <h3 class="formDialogHeaderTitle">@_program?.Name</h3>
+</div>
+<div class="formDialogContent smoothScrollY">
+    <form class="dialogContentInner dialog-content-centered" onsubmit="return false;">
+        @if (_program is { } program)
+        {
+            <div class="recordingDetailsContainer">
+                <div class="@("recordingDialog-imageContainer" + (ImageUrl(program) is null ? " hide" : null))">
+                    @if (ImageUrl(program) is { } url)
+                    {
+                        <img src="@url" class="recordingDialog-img" alt="" />
+                    }
+                </div>
+                <div class="recordingDetails">
+                    <h1 class="programDialog-itemName recordingDialog-itemName dialogContentTitle">@program.Name</h1>
+                    <p class="itemMiscInfoPrimary recordingDetailText">@((MarkupString)_primary)</p>
+                    <p class="itemMiscInfoSecondary recordingDetailText secondaryText">@((MarkupString)_secondary)</p>
+                    <p class="itemGenres secondaryText">@string.Join(" / ", program.Genres ?? [])</p>
+                    <div style="margin:.5em 0 1em;">
+                        <RecordingFields ProgramId="@ProgramId" OnChanged="OnRecordingChangedAsync" />
+                    </div>
+                </div>
+            </div>
+            <p class="itemOverview">@program.Overview</p>
+            <br />
+            <div class="@("formDialogFooter" + (OnNow(program) ? null : " hide"))">
+                <button type="button" class="raised btnPlay block formDialogFooterItem button-submit emby-button" @onclick="PlayAsync">
+                    <span>@Globalize["Play"]</span>
+                </button>
+            </div>
+        }
+    </form>
+</div>
+
+@code {
+    private static readonly MediaInfoOptions PrimaryOptions = new() { Interactive = false, EpisodeTitle = false, Subtitles = false };
+    private static readonly MediaInfoOptions SecondaryOptions = new() { Interactive = false };
+
+    private BaseItemDto? _program;
+    private string _primary = string.Empty;
+    private string _secondary = string.Empty;
+    private bool _changed;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The programme.</summary>
+    [Parameter, EditorRequired]
+    public string ProgramId { get; set; } = string.Empty;
+
+    /// <summary>Opens the dialog; true when a recording was scheduled or cancelled.</summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, string programId)
+    {
+        var result = await dialogs.ShowAsync<RecordingCreator>(
+            new Dictionary<string, object?> { ["ProgramId"] = programId },
+            new AppDialogOptions { Size = "small", Class = "formDialog recordingDialog" });
+        return result is true;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Loading.Show();
+        try
+        {
+            _program = await Data.GetProgramAsync(ProgramId);
+            if (_program is { } program)
+            {
+                _primary = Info.GetPrimaryHtml(program, PrimaryOptions);
+                _secondary = Info.GetSecondaryHtml(program, SecondaryOptions);
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
+        {
+            AppLog.Warn($"Live TV: loading programme {ProgramId} failed: {exception.Message}");
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    private async Task OnRecordingChangedAsync()
+    {
+        _changed = true;
+        if (await Data.GetProgramAsync(ProgramId) is { } program)
+        {
+            _program = program;
+            _secondary = Info.GetSecondaryHtml(program, SecondaryOptions);
+        }
+    }
+
+    private bool OnNow(BaseItemDto program) =>
+        program.StartDate is { } start && program.EndDate is { } end && Dates.Now >= start && Dates.Now < end;
+
+    private string? ImageUrl(BaseItemDto program)
+    {
+        if (program.ImageTag("Primary") is { Length: > 0 } primary)
+        {
+            return Data.GetImageUrl(program.IdText(), "Primary", primary, 200);
+        }
+
+        return program.ImageTag("Thumb") is { Length: > 0 } thumb ? Data.GetImageUrl(program.IdText(), "Thumb", thumb, 200) : null;
+    }
+
+    /// <summary>Play of a programme that is on now: the channel, not the programme (<c>executeCloseAction</c>).</summary>
+    private async Task PlayAsync()
+    {
+        if (_program?.ChannelId is { } channelId)
+        {
+            Dialog.Close(_changed);
+            await Playback.PlayAsync(new PlayOptions { Ids = [channelId.ToString("N")] });
+        }
+    }
+}

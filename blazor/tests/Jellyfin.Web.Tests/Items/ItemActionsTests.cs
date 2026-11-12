@@ -214,7 +214,8 @@ public class ItemActionsTests : ItemsTestContext
         Assert.Empty(Toasts);
 
         await Actions.ExecuteAsync(program, ItemAction.Record);
-        Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);
+        Assert.Empty(Toasts);
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Post);
     }
 
     [Fact]

@@ -1,0 +1,101 @@
+@namespace Jellyfin.Web.Components
+@*
+    The Programs, Recordings and Schedule views (ProgramsSectionView.tsx): the rows of
+    LiveTvSections.For and, on the Schedule view, the upcoming recordings grouped by the day they
+    start. The Recordings view also has the movies, shows, sports, kids and folder rows the task
+    asks for; the modern client shows only the latest recordings and the folders.
+*@
+@inject LiveTvData Data
+@inject DateTimeText Dates
+@inject AppRouter Router
+@inject Globalize Globalize
+@inject LoadingService Loading
+@implements IDisposable
+
+@if (_loaded && _rows.Count == 0 && _upcoming.Count == 0)
+{
+    <NoItemsMessage />
+}
+else
+{
+    <div class="padded-bottom-page">
+        @foreach (var row in _rows)
+        {
+            <ItemsSection @key="row.Section.Type" Title="@Globalize[row.Section.Name]" Href="@Router.GetListUrl(row.Section.List)"
+                          Items="row.Items" CardOptions="row.Section.Cards" Context="@Content.CollectionType" data-section="@row.Section.Type" />
+        }
+        @foreach (var group in _upcoming)
+        {
+            <ItemsSection @key="@($"upcoming-{group.Name}")" Title="@group.Name" Items="group.Items"
+                          CardOptions="LiveTvSections.UpcomingRecordingCards" Context="@Content.CollectionType" data-section="upcomingrecordings" />
+        }
+    </div>
+}
+
+@code {
+    private List<Row> _rows = [];
+    private IReadOnlyList<TimerGroup> _upcoming = [];
+    private bool _loaded;
+    private bool _disposed;
+
+    [Parameter, EditorRequired]
+    public LibraryTabContent Content { get; set; } = default!;
+
+    /// <summary>The library (?topParentId=); the sections do not depend on it.</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var rows = new List<Row>();
+            foreach (var section in Sections())
+            {
+                var items = await Data.GetSectionItemsAsync(section);
+                if (items.Count > 0)
+                {
+                    rows.Add(new Row(section, items));
+                }
+            }
+
+            IReadOnlyList<TimerGroup> upcoming = [];
+            if (LiveTvSections.HasUpcomingRecordings(Content.ViewType))
+            {
+                upcoming = LiveTvGrouping.GroupTimers(await Data.GetUpcomingRecordingsAsync(), Dates);
+            }
+
+            if (!_disposed)
+            {
+                _rows = rows;
+                _upcoming = upcoming;
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or System.Text.Json.JsonException)
+        {
+            AppLog.Warn($"Live TV: loading the {Content.ViewType} view failed: {exception.Message}");
+        }
+        finally
+        {
+            _loaded = true;
+            Loading.Hide();
+        }
+    }
+
+    public void Dispose() => _disposed = true;
+
+    /// <summary>
+    /// The rows of the view. Recordings adds the movies, shows, sports and kids rows (and keeps the
+    /// folders) on top of the modern client's latest recordings and folders.
+    /// </summary>
+    private IReadOnlyList<LiveTvSection> Sections()
+    {
+        var sections = LiveTvSections.For(Content.ViewType);
+        return Content.ViewType == LibraryTab.Recordings
+            ? [LiveTvSections.LatestRecordings, LiveTvSections.RecordingMovies, LiveTvSections.RecordingShows, LiveTvSections.RecordingSports, LiveTvSections.RecordingKids, LiveTvSections.AllRecordings]
+            : sections;
+    }
+
+    private sealed record Row(LiveTvSection Section, IReadOnlyList<Jellyfin.Sdk.Generated.Models.BaseItemDto> Items);
+}

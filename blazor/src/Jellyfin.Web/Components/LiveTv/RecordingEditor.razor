@@ -1,0 +1,153 @@
+@namespace Jellyfin.Web.Components
+@using System.Globalization
+@using System.Text.Json.Nodes
+@*
+    The options of one recording (components/recordingcreator/recordingeditor.js): how many minutes
+    before and after. Closing saves, unless the recording was cancelled; the hidden submit button is
+    what the original clicks on close.
+*@
+@inject LiveTvData Data
+@inject RecordingHelper Recordings
+@inject Globalize Globalize
+@inject LoadingService Loading
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="CloseAsync" />
+    <h3 class="formDialogHeaderTitle">@Globalize["HeaderRecordingOptions"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY">
+    <div class="dialogContentInner dialog-content-centered">
+        <form onsubmit="return false;">
+            <br />
+            <div class="inputContainer">
+                <div class="flex align-items-center">
+                    <div class="flex-grow">
+                        <EmbyInput Id="txtPrePaddingMinutes" Type="number" Label="@Globalize["LabelStartWhenPossible"]" Required="true"
+                                   Value="@_pre" ValueChanged="value => _pre = value" min="0" step="1" pattern="[0-9]*" />
+                    </div>
+                    <div class="fieldDescription" style="margin-left:.5em;font-size:90%;margin-top:1.3em;">@Globalize["MinutesBefore"]</div>
+                </div>
+            </div>
+            <div class="inputContainer">
+                <div class="flex align-items-center">
+                    <div class="flex-grow">
+                        <EmbyInput Id="txtPostPaddingMinutes" Type="number" Label="@Globalize["LabelStopWhenPossible"]" Required="true"
+                                   Value="@_post" ValueChanged="value => _post = value" min="0" step="1" pattern="[0-9]*" />
+                    </div>
+                    <div class="fieldDescription" style="margin-left:.5em;font-size:90%;margin-top:1.3em;">@Globalize["MinutesAfter"]</div>
+                </div>
+            </div>
+            <br />
+            <div class="@("formDialogFooter" + (EnableCancel ? null : " hide"))">
+                <button type="submit" class="raised btnSubmit block formDialogFooterItem button-submit hide emby-button" @onclick="SaveAsync">
+                    <span>@Globalize["Save"]</span>
+                </button>
+                @if (EnableCancel)
+                {
+                    <button type="button" class="raised btnCancelRecording block formDialogFooterItem button-cancel emby-button" style="white-space:nowrap;" @onclick="CancelAsync">
+                        <span>@Globalize["HeaderCancelRecording"]</span>
+                    </button>
+                }
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private JsonObject? _timer;
+    private string? _pre;
+    private string? _post;
+    private bool _deleted;
+    private bool _saving;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The timer.</summary>
+    [Parameter, EditorRequired]
+    public string TimerId { get; set; } = string.Empty;
+
+    /// <summary>False hides the cancel button, as the record button's "settings" link does.</summary>
+    [Parameter]
+    public bool EnableCancel { get; set; } = true;
+
+    /// <summary>Opens the editor. The result says whether the timer was saved or cancelled.</summary>
+    public static async Task<ItemCommandResult> ShowAsync(AppDialogs dialogs, string timerId, bool enableCancel = true)
+    {
+        var result = await dialogs.ShowAsync<RecordingEditor>(
+            new Dictionary<string, object?> { ["TimerId"] = timerId, ["EnableCancel"] = enableCancel },
+            new AppDialogOptions { Size = null, Class = "formDialog recordingDialog dialog-fullscreen-lowres" });
+        return result as ItemCommandResult ?? new ItemCommandResult(Updated: true);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Loading.Show();
+        try
+        {
+            _timer = await Data.GetTimerAsync(TimerId);
+            if (_timer is { } timer)
+            {
+                _pre = Minutes(timer, "PrePaddingSeconds");
+                _post = Minutes(timer, "PostPaddingSeconds");
+            }
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn($"Live TV: loading timer {TimerId} failed: {exception.Message}");
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    private async Task CloseAsync()
+    {
+        if (!_deleted)
+        {
+            await SaveAsync();
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving || _deleted || _timer is not { } timer)
+        {
+            Dialog.Close(new ItemCommandResult(Updated: true));
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            timer["PrePaddingSeconds"] = Minutes(_pre) * 60;
+            timer["PostPaddingSeconds"] = Minutes(_post) * 60;
+            await Data.UpdateTimerAsync(timer);
+            Dialog.Close(new ItemCommandResult(Updated: true));
+        }
+        catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
+        {
+            AppLog.Warn($"Live TV: saving timer {TimerId} failed: {exception.Message}");
+            Dialog.Close(ItemCommandResult.None);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CancelAsync()
+    {
+        if (await Recordings.CancelTimerWithConfirmationAsync(TimerId))
+        {
+            _deleted = true;
+            Dialog.Close(new ItemCommandResult(Updated: true, Deleted: true));
+        }
+    }
+
+    private static string Minutes(JsonObject timer, string name) =>
+        (timer.Number(name) is { } seconds ? seconds / 60 : 0).ToString(CultureInfo.InvariantCulture);
+
+    private static int Minutes(string? text) => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes) ? minutes : 0;
+}
