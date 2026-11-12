@@ -30,12 +30,12 @@ public static class NamedConfiguration
     }
 
     /// <summary>A text property; null when it is missing or not a text.</summary>
-    public static string? Text(this JsonObject configuration, string name) =>
-        configuration[name] is JsonValue value && value.GetValueKind() == JsonValueKind.String ? value.GetValue<string>() : null;
+    public static string? Text(this JsonObject? configuration, string name) =>
+        configuration?[name] is JsonValue value && value.GetValueKind() == JsonValueKind.String ? value.GetValue<string>() : null;
 
     /// <summary>A text or number property as the text a field shows; null when missing.</summary>
-    public static string? Shown(this JsonObject configuration, string name) =>
-        configuration[name] is JsonValue value
+    public static string? Shown(this JsonObject? configuration, string name) =>
+        configuration?[name] is JsonValue value
             ? value.GetValueKind() switch
             {
                 JsonValueKind.String => value.GetValue<string>(),
@@ -45,13 +45,13 @@ public static class NamedConfiguration
             : null;
 
     /// <summary>A yes/no property; false when missing (as an unchecked box of the original).</summary>
-    public static bool Flag(this JsonObject configuration, string name) =>
-        configuration[name] is JsonValue value && value.GetValueKind() == JsonValueKind.True;
+    public static bool Flag(this JsonObject? configuration, string name) =>
+        configuration?[name] is JsonValue value && value.GetValueKind() == JsonValueKind.True;
 
     /// <summary>A number property; also a number the server sent as text. Null when missing.</summary>
-    public static double? Number(this JsonObject configuration, string name)
+    public static double? Number(this JsonObject? configuration, string name)
     {
-        if (configuration[name] is not JsonValue value)
+        if (configuration?[name] is not JsonValue value)
         {
             return null;
         }
@@ -65,14 +65,14 @@ public static class NamedConfiguration
     }
 
     /// <summary>A whole number property; null when missing or not whole.</summary>
-    public static int? Whole(this JsonObject configuration, string name) =>
+    public static int? Whole(this JsonObject? configuration, string name) =>
         configuration.Number(name) is { } number && Math.Abs(number - Math.Round(number)) < double.Epsilon && Math.Abs(number) <= int.MaxValue
             ? (int)number
             : null;
 
     /// <summary>A list of texts; empty when missing.</summary>
-    public static List<string> Texts(this JsonObject configuration, string name) =>
-        configuration[name] is JsonArray array
+    public static List<string> Texts(this JsonObject? configuration, string name) =>
+        configuration?[name] is JsonArray array
             ? array
                 .OfType<JsonValue>()
                 .Where(value => value.GetValueKind() == JsonValueKind.String)
@@ -81,7 +81,7 @@ public static class NamedConfiguration
             : [];
 
     /// <summary>Whether the property holds a list (the original only edits a codec list that exists).</summary>
-    public static bool HasList(this JsonObject configuration, string name) => configuration[name] is JsonArray;
+    public static bool HasList(this JsonObject? configuration, string name) => configuration?[name] is JsonArray;
 
     /// <summary>Stores a list of texts.</summary>
     public static void SetTexts(this JsonObject configuration, string name, IEnumerable<string> values) =>
