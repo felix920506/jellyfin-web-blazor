@@ -1,0 +1,129 @@
+@* A user's settings on four tabs. Port of apps/dashboard/routes/users/edit.tsx.
+   The original route is /dashboard/users/{userId}/{tab}; /dashboard/users/profile?userId= (and
+   access, parentalcontrol, password) lead here as well. *@
+@attribute [Route("/dashboard/users/{userId}/{tab}")]
+@attribute [Route("/dashboard/users/profile")]
+@attribute [Route("/dashboard/users/access")]
+@attribute [Route("/dashboard/users/parentalcontrol")]
+@attribute [Route("/dashboard/users/password")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject AppRouter Router
+@inject DashboardUserCache Cache
+@inject Globalize Globalize
+
+<Page Id="usersEditPage" Title="@_user?.Name" Class="mainAnimatedPage type-interior">
+    @if (_user is null && !_failed)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_user is null)
+            {
+                <MudAlert Severity="Severity.Error" Class="jf-dashboard-user-error">@Globalize["UsersEditPageError"]</MudAlert>
+            }
+            else
+            {
+                <div class="jf-dashboard-stack">
+                    <MudText Typo="Typo.h1" Class="jf-dashboard-user-name">@_user.Name</MudText>
+                    <MudTabs Elevation="0" ActivePanelIndex="ActiveIndex" ActivePanelIndexChanged="OnTabChanged" Class="jf-dashboard-tabs">
+                        @foreach (var tab in Tabs)
+                        {
+                            <MudTabPanel @key="tab.Id" ID="@tab.Id" Text="@Globalize[tab.Title]" />
+                        }
+                    </MudTabs>
+                    @switch (ActiveTab)
+                    {
+                        case "profile":
+                            <DashboardUserProfileTab User="_user" />
+                            break;
+                        case "access":
+                            <DashboardUserAccessTab UserId="_user.Id!.Value" />
+                            break;
+                        case "parentalcontrol":
+                            <DashboardUserParentalTab UserId="_user.Id!.Value" />
+                            break;
+                        case "password":
+                            <div>
+                                <div class="readOnlyContent">
+                                    <UserPasswordForm User="_user" />
+                                </div>
+                            </div>
+                            break;
+                    }
+                </div>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private static readonly (string Id, string Title)[] Tabs =
+    [
+        ("profile", "Profile"),
+        ("access", "TabAccess"),
+        ("parentalcontrol", "TabParentalControl"),
+        ("password", "HeaderPassword"),
+    ];
+
+    private UserDto? _user;
+    private Guid? _userId;
+    private bool _failed;
+
+    /// <summary>The user's id, from the path or the query; the signed-in user without one.</summary>
+    [Parameter]
+    public string? UserId { get; set; }
+
+    /// <summary>The tab from the path; the short routes name it with their last segment.</summary>
+    [Parameter]
+    public string? Tab { get; set; }
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    private string ActiveTab =>
+        (string.IsNullOrEmpty(Tab) ? Location.Path[(Location.Path.LastIndexOf('/') + 1)..] : Tab).ToLowerInvariant();
+
+    private int ActiveIndex => Math.Max(0, Array.FindIndex(Tabs, tab => tab.Id == ActiveTab));
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userId = UserPages.ResolveUserId(Api, UserId);
+        if (_userId is not { } id)
+        {
+            _failed = true;
+            return;
+        }
+
+        _user = Cache.Get(id);
+        try
+        {
+            var user = await UserPages.GetUserAsync(Api, id);
+            if (user?.Id is null)
+            {
+                throw new InvalidOperationException("the server returned no user");
+            }
+
+            _user = user;
+            Cache.Set(user);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[UserEdit] unable to load the user: " + ex.Message);
+            Cache.Clear();
+            _user = null;
+            _failed = true;
+        }
+    }
+
+    private void OnTabChanged(int index)
+    {
+        if (index >= 0 && index < Tabs.Length && index != ActiveIndex && _userId is { } id)
+        {
+            Router.Navigate($"/dashboard/users/{id:N}/{Tabs[index].Id}");
+        }
+    }
+}

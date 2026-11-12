@@ -1,0 +1,158 @@
+@* One log file as text, which can be copied, downloaded and watched. Port of apps/dashboard/routes/logs/file.tsx. *@
+@attribute [Route("/dashboard/logs/{file}")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@implements IDisposable
+@inject JellyfinApi Api
+@inject Globalize Globalize
+@inject ToastService Toasts
+@inject IDashboardInterop Interop
+
+<Page Id="logPage" Title="@File" Class="mainAnimatedPage type-interior">
+    <div class="content-primary jf-dashboard-log-file">
+        <MudText Typo="Typo.h1" Class="jf-dashboard-wrap">@File</MudText>
+
+        @if (_failed)
+        {
+            <MudAlert Severity="Severity.Error" Class="jf-dashboard-log-error">
+                <div class="jf-dashboard-alert-row">
+                    <span>@Globalize["LogLoadFailure"]</span>
+                    <MudButton Variant="Variant.Text" Color="Color.Inherit" Size="Size.Small" Class="jf-dashboard-log-retry"
+                               OnClick="ReloadAsync">@Globalize["Retry"]</MudButton>
+                </div>
+            </MudAlert>
+        }
+        else if (_log is null)
+        {
+            <DashboardLoading />
+        }
+        else
+        {
+            @Buttons
+            <MudPaper Class="jf-dashboard-log-paper">
+                <code><pre class="jf-dashboard-log-text">@_log</pre></code>
+            </MudPaper>
+            @Buttons
+        }
+    </div>
+</Page>
+
+@code {
+    private string? _log;
+    private bool _failed;
+    private bool _watching;
+    private bool _scrollToBottom;
+    private CancellationTokenSource? _watch;
+
+    /// <summary>The log file's name.</summary>
+    [Parameter]
+    public string? File { get; set; }
+
+    /// <summary>How often a watched log is read again.</summary>
+    internal TimeSpan WatchInterval { get; set; } = TimeSpan.FromSeconds(2);
+
+    private RenderFragment Buttons => @<MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Class="jf-dashboard-log-buttons">
+        <MudButton StartIcon="@MdIcon.Of("content_copy")" Class="jf-dashboard-log-copy" OnClick="CopyAsync">@Globalize["Copy"]</MudButton>
+        <MudButton StartIcon="@MdIcon.Of("file_download")" Class="jf-dashboard-log-download" OnClick="DownloadAsync">@Globalize["Download"]</MudButton>
+        <MudButton StartIcon="@MdIcon.Of(_watching ? "visibility_off" : "visibility")" Class="jf-dashboard-log-watch" OnClick="ToggleWatch">
+            @Globalize[_watching ? "Unwatch" : "Watch"]
+        </MudButton>
+    </MudButtonGroup>;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_scrollToBottom)
+        {
+            _scrollToBottom = false;
+            await Interop.ScrollToBottomAsync();
+        }
+    }
+
+    public void Dispose() => StopWatching();
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            var name = File ?? string.Empty;
+            await using var stream = await Api.Client.System.Logs.Log.GetAsync(request => request.QueryParameters.Name = name);
+            var text = string.Empty;
+            if (stream is not null)
+            {
+                using var reader = new StreamReader(stream);
+                text = await reader.ReadToEndAsync();
+            }
+
+            // A reader who is at the end of the log stays there when it grows.
+            var follow = _log is not null && text != _log && await Interop.IsAtBottomAsync();
+            _log = text;
+            _failed = false;
+            _scrollToBottom |= follow;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Logs] unable to load the log file: " + ex.Message);
+            _failed = true;
+        }
+    }
+
+    private async Task CopyAsync()
+    {
+        if (_log is not null && await Interop.CopyTextAsync(_log))
+        {
+            Toasts.Show(Globalize["CopyLogSuccess"]);
+        }
+    }
+
+    private async Task DownloadAsync()
+    {
+        if (_log is not null && !string.IsNullOrEmpty(File))
+        {
+            await Interop.DownloadTextAsync(_log, File);
+        }
+    }
+
+    private void ToggleWatch()
+    {
+        if (_watching)
+        {
+            StopWatching();
+            return;
+        }
+
+        _watching = true;
+        _scrollToBottom = true;
+        _watch = new CancellationTokenSource();
+        _ = WatchAsync(_watch.Token);
+    }
+
+    private void StopWatching()
+    {
+        _watching = false;
+        _watch?.Cancel();
+        _watch?.Dispose();
+        _watch = null;
+    }
+
+    private async Task WatchAsync(CancellationToken cancellation)
+    {
+        try
+        {
+            while (!cancellation.IsCancellationRequested)
+            {
+                await Task.Delay(WatchInterval, cancellation);
+                await InvokeAsync(async () =>
+                {
+                    await ReloadAsync();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Watching ended.
+        }
+    }
+}

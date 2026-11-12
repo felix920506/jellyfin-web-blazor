@@ -1,0 +1,188 @@
+@* The access tab of the user editor: which libraries, channels and devices the user may use.
+   Port of apps/dashboard/features/users/components/Access.tsx. *@
+@namespace Jellyfin.Web.Components
+@inject JellyfinApi Api
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div>
+    <form class="userLibraryAccessForm" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+        <DashboardAccessContainer ContainerClass="folderAccessContainer" HeaderTitle="HeaderLibraryAccess"
+                                  CheckBoxClass="chkEnableAllFolders" CheckBoxTitle="OptionEnableAccessToAllLibraries"
+                                  ListContainerClass="folderAccessListContainer" AccessClass="folderAccess"
+                                  ListTitle="HeaderLibraries" Description="LibraryAccessHelp" @bind-All="_allFolders">
+            @foreach (var folder in _folders)
+            {
+                <DashboardCheckBox @key="folder.Id" Class="chkFolder" Label="@folder.Name" data-id="@UserPages.IdText(folder.Id)"
+                                   Value="@(folder.Id is { } id && _enabledFolders.Contains(id))" ValueChanged="@(on => Check(_enabledFolders, folder.Id, on))" />
+            }
+        </DashboardAccessContainer>
+
+        <DashboardAccessContainer ContainerClass="channelAccessContainer" Hidden="@(_channels.Count == 0)" HeaderTitle="HeaderChannelAccess"
+                                  CheckBoxClass="chkEnableAllChannels" CheckBoxTitle="OptionEnableAccessToAllChannels"
+                                  ListContainerClass="channelAccessListContainer" AccessClass="channelAccess"
+                                  ListTitle="Channels" Description="ChannelAccessHelp" @bind-All="_allChannels">
+            @foreach (var channel in _channels)
+            {
+                <DashboardCheckBox @key="channel.Id" Class="chkChannel" Label="@channel.Name" data-id="@UserPages.IdText(channel.Id)"
+                                   Value="@(channel.Id is { } id && _enabledChannels.Contains(id))" ValueChanged="@(on => Check(_enabledChannels, channel.Id, on))" />
+            }
+        </DashboardAccessContainer>
+
+        <DashboardAccessContainer ContainerClass="deviceAccessContainer" Hidden="@(!_loaded || _isAdministrator)" HeaderTitle="HeaderDeviceAccess"
+                                  CheckBoxClass="chkEnableAllDevices" CheckBoxTitle="OptionEnableAccessFromAllDevices"
+                                  ListContainerClass="deviceAccessListContainer" AccessClass="deviceAccess"
+                                  ListTitle="HeaderDevices" Description="DeviceAccessHelp" @bind-All="_allDevices">
+            @foreach (var device in _devices)
+            {
+                <DashboardCheckBox @key="device.Id" Class="chkDevice" Label="@DeviceLabel(device)" data-id="@device.Id"
+                                   Value="@(device.Id is { } id && _enabledDevices.Contains(id))" ValueChanged="@(on => Check(_enabledDevices, device.Id, on))" />
+            }
+        </DashboardAccessContainer>
+        <br />
+        <div>
+            <EmbyButton Type="submit" Class="raised button-submit block">
+                <span>@Globalize["Save"]</span>
+            </EmbyButton>
+        </div>
+    </form>
+</div>
+
+@code {
+    private readonly HashSet<Guid> _enabledFolders = [];
+    private readonly HashSet<Guid> _enabledChannels = [];
+    private readonly HashSet<string> _enabledDevices = [];
+    private List<BaseItemDto> _folders = [];
+    private List<BaseItemDto> _channels = [];
+    private List<DeviceInfoDto> _devices = [];
+    private bool _allFolders;
+    private bool _allChannels;
+    private bool _allDevices;
+    private bool _isAdministrator;
+    private bool _loaded;
+
+    /// <summary>The user that is edited.</summary>
+    [Parameter, EditorRequired]
+    public Guid UserId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var user = UserPages.GetUserAsync(Api, UserId);
+            var folders = Api.Client.Library.MediaFolders.GetAsync(request => request.QueryParameters.IsHidden = false);
+            var channels = Api.Client.Channels.GetAsync();
+            var devices = Api.Client.Devices.GetAsync();
+
+            var policy = (await user)?.Policy;
+            _folders = (await folders)?.Items ?? [];
+            _channels = (await channels)?.Items ?? [];
+            _devices = (await devices)?.Items ?? [];
+
+            // With "all" on, every entry is ticked, as in the original.
+            _allChannels = policy?.EnableAllChannels == true;
+            Fill(_enabledChannels, _allChannels ? Ids(_channels) : policy?.EnabledChannels);
+            _allFolders = policy?.EnableAllFolders == true;
+            Fill(_enabledFolders, _allFolders ? Ids(_folders) : policy?.EnabledFolders);
+            _allDevices = policy?.EnableAllDevices == true;
+            _enabledDevices.Clear();
+            _enabledDevices.UnionWith((_allDevices ? _devices.Select(device => device.Id) : policy?.EnabledDevices ?? []).OfType<string>());
+            _isAdministrator = policy?.IsAdministrator == true;
+            _loaded = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[UserAccess] unable to load the data: " + ex.Message);
+        }
+
+        Loading.Hide();
+    }
+
+    private static IEnumerable<Guid?> Ids(List<BaseItemDto> items) => items.Select(item => item.Id);
+
+    private static void Fill(HashSet<Guid> set, IEnumerable<Guid?>? ids)
+    {
+        set.Clear();
+        set.UnionWith((ids ?? []).OfType<Guid>());
+    }
+
+    private static void Check(HashSet<Guid> set, Guid? id, bool on)
+    {
+        if (id is not { } value)
+        {
+            return;
+        }
+
+        if (on)
+        {
+            set.Add(value);
+        }
+        else
+        {
+            set.Remove(value);
+        }
+    }
+
+    private static void Check(HashSet<string> set, string? id, bool on)
+    {
+        if (id is null)
+        {
+            return;
+        }
+
+        if (on)
+        {
+            set.Add(id);
+        }
+        else
+        {
+            set.Remove(id);
+        }
+    }
+
+    private static string DeviceLabel(DeviceInfoDto device) => string.Join(
+        " - ",
+        new[] { string.IsNullOrEmpty(device.CustomName) ? device.Name : device.CustomName, device.AppName }.Where(part => !string.IsNullOrEmpty(part)));
+
+    private async Task SaveAsync()
+    {
+        Loading.Show();
+        try
+        {
+            // The policy as the server has it now, with this tab's part replaced.
+            var user = await UserPages.GetUserAsync(Api, UserId);
+            if (user?.Id is not { } id || user.Policy is not { } policy)
+            {
+                throw new InvalidOperationException("Unexpected null user id or policy");
+            }
+
+            policy.EnableAllFolders = _allFolders;
+            policy.EnabledFolders = _allFolders
+                ? []
+                : _folders.Where(folder => folder.Id is { } folderId && _enabledFolders.Contains(folderId)).Select(folder => folder.Id).ToList();
+            policy.EnableAllChannels = _allChannels;
+            policy.EnabledChannels = _allChannels
+                ? []
+                : _channels.Where(channel => channel.Id is { } channelId && _enabledChannels.Contains(channelId)).Select(channel => channel.Id).ToList();
+            policy.EnableAllDevices = _allDevices;
+            policy.EnabledDevices = _allDevices
+                ? []
+                : _devices.Select(device => device.Id).OfType<string>().Where(_enabledDevices.Contains).ToList();
+            policy.BlockedChannels = null;
+            policy.BlockedMediaFolders = null;
+
+            await Api.Client.Users[id].Policy.PostAsync(policy);
+            Loading.Hide();
+            Toasts.Show(Globalize["SettingsSaved"]);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The original leaves its loading indicator on here; this one says that saving failed.
+            AppLog.Warn("[UserAccess] saving the access rights failed: " + ex.Message);
+            Loading.Hide();
+            Toasts.Show(Globalize["ErrorDefault"]);
+        }
+    }
+}

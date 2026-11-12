@@ -1,0 +1,22 @@
+@* A titled block of the dashboard's start page; the title links to the page with more.
+   Port of apps/dashboard/components/widgets/Widget.tsx. *@
+@namespace Jellyfin.Web.Components
+
+<div class="jf-dashboard-widget">
+    <MudButton Href="@Href" Variant="Variant.Text" Color="Color.Inherit" EndIcon="@MdIcon.Of("chevron_right")" Class="jf-dashboard-widget-title">
+        <MudText Typo="Typo.h3" HtmlTag="span">@Title</MudText>
+    </MudButton>
+    @ChildContent
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Where the title leads, e.g. "#/dashboard/tasks".</summary>
+    [Parameter, EditorRequired]
+    public string Href { get; set; } = string.Empty;
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

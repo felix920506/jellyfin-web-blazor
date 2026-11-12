@@ -1,0 +1,141 @@
+@* One active device of the start page: what it plays, how, and the remote controls.
+   Port of apps/dashboard/features/devices/components/DeviceCard.tsx. *@
+@namespace Jellyfin.Web.Components
+@using System.Globalization
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject DashboardSessions Sessions
+@inject Globalize Globalize
+
+<MudCard Class="jf-dashboard-device-card" data-deviceid="@Device.DeviceId">
+    <div class="jf-dashboard-device-media @SessionUi.DefaultBackgroundClass(Device.Id)" style="@(_imageUrl is null ? null : $"background-image:url('{_imageUrl}')")">
+        <div class="jf-dashboard-device-info @(_imageUrl is null ? null : "jf-dashboard-device-info-shaded")">
+            <div class="jf-dashboard-device-row">
+                <img class="jf-dashboard-device-icon" src="@DeviceIcons.For(Device)" alt="@Device.DeviceName" />
+                <div class="jf-dashboard-device-names">
+                    <MudText>@Device.DeviceName</MudText>
+                    <MudText>@(Device.Client + " " + Device.ApplicationVersion)</MudText>
+                </div>
+            </div>
+            <div class="jf-dashboard-device-row jf-dashboard-device-playing">
+                <div class="jf-dashboard-device-names jf-dashboard-device-now-playing">
+                    @if (_name.LogoUrl is { } logo)
+                    {
+                        <img class="jf-dashboard-device-logo" src="@logo" alt="Media Icon" />
+                    }
+                    else
+                    {
+                        <MudText>@_name.TopText</MudText>
+                    }
+                    <MudText>@_name.BottomText</MudText>
+                </div>
+                @if (IsPlayingMedia)
+                {
+                    var (start, end) = DashboardSessions.GetNowPlayingTime(Device);
+                    <MudText Class="jf-dashboard-device-time">@start / @end</MudText>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (Device.PlayState?.PositionTicks is { } position && Device.NowPlayingItem?.RunTimeTicks is { } runtime)
+    {
+        var played = runtime > 0 ? Math.Clamp(position / (double)runtime * 100, 0, 100) : 0;
+        var transcoded = Math.Clamp(Device.TranscodingInfo?.CompletionPercentage ?? 0, 0, 100);
+        <div class="jf-dashboard-device-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@Percent(played)">
+            <div class="jf-dashboard-device-progress-buffer" style="width:@(Percent(transcoded))%"></div>
+            <div class="jf-dashboard-device-progress-value" style="width:@(Percent(played))%"></div>
+        </div>
+    }
+
+    <div class="jf-dashboard-device-actions">
+        @if (CanControl && IsPlayingMedia)
+        {
+            <MudIconButton Icon="@MdIcon.Of(Device.PlayState?.IsPaused == true ? "play_arrow" : "pause")" Class="jf-dashboard-device-playpause"
+                           aria-label="@Globalize[Device.PlayState?.IsPaused == true ? "Play" : "ButtonPause"]" OnClick="@(() => SendCommandAsync("PlayPause"))" />
+            <MudIconButton Icon="@MdIcon.Of("stop")" Class="jf-dashboard-device-stop" aria-label="@Globalize["ButtonStop"]"
+                           OnClick="@(() => SendCommandAsync("Stop"))" />
+        }
+        @if (IsPlayingMedia)
+        {
+            <MudIconButton Icon="@MdIcon.Of("info")" Class="jf-dashboard-device-playbackinfo" aria-label="@Globalize["ViewPlaybackInfo"]"
+                           OnClick="ShowPlaybackInfoAsync" />
+        }
+        @if (CanControl)
+        {
+            <MudIconButton Icon="@MdIcon.Of("comment")" Class="jf-dashboard-device-message" aria-label="@Globalize["SendMessage"]"
+                           OnClick="SendMessageAsync" />
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(Device.UserName))
+    {
+        <div class="jf-dashboard-device-user">
+            <MudText>@Device.UserName</MudText>
+        </div>
+    }
+</MudCard>
+
+@code {
+    private NowPlayingName _name = new(null, string.Empty, null);
+    private string? _imageUrl;
+
+    [Parameter, EditorRequired]
+    public SessionInfoDto Device { get; set; } = default!;
+
+    private bool CanControl => !string.IsNullOrEmpty(Device.ServerId) && Device.SupportsRemoteControl == true;
+
+    private bool IsPlayingMedia => Device.NowPlayingItem is not null;
+
+    protected override void OnParametersSet()
+    {
+        _name = Sessions.GetNowPlayingName(Device);
+        _imageUrl = Sessions.GetNowPlayingImageUrl(Device.NowPlayingItem);
+    }
+
+    private static string Percent(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private async Task SendCommandAsync(string command)
+    {
+        if (Device.Id is not { } sessionId)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.SendAsync(HttpMethod.Post, $"Sessions/{Uri.EscapeDataString(sessionId)}/Playing/{command}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn($"[DeviceCard] {command} failed: {ex.Message}");
+        }
+    }
+
+    private async Task ShowPlaybackInfoAsync()
+    {
+        if (Sessions.GetPlaybackInfo(Device) is { } info)
+        {
+            await Dialogs.MuiAlertAsync(info.Title, info.Text);
+        }
+    }
+
+    private async Task SendMessageAsync()
+    {
+        var text = await Dialogs.MuiInputAsync(
+            Globalize["HeaderSendMessage"], Globalize["LabelMessageText"], confirmText: Globalize["ButtonSend"]);
+        if (text is null || Device.Id is not { } sessionId)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.Sessions[sessionId].Message.PostAsync(new MessageCommand { Text = text, TimeoutMs = 5000 });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[DeviceCard] sending the message failed: " + ex.Message);
+        }
+    }
+}

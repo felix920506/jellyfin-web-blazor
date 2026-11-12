@@ -1,0 +1,247 @@
+@* The parental control tab of the user editor: the highest allowed rating, unrated content, tags
+   and the hours the user may sign in. Port of apps/dashboard/features/users/components/ParentalControl.tsx
+   with its AccessScheduleList and TagList. *@
+@namespace Jellyfin.Web.Components
+@using System.Globalization
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject TaskTriggerText TriggerText
+@inject Globalize Globalize
+
+<div>
+    <form class="userParentalControlForm" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+        <EmbySelect Id="selectMaxParentalRating" Label="@Globalize["LabelMaxParentalRating"]" Description="@Globalize["MaxParentalRatingHelp"]"
+                    @bind-Value="_rating">
+            <option value=""></option>
+            @for (var i = 0; i < _ratings.Count; i++)
+            {
+                if (_ratings[i].Score is not null)
+                {
+                    <option value="@i.ToString(CultureInfo.InvariantCulture)">@_ratings[i].Name</option>
+                }
+            }
+        </EmbySelect>
+        <div>
+            <div class="blockUnratedItems">
+                <h3 class="checkboxListLabel">@Globalize["HeaderBlockItemsWithNoRating"]</h3>
+                <div class="checkboxList paperList" style="padding:.5em 1em;">
+                    @foreach (var (key, value) in UnratedItems)
+                    {
+                        <DashboardCheckBox @key="value" Class="chkUnratedItem" Label="@Globalize[key]" data-itemtype="@value.ToString()"
+                                           Value="@_unrated.Contains(value)" ValueChanged="@(on => CheckUnrated(value, on))" />
+                    }
+                </div>
+            </div>
+        </div>
+        <br />
+        <div class="verticalSection" style="margin-bottom:2em;">
+            <DashboardSectionTitle SectionClass="detailSectionHeader" Title="@Globalize["LabelAllowContentWithTags"]"
+                                   ButtonIcon="add" ButtonId="btnAddAllowedTag" ButtonTitle="@Globalize["Add"]"
+                                   OnButtonClick="@(() => AddTagAsync(_allowedTags))" />
+            <div class="fieldDescription">@Globalize["AllowContentWithTagsHelp"]</div>
+            <div class="allowedTags" style="margin-top:.5em;">
+                @foreach (var tag in _allowedTags)
+                {
+                    <div @key="tag" class="paperList">
+                        <div class="listItem">
+                            <div class="listItemBody">
+                                <h3 class="listItemBodyText">@tag</h3>
+                            </div>
+                            <IconButton Icon="delete" Class="allowedTag btnDeleteTag listItemButton" Title="@Globalize["Delete"]" data-tag="@tag"
+                                        OnClick="@(() => _allowedTags.Remove(tag))" />
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="verticalSection" style="margin-bottom:2em;">
+            <DashboardSectionTitle SectionClass="detailSectionHeader" Title="@Globalize["LabelBlockContentWithTags"]"
+                                   ButtonIcon="add" ButtonId="btnAddBlockedTag" ButtonTitle="@Globalize["Add"]"
+                                   OnButtonClick="@(() => AddTagAsync(_blockedTags))" />
+            <div class="fieldDescription">@Globalize["BlockContentWithTagsHelp"]</div>
+            <div class="blockedTags" style="margin-top:.5em;">
+                @foreach (var tag in _blockedTags)
+                {
+                    <div @key="tag" class="paperList">
+                        <div class="listItem">
+                            <div class="listItemBody">
+                                <h3 class="listItemBodyText">@tag</h3>
+                            </div>
+                            <IconButton Icon="delete" Class="blockedTag btnDeleteTag listItemButton" Title="@Globalize["Delete"]" data-tag="@tag"
+                                        OnClick="@(() => _blockedTags.Remove(tag))" />
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="accessScheduleSection verticalSection @(_isAdministrator ? "hide" : null)" style="margin-bottom:2em;">
+            <DashboardSectionTitle Title="@Globalize["HeaderAccessSchedule"]"
+                                   ButtonIcon="add" ButtonId="btnAddSchedule" ButtonTitle="@Globalize["Add"]"
+                                   OnButtonClick="AddScheduleAsync" />
+            <p>@Globalize["HeaderAccessScheduleHelp"]</p>
+            <div class="accessScheduleList paperList">
+                @for (var i = 0; i < _schedules.Count; i++)
+                {
+                    var index = i;
+                    var schedule = _schedules[i];
+                    <div class="liSchedule listItem" data-day="@DayName(schedule)" data-start="@Number(schedule.StartHour)" data-end="@Number(schedule.EndHour)">
+                        <div class="listItemBody two-line">
+                            <h3 class="listItemBodyText">@Globalize[DayName(schedule)]</h3>
+                            <div class="listItemBodyText secondary">@HourText(schedule.StartHour) - @HourText(schedule.EndHour)</div>
+                        </div>
+                        <IconButton Icon="delete" Class="btnDelete listItemButton" Title="@Globalize["Delete"]"
+                                    data-index="@index.ToString(CultureInfo.InvariantCulture)" OnClick="@(() => _schedules.RemoveAt(index))" />
+                    </div>
+                }
+            </div>
+        </div>
+        <div>
+            <EmbyButton Type="submit" Class="raised button-submit block">
+                <span>@Globalize["Save"]</span>
+            </EmbyButton>
+        </div>
+    </form>
+</div>
+
+@code {
+    /// <summary>The kinds of unrated content that can be blocked, with the translation keys of their names.</summary>
+    internal static readonly (string Key, UnratedItem Value)[] UnratedItems =
+    [
+        ("Books", UnratedItem.Book),
+        ("Channels", UnratedItem.ChannelContent),
+        ("LiveTV", UnratedItem.LiveTvChannel),
+        ("Movies", UnratedItem.Movie),
+        ("Music", UnratedItem.Music),
+        ("Trailers", UnratedItem.Trailer),
+        ("Shows", UnratedItem.Series),
+    ];
+
+    private readonly HashSet<UnratedItem> _unrated = [];
+    private readonly List<string> _allowedTags = [];
+    private readonly List<string> _blockedTags = [];
+    private readonly List<AccessSchedule> _schedules = [];
+    private List<ParentalRatingOption> _ratings = [];
+    private string? _rating = string.Empty;
+    private bool _isAdministrator;
+
+    /// <summary>The user that is edited.</summary>
+    [Parameter, EditorRequired]
+    public Guid UserId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var userRequest = UserPages.GetUserAsync(Api, UserId);
+            var ratingsRequest = Api.Client.Localization.ParentalRatings.GetAsync();
+
+            var policy = (await userRequest)?.Policy;
+            _ratings = ParentalRatings.Group(await ratingsRequest ?? []);
+
+            _unrated.Clear();
+            _unrated.UnionWith((policy?.BlockUnratedItems ?? []).OfType<UnratedItem>());
+            Replace(_allowedTags, policy?.AllowedTags);
+            Replace(_blockedTags, policy?.BlockedTags);
+            _schedules.Clear();
+            _schedules.AddRange(policy?.AccessSchedules ?? []);
+            _isAdministrator = policy?.IsAdministrator == true;
+
+            var selected = ParentalRatings.SelectedIndex(_ratings, policy?.MaxParentalRating, policy?.MaxParentalSubRating);
+            _rating = selected >= 0 ? selected.ToString(CultureInfo.InvariantCulture) : string.Empty;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[UserParentalControl] unable to load the data: " + ex.Message);
+        }
+
+        Loading.Hide();
+    }
+
+    private static void Replace(List<string> list, IEnumerable<string>? values)
+    {
+        list.Clear();
+        list.AddRange(values ?? []);
+    }
+
+    // The original shows the translation of the day's own name ("Everyday", "Weekday" and
+    // "Weekend" have none and show as they are).
+    private static string DayName(AccessSchedule schedule) => (schedule.DayOfWeek ?? AccessSchedule_DayOfWeek.Sunday).ToString();
+
+    private static string Number(double? value) => (value ?? 0).ToString(CultureInfo.InvariantCulture);
+
+    // Half hours show with their minutes: 60 times the fraction, rounded down.
+    private string HourText(double? hours)
+    {
+        var value = hours ?? 0;
+        var whole = Math.Floor(value);
+        var minutes = Math.Floor(60 * (value - whole));
+        return TriggerText.TimeOfDay((long)(whole % 24 * TimeSpan.TicksPerHour) + (long)(minutes * TimeSpan.TicksPerMinute));
+    }
+
+    private void CheckUnrated(UnratedItem item, bool on)
+    {
+        if (on)
+        {
+            _unrated.Add(item);
+        }
+        else
+        {
+            _unrated.Remove(item);
+        }
+    }
+
+    private async Task AddTagAsync(List<string> tags)
+    {
+        var tag = await Dialogs.PromptAsync(null, Globalize["LabelTag"]);
+        if (tag is not null && !tags.Contains(tag))
+        {
+            tags.Add(tag);
+        }
+    }
+
+    private async Task AddScheduleAsync()
+    {
+        if (await DashboardAccessScheduleDialog.ShowAsync(Dialogs) is { } schedule)
+        {
+            _schedules.Add(schedule);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        Loading.Show();
+        try
+        {
+            // The policy as the server has it now, with this tab's part replaced.
+            var user = await UserPages.GetUserAsync(Api, UserId);
+            if (user?.Id is not { } id || user.Policy is not { } policy)
+            {
+                throw new InvalidOperationException("Unexpected null user id or policy");
+            }
+
+            var rating = int.TryParse(_rating, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) && index >= 0 && index < _ratings.Count
+                ? _ratings[index]
+                : null;
+            policy.MaxParentalRating = rating?.Score;
+            policy.MaxParentalSubRating = rating?.SubScore;
+            policy.BlockUnratedItems = UnratedItems.Where(item => _unrated.Contains(item.Value)).Select(item => (UnratedItem?)item.Value).ToList();
+            policy.AccessSchedules = [.. _schedules];
+            policy.AllowedTags = [.. _allowedTags];
+            policy.BlockedTags = [.. _blockedTags];
+
+            await Api.Client.Users[id].Policy.PostAsync(policy);
+            Loading.Hide();
+            Toasts.Show(Globalize["SettingsSaved"]);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The original leaves its loading indicator on here; this one says that saving failed.
+            AppLog.Warn("[UserParentalControl] saving the settings failed: " + ex.Message);
+            Loading.Hide();
+            Toasts.Show(Globalize["ErrorDefault"]);
+        }
+    }
+}

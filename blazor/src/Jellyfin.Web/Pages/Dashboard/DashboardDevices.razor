@@ -1,0 +1,197 @@
+@* The devices that have signed in to the server. Port of apps/dashboard/routes/devices/index.tsx. *@
+@attribute [Route("/dashboard/devices")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+<Page Id="devicesPage" Title="@Globalize["HeaderDevices"]" Class="mainAnimatedPage type-interior">
+    <div class="content-primary jf-dashboard-table-page">
+        @if (_failed)
+        {
+            <MudAlert Severity="Severity.Error">@Globalize["DevicesLoadError"]</MudAlert>
+        }
+        else
+        {
+            <div class="jf-dashboard-table-heading">
+                <MudText Typo="Typo.h1">@Globalize["HeaderDevices"]</MudText>
+            </div>
+            <MudTable T="DeviceInfoDto" Items="Visible" Dense="true" Hover="true" Elevation="1" Loading="@(_devices is null)"
+                      Breakpoint="Breakpoint.None" HorizontalScrollbar="true" RowsPerPage="25" Class="jf-dashboard-table">
+                <ToolBarContent>
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" StartIcon="@MdIcon.Of("delete")" Class="jf-dashboard-devices-delete-all"
+                               OnClick="DeleteAllAsync">@Globalize["DeleteAll"]</MudButton>
+                    <MudSpacer />
+                    <MudTextField T="string" Value="_search" ValueChanged="@(text => _search = text)" Immediate="true" Placeholder="@Globalize["Search"]"
+                                  Variant="Variant.Text" Margin="Margin.Dense" Adornment="Adornment.Start" AdornmentIcon="@MdIcon.Of("search")"
+                                  Clearable="true" InputId="jf-dashboard-devices-search" Class="jf-dashboard-table-search" />
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>
+                        <MudTableSortLabel T="DeviceInfoDto" SortBy="@(device => device.DateLastActivity)" InitialDirection="SortDirection.Descending">@Globalize["LastActive"]</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <MudTableSortLabel T="DeviceInfoDto" SortBy="@(device => DashboardFormat.DeviceName(device))">@Globalize["LabelDevice"]</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <MudTableSortLabel T="DeviceInfoDto" SortBy="@(device => DashboardFormat.AppText(device))">@Globalize["LabelAppName"]</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <MudTableSortLabel T="DeviceInfoDto" SortBy="@(device => device.LastUserName)">@Globalize["LabelUser"]</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd Class="jf-dashboard-table-date">@DashboardFormat.DateTime(Globalize, context.DateLastActivity)</MudTd>
+                    <MudTd>
+                        <span class="jf-dashboard-table-cell">
+                            <img class="jf-dashboard-device-cell-icon" alt="@context.AppName" src="@DeviceIcons.For(context)" />
+                            <span class="jf-dashboard-device-cell-name">@DashboardFormat.DeviceName(context)</span>
+                        </span>
+                    </MudTd>
+                    <MudTd>@DashboardFormat.AppText(context)</MudTd>
+                    <MudTd>
+                        <span class="jf-dashboard-table-cell">
+                            <DashboardUserAvatarButton User="@UserOf(context)" Class="jf-dashboard-device-cell-user" />
+                            @context.LastUserName
+                        </span>
+                    </MudTd>
+                    <MudTd>
+                        <span class="jf-dashboard-table-actions" data-deviceid="@context.Id">
+                            <MudTooltip Text="@Globalize["Edit"]">
+                                <MudIconButton Icon="@MdIcon.Of("edit")" Class="jf-dashboard-device-edit" aria-label="@Globalize["Edit"]"
+                                               OnClick="@(() => RenameAsync(context))" />
+                            </MudTooltip>
+                            @if (IsCurrent(context))
+                            {
+                                @* No tooltip on a disabled button, as in the original. *@
+                                <MudIconButton Icon="@MdIcon.Of("delete")" Color="Color.Error" Disabled="true" Class="jf-dashboard-device-delete" />
+                            }
+                            else
+                            {
+                                <MudTooltip Text="@Globalize["Delete"]">
+                                    <MudIconButton Icon="@MdIcon.Of("delete")" Color="Color.Error" Class="jf-dashboard-device-delete"
+                                                   aria-label="@Globalize["Delete"]" OnClick="@(() => DeleteAsync(context))" />
+                                </MudTooltip>
+                            }
+                        </span>
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="PageSizes" />
+                </PagerContent>
+            </MudTable>
+        }
+    </div>
+</Page>
+
+@code {
+    private static readonly int[] PageSizes = [5, 10, 15, 20, 25, 30, 50, 100];
+
+    private List<DeviceInfoDto>? _devices;
+    private Dictionary<Guid, UserDto> _users = [];
+    private string? _search;
+    private bool _failed;
+
+    private IEnumerable<DeviceInfoDto> Visible => (_devices ?? []).Where(device => DashboardFormat.Matches(
+        _search, DashboardFormat.DeviceName(device), DashboardFormat.AppText(device), device.LastUserName,
+        DashboardFormat.DateTime(Globalize, device.DateLastActivity)));
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var users = Api.Client.Users.GetAsync();
+            await LoadDevicesAsync();
+            _users = (await users ?? []).Where(user => user.Id is not null).ToDictionary(user => user.Id!.Value);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Devices] unable to load the devices: " + ex.Message);
+            _failed = true;
+        }
+    }
+
+    private async Task LoadDevicesAsync()
+    {
+        var result = await Api.Client.Devices.GetAsync();
+        _devices = result?.Items ?? [];
+    }
+
+    private bool IsCurrent(DeviceInfoDto device) => !string.IsNullOrEmpty(device.Id) && device.Id == Api.DeviceId;
+
+    private UserDto? UserOf(DeviceInfoDto device) =>
+        device.LastUserId is { } id && _users.TryGetValue(id, out var user) ? user : null;
+
+    // The original edits the name in the table row; here a dialog asks for it.
+    private async Task RenameAsync(DeviceInfoDto device)
+    {
+        var current = DashboardFormat.DeviceName(device);
+        var entered = await Dialogs.MuiInputAsync(Globalize["Edit"], Globalize["LabelDevice"], confirmText: Globalize["Save"], initialText: current);
+        if (entered is null || device.Id is not { } id)
+        {
+            return;
+        }
+
+        var name = entered.Trim();
+        if (name == current)
+        {
+            return;
+        }
+
+        await RunAsync("renaming the device", async () =>
+        {
+            // An empty name removes the custom name.
+            await Api.Client.Devices.OptionsPath.PostAsync(
+                new DeviceOptionsDto { CustomName = name.Length > 0 ? name : null }, request => request.QueryParameters.Id = id);
+        });
+    }
+
+    private async Task DeleteAsync(DeviceInfoDto device)
+    {
+        if (device.Id is not { } id
+            || !await Dialogs.MuiConfirmAsync(Globalize["HeaderDeleteDevice"], Globalize["DeleteDeviceConfirmation"], Globalize["Delete"], destructive: true))
+        {
+            return;
+        }
+
+        await RunAsync("deleting the device", () => DeleteDeviceAsync(id));
+    }
+
+    private async Task DeleteAllAsync()
+    {
+        if (!await Dialogs.MuiConfirmAsync(Globalize["HeaderDeleteDevices"], Globalize["DeleteDevicesConfirmation"], Globalize["Delete"], destructive: true))
+        {
+            return;
+        }
+
+        // Everything but the device this is running on, which would sign the administrator out.
+        var ids = (_devices ?? []).Where(device => !IsCurrent(device)).Select(device => device.Id).OfType<string>().ToList();
+        await RunAsync("deleting all devices", () => Task.WhenAll(ids.Select(DeleteDeviceAsync)));
+    }
+
+    private Task DeleteDeviceAsync(string id) => Api.Client.Devices.DeleteAsync(request => request.QueryParameters.Id = [id]);
+
+    // Changes the devices and shows the list as the server has it afterwards, also when the change failed.
+    private async Task RunAsync(string what, Func<Task> change)
+    {
+        try
+        {
+            await change();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn($"[Devices] {what} failed: {ex.Message}");
+        }
+
+        try
+        {
+            await LoadDevicesAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Devices] unable to reload the devices: " + ex.Message);
+        }
+    }
+}

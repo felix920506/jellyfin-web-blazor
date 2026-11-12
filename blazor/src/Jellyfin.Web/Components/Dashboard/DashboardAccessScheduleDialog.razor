@@ -1,0 +1,109 @@
+@* Asks for a day and the hours of an access schedule. Port of components/accessSchedule/accessSchedule.js
+   and its template; closes with the AccessSchedule. *@
+@namespace Jellyfin.Web.Components
+@using System.Globalization
+@inject AppDialogs Dialogs
+@inject TaskTriggerText TriggerText
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["Previous"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["HeaderAccessSchedule"]</h3>
+</div>
+<div class="formDialogContent scrollY" style="padding-top:2em;">
+    <div class="dialogContentInner dialog-content-centered">
+        <form class="scheduleForm" style="margin:auto;" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <EmbySelect Id="selectDay" Label="@Globalize["LabelAccessDay"]" @bind-Value="_day">
+                @foreach (var (value, key) in Days)
+                {
+                    <option value="@value">@Globalize[key]</option>
+                }
+            </EmbySelect>
+            <EmbySelect Id="selectStart" Class="selectHour" Label="@Globalize["LabelAccessStart"]" @bind-Value="_start">
+                @foreach (var hour in Hours)
+                {
+                    <option value="@HourValue(hour)">@HourText(hour)</option>
+                }
+            </EmbySelect>
+            <EmbySelect Id="selectEnd" Class="selectHour" Label="@Globalize["LabelAccessEnd"]" @bind-Value="_end">
+                @foreach (var hour in Hours)
+                {
+                    <option value="@HourValue(hour)">@HourText(hour)</option>
+                }
+            </EmbySelect>
+            <div class="formDialogFooter">
+                <button type="submit" class="emby-button raised button-submit block formDialogFooterItem">
+                    <span>@Globalize["Add"]</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    /// <summary>The days of the select with their translation keys, in the original's order.</summary>
+    internal static readonly (AccessSchedule_DayOfWeek Value, string Key)[] Days =
+    [
+        (AccessSchedule_DayOfWeek.Sunday, "Sunday"),
+        (AccessSchedule_DayOfWeek.Monday, "Monday"),
+        (AccessSchedule_DayOfWeek.Tuesday, "Tuesday"),
+        (AccessSchedule_DayOfWeek.Wednesday, "Wednesday"),
+        (AccessSchedule_DayOfWeek.Thursday, "Thursday"),
+        (AccessSchedule_DayOfWeek.Friday, "Friday"),
+        (AccessSchedule_DayOfWeek.Saturday, "Saturday"),
+        (AccessSchedule_DayOfWeek.Everyday, "OptionEveryday"),
+        (AccessSchedule_DayOfWeek.Weekday, "OptionWeekdays"),
+        (AccessSchedule_DayOfWeek.Weekend, "OptionWeekends"),
+    ];
+
+    /// <summary>Every half hour of the day, and 24 for the end of the day.</summary>
+    internal static readonly double[] Hours = [.. Enumerable.Range(0, 49).Select(half => half / 2.0)];
+
+    private string? _day = nameof(AccessSchedule_DayOfWeek.Sunday);
+    private string? _start = "0";
+    private string? _end = "0";
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>Opens the dialog; null when it is closed without a schedule.</summary>
+    public static async Task<AccessSchedule?> ShowAsync(AppDialogs dialogs) =>
+        await dialogs.ShowAsync<DashboardAccessScheduleDialog>() as AccessSchedule;
+
+    /// <summary>The schedule of a choice; null when the start is not before the end.</summary>
+    public static AccessSchedule? Build(string? day, string? start, string? end)
+    {
+        var startHour = ParseHour(start);
+        var endHour = ParseHour(end);
+        if (startHour >= endHour)
+        {
+            return null;
+        }
+
+        return new AccessSchedule
+        {
+            DayOfWeek = Enum.TryParse<AccessSchedule_DayOfWeek>(day, out var value) ? value : AccessSchedule_DayOfWeek.Sunday,
+            StartHour = startHour,
+            EndHour = endHour,
+        };
+    }
+
+    private static double ParseHour(string? text) =>
+        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var hour) ? hour : 0;
+
+    private static string HourValue(double hour) => hour.ToString(CultureInfo.InvariantCulture);
+
+    // 24 reads as midnight, as in the original.
+    private string HourText(double hour) => TriggerText.TimeOfDay((long)((hour >= 24 ? 0 : hour) * TimeSpan.TicksPerHour));
+
+    private async Task SubmitAsync()
+    {
+        if (Build(_day, _start, _end) is not { } schedule)
+        {
+            await Dialogs.AlertAsync(Globalize["ErrorStartHourGreaterThanEnd"]);
+            return;
+        }
+
+        Dialog.Close(schedule);
+    }
+}

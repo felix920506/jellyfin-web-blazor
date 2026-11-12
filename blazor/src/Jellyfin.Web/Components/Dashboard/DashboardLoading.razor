@@ -1,0 +1,10 @@
+@* Shows the app's loading indicator for as long as it is rendered. Port of components/loading/LoadingComponent.tsx. *@
+@namespace Jellyfin.Web.Components
+@implements IDisposable
+@inject LoadingService Loading
+
+@code {
+    protected override void OnInitialized() => Loading.Show();
+
+    public void Dispose() => Loading.Hide();
+}

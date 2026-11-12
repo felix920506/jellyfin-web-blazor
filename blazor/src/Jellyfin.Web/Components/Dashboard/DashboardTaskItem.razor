@@ -1,0 +1,78 @@
+@* A scheduled task in the task list, with its progress or last run and a start/stop button.
+   Port of features/tasks/components/Task.tsx and TaskLastRan.tsx. *@
+@namespace Jellyfin.Web.Components
+@inject JellyfinApi Api
+@inject Globalize Globalize
+@inject RelativeTime RelativeTime
+
+<div class="jf-dashboard-task" data-taskid="@Info.Id">
+    <a class="mud-list-item mud-list-item-gutters mud-list-item-clickable mud-ripple jf-dashboard-task-link" href="@($"#/dashboard/tasks/{Info.Id}")">
+        <div class="mud-list-item-avatar">
+            <MudAvatar Color="Color.Primary">
+                <MudIcon Icon="@MdIcon.Of("access_time")" />
+            </MudAvatar>
+        </div>
+        <div class="mud-list-item-text">
+            <h3 class="mud-typography mud-typography-h3 jf-dashboard-task-name">@Info.Name</h3>
+            @if (IsRunning)
+            {
+                <DashboardTaskProgress Info="Info" />
+            }
+            else if (Info.State != TaskInfo_State.Idle)
+            {
+                <p class="mud-typography mud-typography-body1 mud-text-secondary jf-dashboard-task-state">@Globalize["LabelStopping"]</p>
+            }
+            else if (Info.LastExecutionResult is { StartTimeUtc: { } start, EndTimeUtc: { } end } result)
+            {
+                <p class="mud-typography mud-typography-body1 mud-text-secondary jf-dashboard-task-state jf-dashboard-task-last-ran">
+                    @Globalize.Translate("LabelScheduledTaskLastRan", RelativeTime.FromNow(start), RelativeTime.Between(start, end))
+                    @switch (result.Status)
+                    {
+                        case TaskResult_Status.Failed:
+                            <span class="mud-error-text"> (@Globalize["LabelFailed"])</span>
+                            break;
+                        case TaskResult_Status.Cancelled:
+                            <span class="mud-warning-text"> (@Globalize["LabelCancelled"])</span>
+                            break;
+                        case TaskResult_Status.Aborted:
+                            <span class="mud-error-text"> (@Globalize["LabelAbortedByServerShutdown"])</span>
+                            break;
+                    }
+                </p>
+            }
+        </div>
+    </a>
+    <MudIconButton Icon="@MdIcon.Of(IsRunning ? "stop" : "play_arrow")" Class="jf-dashboard-task-action"
+                   aria-label="@Globalize[IsRunning ? "ButtonStop" : "ButtonStart"]" OnClick="ToggleAsync" />
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public TaskInfo Info { get; set; } = default!;
+
+    private bool IsRunning => Info.State == TaskInfo_State.Running;
+
+    private async Task ToggleAsync()
+    {
+        if (Info.Id is not { Length: > 0 } id)
+        {
+            return;
+        }
+
+        try
+        {
+            if (IsRunning)
+            {
+                await Api.Client.ScheduledTasks.Running[id].DeleteAsync();
+            }
+            else
+            {
+                await Api.Client.ScheduledTasks.Running[id].PostAsync();
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn($"[Tasks] unable to {(IsRunning ? "stop" : "start")} the task: {ex.Message}");
+        }
+    }
+}

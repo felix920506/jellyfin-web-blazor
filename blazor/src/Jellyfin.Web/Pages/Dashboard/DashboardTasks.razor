@@ -1,0 +1,66 @@
+@* The server's scheduled tasks by category, updated live. Port of apps/dashboard/routes/tasks/index.tsx. *@
+@attribute [Route("/dashboard/tasks")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Text.Json
+@implements IDisposable
+@inject JellyfinApi Api
+@inject ServerEvents Events
+@inject Globalize Globalize
+
+<Page Id="scheduledTasksPage" Title="@Globalize["TabScheduledTasks"]" Class="mainAnimatedPage type-interior">
+    @if (_tasks is null)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            <div class="readOnlyContent">
+                <div class="jf-dashboard-tasks">
+                    @foreach (var category in TaskTriggerText.Categories(_tasks))
+                    {
+                        <div @key="category" class="jf-dashboard-task-category">
+                            <MudText Typo="Typo.h2">@category</MudText>
+                            <div class="mud-list mud-list-padding jf-dashboard-list jf-dashboard-paper-list">
+                                @foreach (var task in TaskTriggerText.InCategory(_tasks, category))
+                                {
+                                    <DashboardTaskItem @key="task.Id" Info="task" />
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</Page>
+
+@code {
+    private List<TaskInfo>? _tasks;
+    private LiveFeed? _feed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _feed = new LiveFeed(Events, "ScheduledTasksInfo", "1000,1000", OnTasksMessage);
+        try
+        {
+            var tasks = await Api.Client.ScheduledTasks.GetAsync(request => request.QueryParameters.IsHidden = false) ?? [];
+            // An update that arrived while the request ran is newer than its answer.
+            _tasks ??= tasks;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Tasks] unable to load the tasks: " + ex.Message);
+        }
+    }
+
+    public void Dispose() => _feed?.Dispose();
+
+    private void OnTasksMessage(JsonElement data) => _ = InvokeAsync(() =>
+    {
+        // The feed carries every task, also the hidden ones the page does not list.
+        _tasks = KiotaJson.ParseList(data, TaskInfo.CreateFromDiscriminatorValue).Where(task => task.IsHidden != true).ToList();
+        StateHasChanged();
+    });
+}

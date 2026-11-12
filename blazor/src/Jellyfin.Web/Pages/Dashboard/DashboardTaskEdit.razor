@@ -1,0 +1,125 @@
+@* A scheduled task and when it runs. Port of apps/dashboard/routes/tasks/task.tsx.
+   The original route is /dashboard/tasks/{id}; /dashboard/tasks/edit?id= leads here as well. *@
+@attribute [Route("/dashboard/tasks/{id}")]
+@attribute [Route("/dashboard/tasks/edit")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+@inject TaskTriggerText TriggerText
+
+<Page Id="scheduledTaskPage" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else if (_task is not null)
+    {
+        <div class="content-primary">
+            <div class="readOnlyContent">
+                <div class="jf-dashboard-stack">
+                    <MudText Typo="Typo.h2" Class="jf-dashboard-task-title">@_task.Name</MudText>
+                    <MudText Typo="Typo.body1" Class="jf-dashboard-task-description">@_task.Description</MudText>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@MdIcon.Of("add")" Class="jf-dashboard-trigger-add"
+                               OnClick="AddTriggerAsync">@Globalize["ButtonAddScheduledTaskTrigger"]</MudButton>
+                    <MudTable T="TaskTriggerInfo" Items="Triggers" Elevation="1" Breakpoint="Breakpoint.None" Class="jf-dashboard-table jf-dashboard-triggers">
+                        <HeaderContent>
+                            <MudTh>@Globalize["LabelTime"]</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>
+                                <div class="jf-dashboard-trigger">
+                                    <MudText Typo="Typo.body1" Class="jf-dashboard-trigger-name">@TriggerText.FriendlyName(context)</MudText>
+                                    @if (TriggerText.TimeLimit(context) is { } limit)
+                                    {
+                                        <MudText Typo="Typo.body2" Class="jf-dashboard-trigger-limit mud-text-secondary">@limit</MudText>
+                                    }
+                                </div>
+                            </MudTd>
+                            <MudTd>
+                                <span class="jf-dashboard-table-actions">
+                                    <MudTooltip Text="@Globalize["ButtonRemove"]">
+                                        <MudIconButton Icon="@MdIcon.Of("remove_circle")" Color="Color.Error" Class="jf-dashboard-trigger-remove"
+                                                       aria-label="@Globalize["ButtonRemove"]" OnClick="@(() => RemoveTriggerAsync(context))" />
+                                    </MudTooltip>
+                                </span>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </div>
+            </div>
+        </div>
+    }
+</Page>
+
+@code {
+    private TaskInfo? _task;
+    private bool _loading = true;
+
+    /// <summary>The task's id, from the path or the query.</summary>
+    [Parameter]
+    public string? Id { get; set; }
+
+    private List<TaskTriggerInfo> Triggers => _task?.Triggers ?? [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _loading = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        if (string.IsNullOrEmpty(Id))
+        {
+            return;
+        }
+
+        try
+        {
+            _task = await Api.Client.ScheduledTasks[Id].GetAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Tasks] unable to load the task: " + ex.Message);
+        }
+    }
+
+    private async Task AddTriggerAsync()
+    {
+        if (await Dialogs.ShowAsync<DashboardTriggerDialog>(null, DashboardDialogs.Options) is TaskTriggerInfo trigger)
+        {
+            await SaveTriggersAsync([.. Triggers, trigger]);
+        }
+    }
+
+    private async Task RemoveTriggerAsync(TaskTriggerInfo trigger)
+    {
+        if (await Dialogs.MuiConfirmAsync(
+                Globalize["HeaderDeleteTaskTrigger"], Globalize["MessageDeleteTaskTrigger"], Globalize["ButtonRemove"], destructive: true))
+        {
+            await SaveTriggersAsync(Triggers.Where(other => !ReferenceEquals(other, trigger)).ToList());
+        }
+    }
+
+    private async Task SaveTriggersAsync(List<TaskTriggerInfo> triggers)
+    {
+        if (_task?.Id is not { } id)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.ScheduledTasks[id].Triggers.PostAsync(triggers);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Tasks] saving the triggers failed: " + ex.Message);
+        }
+
+        await LoadAsync();
+    }
+}

@@ -1,0 +1,36 @@
+@* A section heading with an optional round button. Port of elements/SectionTitleContainer.tsx. *@
+@namespace Jellyfin.Web.Components
+
+<div class="@(SectionClass + " sectionTitleContainer flex align-items-center")">
+    <h2 class="sectionTitle">@Title</h2>
+    @if (ButtonIcon is not null)
+    {
+        <EmbyButton id="@ButtonId" Class="@ButtonClass" Title="@ButtonTitle" OnClick="OnButtonClick">
+            <span class="@("material-icons " + ButtonIcon)" aria-hidden="true"></span>
+        </EmbyButton>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string? SectionClass { get; set; }
+
+    [Parameter]
+    public string? Title { get; set; }
+
+    /// <summary>The button's icon; no button without one.</summary>
+    [Parameter]
+    public string? ButtonIcon { get; set; }
+
+    [Parameter]
+    public string? ButtonId { get; set; }
+
+    [Parameter]
+    public string ButtonClass { get; set; } = "fab submit sectionTitleButton";
+
+    [Parameter]
+    public string? ButtonTitle { get; set; }
+
+    [Parameter]
+    public EventCallback<MouseEventArgs> OnButtonClick { get; set; }
+}

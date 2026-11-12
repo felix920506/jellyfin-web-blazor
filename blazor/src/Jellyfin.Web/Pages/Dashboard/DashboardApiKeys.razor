@@ -1,0 +1,138 @@
+@* The API keys of external applications. Port of apps/dashboard/routes/keys/index.tsx. *@
+@attribute [Route("/dashboard/keys")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+<Page Id="apiKeysPage" Title="@Globalize["HeaderApiKeys"]" Class="mainAnimatedPage type-interior">
+    <div class="content-primary jf-dashboard-table-page">
+        @if (_failed)
+        {
+            <MudAlert Severity="Severity.Error">@Globalize["ApiKeysLoadError"]</MudAlert>
+        }
+        else
+        {
+            <div class="jf-dashboard-table-heading">
+                <MudText Typo="Typo.h1">@Globalize["HeaderApiKeys"]</MudText>
+                <MudText>@Globalize["HeaderApiKeysHelp"]</MudText>
+            </div>
+            <MudTable T="AuthenticationInfo" Items="Visible" Hover="true" Elevation="1" Loading="@(_keys is null)"
+                      Breakpoint="Breakpoint.None" HorizontalScrollbar="true" RowsPerPage="10" Class="jf-dashboard-table">
+                <ToolBarContent>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@MdIcon.Of("add")" Class="jf-dashboard-keys-add"
+                               OnClick="CreateAsync">@Globalize["HeaderNewApiKey"]</MudButton>
+                    <MudSpacer />
+                    <MudTextField T="string" Value="_search" ValueChanged="@(text => _search = text)" Immediate="true" Placeholder="@Globalize["Search"]"
+                                  Variant="Variant.Text" Margin="Margin.Dense" Adornment="Adornment.Start" AdornmentIcon="@MdIcon.Of("search")"
+                                  Clearable="true" InputId="jf-dashboard-keys-search" Class="jf-dashboard-table-search" />
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>
+                        <MudTableSortLabel T="AuthenticationInfo" SortBy="@(key => key.AccessToken)">@Globalize["HeaderApiKey"]</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <MudTableSortLabel T="AuthenticationInfo" SortBy="@(key => key.AppName)">@Globalize["HeaderApp"]</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <MudTableSortLabel T="AuthenticationInfo" SortBy="@(key => key.DateCreated)">@Globalize["HeaderDateIssued"]</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd Class="jf-dashboard-key-token">@context.AccessToken</MudTd>
+                    <MudTd Class="jf-dashboard-key-app">@context.AppName</MudTd>
+                    <MudTd Class="jf-dashboard-table-date">@DashboardFormat.DateTime(Globalize, context.DateCreated)</MudTd>
+                    <MudTd>
+                        <span class="jf-dashboard-table-actions" data-app="@context.AppName">
+                            <MudTooltip Text="@Globalize["ButtonRevoke"]">
+                                <MudIconButton Icon="@MdIcon.Of("delete")" Color="Color.Error" Class="jf-dashboard-key-revoke"
+                                               aria-label="@Globalize["ButtonRevoke"]" OnClick="@(() => RevokeAsync(context))" />
+                            </MudTooltip>
+                        </span>
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="PageSizes" />
+                </PagerContent>
+            </MudTable>
+        }
+    </div>
+</Page>
+
+@code {
+    private static readonly int[] PageSizes = [5, 10, 15, 20, 25, 30, 50, 100];
+
+    private List<AuthenticationInfo>? _keys;
+    private string? _search;
+    private bool _failed;
+
+    private IEnumerable<AuthenticationInfo> Visible => (_keys ?? []).Where(key => DashboardFormat.Matches(
+        _search, key.AccessToken, key.AppName, DashboardFormat.DateTime(Globalize, key.DateCreated)));
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await LoadAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[ApiKeys] unable to load the keys: " + ex.Message);
+            _failed = true;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var result = await Api.Client.Auth.Keys.GetAsync();
+        _keys = result?.Items ?? [];
+    }
+
+    private async Task CreateAsync()
+    {
+        var name = await Dialogs.MuiInputAsync(
+            Globalize["HeaderNewApiKey"], Globalize["LabelAppName"], Globalize["LabelAppNameExample"], Globalize["Create"]);
+        if (name is null)
+        {
+            return;
+        }
+
+        await RunAsync("creating the key", () => Api.Client.Auth.Keys.PostAsync(request => request.QueryParameters.App = name));
+    }
+
+    private async Task RevokeAsync(AuthenticationInfo key)
+    {
+        if (key.AccessToken is not { Length: > 0 } token
+            || !await Dialogs.MuiConfirmAsync(
+                Globalize["HeaderConfirmRevokeApiKey"], Globalize["MessageConfirmRevokeApiKey"], Globalize["Delete"], destructive: true))
+        {
+            return;
+        }
+
+        await RunAsync("revoking the key", () => Api.Client.Auth.Keys[token].DeleteAsync());
+    }
+
+    // Changes the keys and shows the list as the server has it afterwards, also when the change failed.
+    private async Task RunAsync(string what, Func<Task> change)
+    {
+        try
+        {
+            await change();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn($"[ApiKeys] {what} failed: {ex.Message}");
+        }
+
+        try
+        {
+            await LoadAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[ApiKeys] unable to reload the keys: " + ex.Message);
+        }
+    }
+}

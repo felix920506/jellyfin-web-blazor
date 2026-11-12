@@ -1,0 +1,339 @@
+@* The user list (/dashboard/users) and the new user page (/dashboard/users/add). *@
+@using System.Net
+@using System.Text.Json
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private static readonly Guid Alice = Guid.Parse("11111111-2222-3333-4444-555555555555");
+    private static readonly Guid Bob = Guid.Parse("66666666-7777-8888-9999-000000000000");
+    private static readonly Guid Movies = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+    private static readonly Guid Shows = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000002");
+    private static readonly Guid Radio = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000003");
+
+    private static string N(Guid id) => id.ToString("N");
+
+    private static object[] TwoUsers() =>
+    [
+        new { Id = Alice, Name = "alice", LastActivityDate = (DateTimeOffset?)Now.AddHours(-2), PrimaryImageTag = "tag1", Policy = new { IsDisabled = false } },
+        new { Id = Bob, Name = "bob", LastActivityDate = (DateTimeOffset?)null, PrimaryImageTag = (string?)null, Policy = new { IsDisabled = true } },
+    ];
+
+    private IRenderedComponent<DashboardUsers> RenderUsers(int users = 2)
+    {
+        var cut = Render<DashboardUsers>();
+        cut.Eventually(() =>
+        {
+            Assert.NotNull(cut.Find("#btnAddUser"));
+            Assert.Equal(users, cut.FindAll(".localUsers .card").Count);
+        });
+        return cut;
+    }
+
+    private async Task<IRenderedComponent<DialogHost>> OpenMenuAsync(IRenderedComponent<DashboardUsers> cut, string user)
+    {
+        var dialogs = this.RenderDialogs();
+        await this.Settle(() => cut.Find($".card[data-username={user}] .btnUserMenu").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotEmpty(dialogs.FindAll(".actionSheetMenuItem")));
+        return dialogs;
+    }
+
+    private bool IsUserDelete(RecordedRequest request) =>
+        request.Method == HttpMethod.Delete && request.Path.Contains("/Users/", StringComparison.Ordinal);
+
+    private void ScriptFolders(bool channels = true)
+    {
+        App.Server.OnGet("/Library/MediaFolders", new
+        {
+            Items = new[] { new { Id = Movies, Name = "Movies" }, new { Id = Shows, Name = "Shows" } },
+        });
+        App.Server.OnGet("/Channels", new { Items = channels ? new[] { new { Id = Radio, Name = "Radio" } } : [] });
+    }
+
+    private IRenderedComponent<DashboardUserAdd> RenderAdd(int folders = 2)
+    {
+        var cut = Render<DashboardUserAdd>();
+        cut.Eventually(() => Assert.Equal(folders, cut.FindAll("input.chkFolder").Count));
+        return cut;
+    }
+
+    private void ScriptCreation() => App.Server.OnPost("/Users/New", new
+    {
+        Id = Bob,
+        Name = "bob",
+        Policy = new { IsAdministrator = false, EnableAllFolders = true, EnableAllChannels = true, AuthenticationProviderId = "Default" },
+    });
+
+    [Fact]
+    public void The_users_are_shown_as_cards()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", TwoUsers());
+
+        var cut = RenderUsers();
+
+        Assert.Equal(["alice", "bob"], cut.FindAll(".localUsers .card").Select(card => card.GetAttribute("data-username")));
+        Assert.Equal(N(Alice), cut.Find(".card[data-username=alice]").GetAttribute("data-userid"));
+        Assert.Equal($"#/dashboard/users/{N(Alice)}/profile", cut.Find(".card[data-username=alice] a.cardContent").GetAttribute("href"));
+        Assert.Contains($"/Users/{N(Alice)}/Images/Primary", cut.Find(".card[data-username=alice] .cardImage").GetAttribute("style"), StringComparison.Ordinal);
+        Assert.Contains("tag=tag1", cut.Find(".card[data-username=alice] .cardImage").GetAttribute("style"), StringComparison.Ordinal);
+        Assert.Equal(
+            Get<Globalize>().Translate("LastSeen", "2 hours ago"),
+            cut.Find(".card[data-username=alice] .cardText-secondary").TextContent.Trim());
+        Assert.False(cut.Find(".card[data-username=alice]").HasClass("grayscale"));
+
+        // A disabled user without a picture is greyed out and shows the placeholder.
+        Assert.True(cut.Find(".card[data-username=bob]").HasClass("grayscale"));
+        Assert.True(cut.Find(".card[data-username=bob] .cardImage").HasClass("disabledUser"));
+        Assert.NotNull(cut.Find(".card[data-username=bob] .cardImageIcon"));
+        Assert.Equal(string.Empty, cut.Find(".card[data-username=bob] .cardText-secondary").TextContent.Trim());
+        Assert.Equal(this.T("HeaderUsers"), cut.Find(".sectionTitle").TextContent);
+    }
+
+    [Fact]
+    public async Task The_add_button_leads_to_the_new_user_page()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", TwoUsers());
+        var cut = RenderUsers();
+
+        await cut.Find("#btnAddUser").ClickAsync(new MouseEventArgs());
+
+        Assert.EndsWith("/dashboard/users/add", App.Browser.Hash, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("open", "profile")]
+    [InlineData("access", "access")]
+    [InlineData("parentalcontrol", "parentalcontrol")]
+    public async Task The_menu_leads_to_the_users_settings(string choice, string tab)
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", TwoUsers());
+        var cut = RenderUsers();
+
+        var dialogs = await OpenMenuAsync(cut, "alice");
+        Assert.Equal(
+            ["open", "access", "parentalcontrol", "delete"],
+            dialogs.FindAll(".actionSheetMenuItem").Select(item => item.GetAttribute("data-id")));
+        await this.Settle(() => dialogs.Find($".actionSheetMenuItem[data-id={choice}]").ClickAsync(new MouseEventArgs()));
+
+        cut.Eventually(() => Assert.EndsWith($"/dashboard/users/{N(Alice)}/{tab}", App.Browser.Hash, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_user_is_deleted_after_a_confirmation()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", TwoUsers());
+        App.Server.OnDelete("/Users/" + Bob.ToString("D"));
+        App.Server.OnDelete("/Users/" + N(Bob));
+        var cut = RenderUsers();
+
+        var dialogs = await OpenMenuAsync(cut, "bob");
+        await this.Settle(() => dialogs.Find(".actionSheetMenuItem[data-id=delete]").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("button.btnOption[data-id=ok]")));
+        Assert.Contains(this.T("DeleteUserConfirmation"), dialogs.Markup, StringComparison.Ordinal);
+        Assert.Contains(Get<Globalize>().Translate("DeleteName", "bob"), dialogs.Markup, StringComparison.Ordinal);
+        App.Server.OnGet("/Users", new[] { TwoUsers()[0] });
+        await this.Settle(() => dialogs.Find("button.btnOption[data-id=ok]").ClickAsync(new MouseEventArgs()));
+
+        cut.Eventually(() => Assert.Single(cut.FindAll(".localUsers .card")));
+        var request = Assert.Single(App.Server.Requests, IsUserDelete);
+        Assert.EndsWith(Bob.ToString("N"), request.Path.Replace("-", string.Empty, StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, App.Server.RequestsTo("/Users").Count);
+    }
+
+    [Fact]
+    public async Task A_user_stays_when_the_question_is_cancelled()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", TwoUsers());
+        var cut = RenderUsers();
+
+        var dialogs = await OpenMenuAsync(cut, "bob");
+        await this.Settle(() => dialogs.Find(".actionSheetMenuItem[data-id=delete]").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("button.btnOption[data-id=cancel]")));
+        await this.Settle(() => dialogs.Find("button.btnOption[data-id=cancel]").ClickAsync(new MouseEventArgs()));
+
+        cut.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+        Assert.DoesNotContain(App.Server.Requests, IsUserDelete);
+        Assert.Single(App.Server.RequestsTo("/Users"));
+    }
+
+    [Fact]
+    public async Task The_list_is_read_again_when_deleting_fails()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", TwoUsers());
+        var cut = RenderUsers();
+
+        var dialogs = await OpenMenuAsync(cut, "bob");
+        await this.Settle(() => dialogs.Find(".actionSheetMenuItem[data-id=delete]").ClickAsync(new MouseEventArgs()));
+        dialogs.Eventually(() => Assert.NotNull(dialogs.Find("button.btnOption[data-id=ok]")));
+        await this.Settle(() => dialogs.Find("button.btnOption[data-id=ok]").ClickAsync(new MouseEventArgs()));
+
+        cut.Eventually(() => Assert.Equal(2, App.Server.RequestsTo("/Users").Count));
+        Assert.Equal(2, cut.FindAll(".localUsers .card").Count);
+    }
+
+    [Fact]
+    public void The_list_is_empty_when_the_users_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+
+        var cut = RenderUsers(users: 0);
+
+        Assert.Equal(this.T("HeaderUsers"), cut.Find(".sectionTitle").TextContent);
+    }
+
+    [Fact]
+    public void The_new_user_page_offers_the_libraries_and_channels()
+    {
+        SignIn(admin: true);
+        ScriptFolders();
+
+        var cut = RenderAdd();
+
+        Assert.Equal(this.T("HeaderAddUser"), cut.Find(".sectionTitle").TextContent);
+        Assert.Equal([N(Movies), N(Shows)], cut.FindAll("input.chkFolder").Select(box => box.GetAttribute("data-id")));
+        Assert.Equal([N(Radio)], cut.FindAll("input.chkChannel").Select(box => box.GetAttribute("data-id")));
+        Assert.False(cut.Find(".channelAccessContainer").HasClass("hide"));
+        Assert.False(cut.Find("input.chkEnableAllFolders").IsChecked());
+        Assert.False(cut.Find(".folderAccessListContainer").HasClass("hide"));
+        Assert.Equal(string.Empty, cut.Find("#txtUsername").Value() ?? string.Empty);
+    }
+
+    [Fact]
+    public void The_channels_are_left_out_when_there_are_none()
+    {
+        SignIn(admin: true);
+        ScriptFolders(channels: false);
+
+        var cut = RenderAdd();
+
+        Assert.True(cut.Find(".channelAccessContainer").HasClass("hide"));
+    }
+
+    [Fact]
+    public async Task A_user_is_created_with_the_ticked_libraries()
+    {
+        SignIn(admin: true);
+        ScriptFolders();
+        ScriptCreation();
+        App.Server.OnPost("/Policy");
+        var cut = RenderAdd();
+
+        await cut.Find("#txtUsername").InputAsync(new ChangeEventArgs { Value = "bob" });
+        await cut.Find("#txtPassword").InputAsync(new ChangeEventArgs { Value = "secret" });
+        await cut.Find($"input.chkFolder[data-id='{N(Shows)}']").ChangeAsync(new ChangeEventArgs { Value = true });
+        await cut.Find("input.chkEnableAllChannels").ChangeAsync(new ChangeEventArgs { Value = true });
+        Assert.True(cut.Find(".channelAccessListContainer").HasClass("hide"));
+        await cut.Find("form.newUserProfileForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.EndsWith($"/dashboard/users/{N(Bob)}/profile", App.Browser.Hash, StringComparison.Ordinal));
+        var creation = Assert.Single(App.Server.RequestsTo("/Users/New")).JsonBody();
+        Assert.Equal("bob", creation.Text("Name"));
+        Assert.Equal("secret", creation.Text("Password"));
+        var policyRequest = Assert.Single(App.Server.RequestsTo("/Policy"));
+        Assert.Contains(N(Bob), policyRequest.Path.Replace("-", string.Empty, StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+        var policy = policyRequest.JsonBody();
+        Assert.False(policy.Flag("EnableAllFolders"));
+        Assert.Equal([Shows], policy.GetProperty("EnabledFolders").EnumerateArray().Select(id => id.GetGuid()));
+        Assert.True(policy.Flag("EnableAllChannels"));
+        Assert.Empty(policy.GetProperty("EnabledChannels").EnumerateArray());
+        // What the server put into the new user's policy is sent back unchanged.
+        Assert.Equal("Default", policy.Text("AuthenticationProviderId"));
+        Assert.False(this.IsLoading());
+        Assert.Empty(this.Toasts());
+    }
+
+    [Fact]
+    public async Task Access_to_everything_sends_no_list()
+    {
+        SignIn(admin: true);
+        ScriptFolders();
+        ScriptCreation();
+        App.Server.OnPost("/Policy");
+        var cut = RenderAdd();
+
+        await cut.Find("#txtUsername").InputAsync(new ChangeEventArgs { Value = "bob" });
+        await cut.Find($"input.chkFolder[data-id='{N(Movies)}']").ChangeAsync(new ChangeEventArgs { Value = true });
+        await cut.Find("input.chkEnableAllFolders").ChangeAsync(new ChangeEventArgs { Value = true });
+        await cut.Find("form.newUserProfileForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/Policy")));
+        var policy = App.Server.RequestsTo("/Policy")[0].JsonBody();
+        Assert.True(policy.Flag("EnableAllFolders"));
+        Assert.Empty(policy.GetProperty("EnabledFolders").EnumerateArray());
+        Assert.False(policy.Flag("EnableAllChannels"));
+        Assert.Equal(string.Empty, App.Server.RequestsTo("/Users/New")[0].JsonBody().Text("Password"));
+    }
+
+    [Fact]
+    public async Task A_refused_user_is_reported()
+    {
+        SignIn(admin: true);
+        ScriptFolders();
+        App.Server.OnPost("/Users/New", _ => FakeHttp.Status(HttpStatusCode.BadRequest));
+        var cut = RenderAdd();
+        var hash = App.Browser.Hash;
+
+        await cut.Find("#txtUsername").InputAsync(new ChangeEventArgs { Value = "bob" });
+        await cut.Find("form.newUserProfileForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal([this.T("ErrorDefault")], this.Toasts()));
+        Assert.Empty(App.Server.RequestsTo("/Policy"));
+        Assert.Equal(hash, App.Browser.Hash);
+        Assert.False(this.IsLoading());
+    }
+
+    [Fact]
+    public async Task A_failure_to_set_the_access_is_reported()
+    {
+        SignIn(admin: true);
+        ScriptFolders();
+        ScriptCreation();
+        var cut = RenderAdd();
+        var hash = App.Browser.Hash;
+
+        await cut.Find("#txtUsername").InputAsync(new ChangeEventArgs { Value = "bob" });
+        await cut.Find("form.newUserProfileForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Equal([this.T("ErrorDefault")], this.Toasts()));
+        Assert.Single(App.Server.RequestsTo("/Policy"));
+        Assert.Equal(hash, App.Browser.Hash);
+    }
+
+    [Fact]
+    public async Task Cancel_goes_back()
+    {
+        SignIn(admin: true);
+        ScriptFolders();
+        App.Browser.Navigate("#/dashboard/users", replace: false);
+        App.Browser.Navigate("#/dashboard/users/add", replace: false);
+        var cut = RenderAdd();
+
+        await cut.Find("#btnCancel").ClickAsync(new MouseEventArgs());
+
+        Assert.EndsWith("/dashboard/users", App.Browser.Hash, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_form_is_usable_when_the_libraries_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+
+        var cut = RenderAdd(folders: 0);
+
+        Assert.NotNull(cut.Find("form.newUserProfileForm"));
+        Assert.True(cut.Find(".channelAccessContainer").HasClass("hide"));
+    }
+}

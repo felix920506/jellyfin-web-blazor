@@ -1,0 +1,850 @@
+// The admin dashboard (Layout/DashboardLayout.razor, Pages/Dashboard, Components/Dashboard).
+// The original builds these pages from MUI components with inline "sx" styles; this is what
+// those styles come to. MUI's breakpoints (600, 900, 1200, 1536) differ from MudBlazor's, so
+// the page grids are laid out here rather than with MudGrid.
+$jf-dashboard-sm: 600px;
+$jf-dashboard-md: 900px;
+$jf-dashboard-lg: 1200px;
+$jf-dashboard-xl: 1536px;
+$jf-dashboard-drawer-width: 240px;
+
+// ---- Frame: port of apps/dashboard/AppLayout.tsx and components/ResponsiveDrawer.tsx ----
+
+// MudBlazor's popovers and tooltips go below the legacy dialogs (z-index 999999), which the
+// dashboard's dialogs are shown in; their selects and tooltips have to be above them.
+body.dashboardDocument {
+    --mud-zindex-popover: 1000000;
+    --mud-zindex-tooltip: 1000001;
+}
+
+.mud-appbar.jf-dashboard-appbar {
+    @media (min-width: $jf-dashboard-md) {
+        left: $jf-dashboard-drawer-width;
+        width: calc(100% - #{$jf-dashboard-drawer-width});
+
+        [dir="rtl"] & {
+            right: $jf-dashboard-drawer-width;
+            left: 0;
+        }
+    }
+}
+
+.jf-dashboard-title {
+    flex-shrink: 1;
+    min-width: 0;
+    margin: 0 8px;
+    overflow: hidden;
+    font-size: 1.25rem;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.jf-dashboard-drawer {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1200;
+    box-sizing: border-box;
+    width: $jf-dashboard-drawer-width;
+    padding-bottom: 4.2rem; // room for the now playing bar
+    overflow-y: auto;
+    border-right: 1px solid var(--mud-palette-divider);
+    background-color: var(--mud-palette-drawer-background);
+    color: var(--mud-palette-drawer-text);
+
+    [dir="rtl"] & {
+        right: 0;
+        left: auto;
+        border-right: 0;
+        border-left: 1px solid var(--mud-palette-divider);
+    }
+}
+
+.jf-dashboard-drawer-temporary .mud-drawer-content {
+    padding-bottom: 4.2rem;
+}
+
+.jf-dashboard-nav {
+    .mud-nav-link {
+        box-sizing: border-box;
+        width: 100%;
+        border: 0;
+        background-color: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: start;
+        cursor: pointer;
+    }
+
+    .mud-nav-link-text {
+        flex-grow: 1;
+    }
+}
+
+.jf-dashboard-nav .mud-nav-link.jf-dashboard-drawer-header {
+    align-items: center;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    text-decoration: none;
+}
+
+.jf-dashboard-drawer-header-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+    min-width: 56px;
+
+    img {
+        height: 2.5rem;
+    }
+}
+
+.jf-dashboard-drawer-header-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    margin: 6px 0;
+}
+
+.jf-dashboard-drawer-header-name {
+    overflow: hidden;
+    font-size: 1.25rem;
+    font-weight: 500;
+    line-height: 1.6;
+    text-overflow: ellipsis;
+}
+
+.jf-dashboard-drawer-header-version {
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.43;
+}
+
+// Links of an opened group are indented to line up past the icons.
+.jf-dashboard-nav .mud-nav-link.jf-dashboard-nav-child {
+    padding-inline-start: 72px;
+}
+
+// ---- Start page: port of routes/index.tsx and components/widgets ----
+
+.jf-dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 24px;
+}
+
+.jf-dashboard-col {
+    display: flex;
+    flex-direction: column;
+    grid-column: span 12;
+    gap: 24px;
+    min-width: 0;
+}
+
+@media (min-width: $jf-dashboard-md) {
+    .jf-dashboard-col-main {
+        grid-column: span 7;
+    }
+
+    .jf-dashboard-col-activity {
+        grid-column: span 5;
+    }
+
+    .jf-dashboard-col-side {
+        grid-column: span 6;
+    }
+}
+
+@media (min-width: $jf-dashboard-lg) {
+    .jf-dashboard-col-side {
+        grid-column: span 12;
+    }
+}
+
+@media (min-width: $jf-dashboard-xl) {
+    .jf-dashboard-col-main {
+        grid-column: span 6;
+    }
+
+    .jf-dashboard-col-activity,
+    .jf-dashboard-col-side {
+        grid-column: span 3;
+    }
+}
+
+.mud-button-root.jf-dashboard-widget-title {
+    margin: 8px 0;
+}
+
+.jf-dashboard-server-info {
+    display: flex;
+    padding: 16px;
+}
+
+.jf-dashboard-server-labels,
+.jf-dashboard-server-values {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.jf-dashboard-server-labels {
+    flex-grow: 1;
+
+    .mud-typography {
+        font-weight: bold;
+    }
+}
+
+.jf-dashboard-server-values {
+    flex-grow: 5;
+    overflow-wrap: anywhere;
+}
+
+.jf-dashboard-server-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+
+    @media (min-width: $jf-dashboard-sm) {
+        flex-direction: row;
+    }
+
+    .mud-button-root {
+        font-weight: bold;
+    }
+}
+
+.jf-dashboard-button-icon,
+.jf-dashboard-button-spinner {
+    margin-inline: -4px 8px;
+}
+
+.jf-dashboard-button-icon.mud-icon-root {
+    font-size: 1.25rem;
+}
+
+.jf-dashboard-button-spinner.mud-progress-circular {
+    width: 16px;
+    height: 16px;
+}
+
+.jf-dashboard-counts {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+
+    @media (min-width: $jf-dashboard-sm) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    @media (min-width: $jf-dashboard-lg) {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+.mud-card.jf-dashboard-count-card {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    box-sizing: border-box;
+    height: 100%;
+    padding: 16px;
+    gap: 16px;
+}
+
+.jf-dashboard-count-value .mud-skeleton {
+    min-width: 2em;
+}
+
+.jf-dashboard-running-tasks {
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 16px;
+}
+
+.jf-dashboard-running-task {
+    max-width: 330px;
+}
+
+.jf-dashboard-task-progress {
+    display: flex;
+    align-items: center;
+    min-width: 170px;
+    height: 1.2rem;
+    margin-inline-end: 16px;
+}
+
+.jf-dashboard-task-progress-bar {
+    flex: 1 1 auto;
+    width: 100%;
+}
+
+.jf-dashboard-task-progress-text {
+    margin-inline-start: 8px;
+}
+
+.jf-dashboard-devices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.jf-dashboard-device-card {
+    width: 100%;
+
+    @media (min-width: $jf-dashboard-sm) {
+        width: 360px;
+    }
+}
+
+.jf-dashboard-device-media {
+    display: flex;
+    height: 200px;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: cover;
+}
+
+.jf-dashboard-device-info {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    justify-content: space-between;
+    min-width: 0;
+    padding: 16px;
+}
+
+.jf-dashboard-device-info-shaded {
+    background-color: rgba(0, 0, 0, 0.7);
+    color: #fff;
+}
+
+.jf-dashboard-device-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.jf-dashboard-device-playing {
+    align-items: flex-end;
+    gap: 0;
+}
+
+.jf-dashboard-device-icon {
+    max-width: 2.5em;
+    max-height: 2.5em;
+}
+
+.jf-dashboard-device-names {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.jf-dashboard-device-now-playing {
+    flex-grow: 1;
+}
+
+.jf-dashboard-device-logo {
+    align-self: flex-start;
+    max-width: 130px;
+    max-height: 24px;
+}
+
+.jf-dashboard-device-time {
+    flex-shrink: 0;
+}
+
+// MUI's LinearProgress with a buffer: what is transcoded behind what is played.
+.jf-dashboard-device-progress {
+    position: relative;
+    height: 4px;
+    overflow: hidden;
+    background-color: var(--mud-palette-surface);
+}
+
+.jf-dashboard-device-progress-buffer,
+.jf-dashboard-device-progress-value {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    transition: width 0.4s linear;
+
+    [dir="rtl"] & {
+        right: 0;
+        left: auto;
+    }
+}
+
+.jf-dashboard-device-progress-buffer {
+    background-color: #dd4919;
+}
+
+.jf-dashboard-device-progress-value {
+    background-color: var(--mud-palette-primary);
+}
+
+.jf-dashboard-device-actions {
+    display: flex;
+    justify-content: center;
+    min-height: 48px;
+    padding: 8px;
+}
+
+.jf-dashboard-device-user {
+    display: flex;
+    justify-content: center;
+    padding-bottom: 16px;
+}
+
+.jf-dashboard-skeletons {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+
+    .mud-skeleton {
+        border-radius: 4px;
+    }
+}
+
+// Lists made of MudBlazor's list classes whose rows are links (MUI ListItemLink).
+.jf-dashboard-list {
+    background-color: var(--mud-palette-surface);
+
+    a.mud-list-item {
+        color: inherit;
+        text-decoration: none;
+    }
+
+    .mud-list-item {
+        box-sizing: border-box;
+        align-items: center;
+    }
+
+    .mud-list-item-avatar {
+        flex-shrink: 0;
+        min-width: 56px;
+    }
+
+    .mud-list-item-icon {
+        flex-shrink: 0;
+        min-width: 56px;
+    }
+
+    .mud-list-item-text {
+        flex: 1 1 auto;
+        min-width: 0;
+        margin: 6px 0;
+    }
+
+    .mud-typography {
+        margin: 0;
+    }
+}
+
+.jf-dashboard-paper-list {
+    border-radius: var(--mud-default-borderradius);
+    box-shadow: var(--mud-elevation-1);
+}
+
+.jf-dashboard-activity-item .mud-avatar .mud-icon-root {
+    color: #fff;
+}
+
+.jf-dashboard-activity-name {
+    white-space: pre-wrap;
+}
+
+.jf-dashboard-activity-detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.jf-dashboard-storage-path {
+    padding-bottom: 4px;
+    line-break: anywhere;
+}
+
+.jf-dashboard-storage-numbers {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.jf-dashboard-storage-size {
+    flex-grow: 1;
+    text-align: end;
+}
+
+// ---- Dialogs: port of components/ConfirmDialog.tsx, InputDialog.tsx and SimpleAlert.tsx ----
+
+.dialog.jf-dashboard-dialog {
+    box-sizing: border-box;
+    max-width: min(600px, calc(100% - 64px));
+    max-height: calc(100% - 64px);
+    overflow-y: auto;
+    border-radius: 4px;
+    background-color: var(--mud-palette-surface);
+    color: var(--mud-palette-text-primary);
+
+    // An input dialog is as wide as MUI's "xs" dialogs, whatever it holds.
+    &:has(.mud-input-control) {
+        width: 444px;
+    }
+}
+
+.jf-dashboard-dialog-title {
+    margin: 0;
+    padding: 16px 24px;
+    font-size: 1.25rem;
+    font-weight: 500;
+    line-height: 1.6;
+}
+
+.jf-dashboard-dialog-content {
+    padding: 0 24px 20px;
+}
+
+.jf-dashboard-dialog-form > .jf-dashboard-dialog-content:first-child {
+    padding-top: 20px;
+}
+
+.jf-dashboard-dialog-text {
+    margin: 0;
+    color: var(--mud-palette-text-secondary);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.jf-dashboard-dialog-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 8px;
+    gap: 8px;
+}
+
+.jf-dashboard-trigger-dialog .jf-dashboard-dialog-content {
+    padding-top: 4px;
+}
+
+// ---- Table pages: port of components/table/TablePage.tsx ----
+
+.jf-dashboard-table-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+
+.jf-dashboard-table {
+    .mud-table-toolbar {
+        gap: 8px;
+    }
+
+    .mud-table-cell {
+        vertical-align: middle;
+    }
+}
+
+.jf-dashboard-table-search {
+    flex-grow: 0;
+    width: 16em;
+    max-width: 50%;
+    margin-top: 0;
+}
+
+.mud-table-cell.jf-dashboard-table-center {
+    text-align: center;
+}
+
+.jf-dashboard-table-date {
+    white-space: nowrap;
+}
+
+.jf-dashboard-table-cell {
+    display: inline-flex;
+    align-items: center;
+}
+
+.jf-dashboard-table-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.jf-dashboard-table-filter {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 6em;
+    margin-top: 4px;
+    padding: 4px 0;
+    border: 0;
+    border-bottom: 1px solid var(--mud-palette-lines-inputs);
+    border-radius: 0;
+    outline: 0;
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 400;
+
+    &:focus {
+        border-bottom-color: var(--mud-palette-primary);
+    }
+
+    option {
+        background-color: var(--mud-palette-surface);
+        color: var(--mud-palette-text-primary);
+    }
+}
+
+.jf-dashboard-device-cell-icon {
+    max-width: 1.5em;
+    max-height: 1.5em;
+    margin-inline-end: 1rem;
+}
+
+.jf-dashboard-device-cell-user {
+    margin-inline-end: 1rem;
+}
+
+.mud-icon-button.jf-dashboard-user-avatar-button {
+    padding: 0;
+    text-decoration: none;
+}
+
+.jf-dashboard-activity-overview {
+    display: flex;
+    align-items: center;
+    max-width: 30em;
+}
+
+.jf-dashboard-activity-overview-text {
+    flex-grow: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.jf-dashboard-key-token {
+    font-family: monospace;
+    overflow-wrap: anywhere;
+}
+
+// ---- Forms: MUI Stack with spacing 3 / 2 ----
+
+.jf-dashboard-form {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+
+    > .mud-input-control,
+    > .mud-checkbox {
+        margin: 0;
+    }
+}
+
+.jf-dashboard-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+
+    > .mud-button-root {
+        align-self: flex-start;
+    }
+}
+
+.jf-dashboard-field {
+    display: flex;
+    flex-direction: column;
+}
+
+.jf-dashboard-field-help {
+    margin: 3px 14px 0;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.66;
+
+    > * + * {
+        margin-inline-start: 0.25em;
+    }
+}
+
+.jf-dashboard-alert-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.jf-dashboard-mono textarea {
+    font-family: monospace;
+}
+
+.jf-dashboard-wrap {
+    overflow-wrap: anywhere;
+    white-space: normal;
+    word-break: break-word;
+}
+
+// ---- Branding: port of routes/branding/index.tsx and components/Image.tsx ----
+
+.jf-dashboard-branding-splash {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+
+    @media (min-width: $jf-dashboard-sm) {
+        flex-direction: row;
+    }
+
+    > * {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+}
+
+.jf-dashboard-branding-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+
+    @media (min-width: $jf-dashboard-sm) {
+        gap: 16px;
+    }
+
+    > .mud-button-root {
+        align-self: flex-start;
+    }
+}
+
+.jf-dashboard-branding-upload {
+    cursor: pointer;
+
+    &.mud-disabled {
+        cursor: default;
+        pointer-events: none;
+    }
+}
+
+.jf-dashboard-image {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    overflow: hidden;
+    aspect-ratio: 16 / 9;
+}
+
+.jf-dashboard-image-fallback.mud-icon-root {
+    width: auto;
+    height: 25%;
+    font-size: 4rem;
+    line-height: 1;
+}
+
+// ---- Logs: port of routes/logs ----
+
+.jf-dashboard-logs {
+    margin-top: 24px;
+}
+
+.jf-dashboard-log-buttons,
+.jf-dashboard-log-paper,
+.jf-dashboard-log-error {
+    margin-top: 16px;
+}
+
+.jf-dashboard-log-text {
+    margin: 0;
+    padding: 16px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+// ---- Scheduled tasks: port of routes/tasks and features/tasks/components ----
+
+.jf-dashboard-tasks {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    margin-top: 16px;
+}
+
+.jf-dashboard-task-category {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+// The start/stop button sits over the right end of the row, like MUI's secondaryAction.
+.jf-dashboard-task {
+    position: relative;
+
+    .jf-dashboard-task-link {
+        padding-inline-end: 64px;
+    }
+
+    .jf-dashboard-task-action {
+        position: absolute;
+        top: 50%;
+        right: 16px;
+        transform: translateY(-50%);
+
+        [dir="rtl"] & {
+            right: auto;
+            left: 16px;
+        }
+    }
+}
+
+.jf-dashboard-task-state {
+    line-height: 1.2rem;
+}
+
+.jf-dashboard-trigger {
+    display: flex;
+    flex-direction: column;
+}
+
+// ---- Users: port of routes/users ----
+
+.jf-dashboard-user-error {
+    margin-bottom: 16px;
+}
+
+.jf-dashboard-tabs {
+    .mud-tabs-tabbar {
+        background-color: transparent;
+    }
+
+    .mud-tab {
+        min-width: 90px;
+        text-transform: none;
+    }
+
+    // The tabs choose the form below them; the panels themselves hold nothing.
+    .mud-tabs-panels {
+        display: none;
+    }
+}
+
+// The view switch of the activity log is as wide as its texts need (MUI ToggleButtonGroup).
+.jf-dashboard-activity-views {
+    flex: 0 0 auto;
+    width: auto;
+
+    // As specific as MudBlazor's rule for the items of a small outlined group.
+    &.mud-toggle-group .mud-toggle-item.mud-toggle-item-size-small {
+        padding: 5px 14px;
+        white-space: nowrap;
+    }
+}

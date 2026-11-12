@@ -1,0 +1,159 @@
+@* The API keys page (/dashboard/keys). *@
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private static object Key(string token, string app, int daysAgo) => new { AccessToken = token, AppName = app, DateCreated = Now.AddDays(-daysAgo) };
+
+    private void ScriptKeys(params object[] keys) =>
+        App.Server.OnGet("/Auth/Keys", new { Items = keys, TotalRecordCount = keys.Length });
+
+    private void ScriptTwoKeys() => ScriptKeys(Key("token-backup", "Backup script", 3), Key("token-phone", "Home automation", 1));
+
+    private IRenderedComponent<DashboardApiKeys> RenderPage(int keys = 2)
+    {
+        var cut = Render<DashboardApiKeys>();
+        cut.Eventually(() => Assert.Equal(keys, cut.FindAll("tbody tr.mud-table-row").Count));
+        return cut;
+    }
+
+    private static string[] Apps(IRenderedComponent<DashboardApiKeys> cut) =>
+        cut.FindAll(".jf-dashboard-key-app").Select(app => app.TextContent).ToArray();
+
+    private int Loads() => App.Server.RequestsTo("/Auth/Keys").Count(request => request.Method == HttpMethod.Get);
+
+    [Fact]
+    public void The_keys_are_listed()
+    {
+        SignIn(admin: true);
+        ScriptTwoKeys();
+
+        var cut = RenderPage();
+
+        Assert.Equal(["token-backup", "token-phone"], cut.FindAll(".jf-dashboard-key-token").Select(token => token.TextContent));
+        Assert.Equal(["Backup script", "Home automation"], Apps(cut));
+        Assert.Equal(
+            ["2024-05-12 12:00:00", "2024-05-14 12:00:00"],
+            cut.FindAll("tbody .jf-dashboard-table-date").Select(date => date.TextContent.Trim()));
+        Assert.Contains(this.T("HeaderApiKeysHelp"), cut.Find(".jf-dashboard-table-heading").TextContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_search_narrows_the_list()
+    {
+        SignIn(admin: true);
+        ScriptTwoKeys();
+        var cut = RenderPage();
+
+        await cut.Find("#jf-dashboard-keys-search").InputAsync(new ChangeEventArgs { Value = "PHONE" });
+
+        cut.Eventually(() => Assert.Equal(["Home automation"], Apps(cut)));
+    }
+
+    [Fact]
+    public async Task A_key_is_created_for_a_named_application()
+    {
+        SignIn(admin: true);
+        ScriptTwoKeys();
+        App.Server.OnPost("/Auth/Keys");
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-keys-add"));
+        Assert.Equal(this.T("HeaderNewApiKey"), dialogs.Find(".jf-dashboard-dialog-title").TextContent);
+        Assert.Contains(this.T("LabelAppName"), dialogs.Find(".jf-dashboard-dialog-content").TextContent, StringComparison.Ordinal);
+        Assert.Contains(this.T("LabelAppNameExample"), dialogs.Find(".jf-dashboard-dialog-content").TextContent, StringComparison.Ordinal);
+        Assert.Equal(this.T("Create"), dialogs.Find("[data-id=ok]").TextContent.Trim());
+        ScriptKeys(Key("token-backup", "Backup script", 3), Key("token-phone", "Home automation", 1), Key("token-new", "Sickbeard & co", 0));
+        await ConfirmDialogAsync(dialogs, "Sickbeard & co");
+
+        cut.Eventually(() => Assert.Equal(3, Apps(cut).Length));
+        var request = Assert.Single(App.Server.RequestsTo("/Auth/Keys"), request => request.Method == HttpMethod.Post);
+        Assert.Equal("Sickbeard & co", request.Query("app"));
+        Assert.Equal(2, Loads());
+    }
+
+    [Fact]
+    public async Task No_key_is_created_when_the_dialog_is_closed()
+    {
+        SignIn(admin: true);
+        ScriptTwoKeys();
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-keys-add"));
+        this.Dialogs().Dialogs[0].Cancel();
+
+        cut.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Post);
+        Assert.Equal(1, Loads());
+    }
+
+    [Fact]
+    public async Task A_key_is_revoked_after_a_confirmation()
+    {
+        SignIn(admin: true);
+        ScriptTwoKeys();
+        App.Server.OnDelete("/Auth/Keys/token-backup");
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-app='Backup script'] .jf-dashboard-key-revoke"));
+        Assert.Equal(this.T("HeaderConfirmRevokeApiKey"), dialogs.Find(".jf-dashboard-dialog-title").TextContent);
+        Assert.Equal(this.T("MessageConfirmRevokeApiKey"), dialogs.Find(".jf-dashboard-dialog-text").TextContent);
+        ScriptKeys(Key("token-phone", "Home automation", 1));
+        await ConfirmDialogAsync(dialogs);
+
+        cut.Eventually(() => Assert.Equal(["Home automation"], Apps(cut)));
+        Assert.Single(App.Server.RequestsTo("/Auth/Keys/token-backup"), request => request.Method == HttpMethod.Delete);
+    }
+
+    [Fact]
+    public async Task A_key_stays_when_the_question_is_cancelled()
+    {
+        SignIn(admin: true);
+        ScriptTwoKeys();
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-app='Backup script'] .jf-dashboard-key-revoke"));
+        await CancelDialogAsync(dialogs);
+
+        cut.Eventually(() => Assert.Empty(this.Dialogs().Dialogs));
+        Assert.DoesNotContain(App.Server.Requests, request => request.Method == HttpMethod.Delete);
+    }
+
+    [Fact]
+    public async Task The_list_is_read_again_when_a_change_fails()
+    {
+        SignIn(admin: true);
+        ScriptTwoKeys();
+        var dialogs = this.RenderDialogs();
+        var cut = RenderPage();
+
+        await ClickForDialogAsync(dialogs, cut.Find("[data-app='Backup script'] .jf-dashboard-key-revoke"));
+        await ConfirmDialogAsync(dialogs);
+
+        cut.Eventually(() => Assert.Equal(2, Loads()));
+        Assert.Equal(2, Apps(cut).Length);
+        Assert.Empty(cut.FindAll(".mud-alert"));
+    }
+
+    [Fact]
+    public void An_error_is_shown_when_the_keys_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+
+        var cut = Render<DashboardApiKeys>();
+
+        cut.Eventually(() => Assert.Equal(this.T("ApiKeysLoadError"), cut.Find(".mud-alert").TextContent.Trim()));
+        Assert.Empty(cut.FindAll("table"));
+    }
+}

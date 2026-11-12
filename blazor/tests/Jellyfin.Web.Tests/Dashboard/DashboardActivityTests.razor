@@ -1,0 +1,259 @@
+@* The activity log (/dashboard/activity). *@
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Jellyfin.Web.Tests.User
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private static readonly Guid Alice = SettingsTestExtensions.OtherUserId;
+
+    private static object Entry(
+        int id, string name, string severity = "Information", bool byUser = true, string? shortOverview = null, string? overview = null, string? itemId = null) => new
+    {
+        Id = id,
+        Name = name,
+        Type = "SessionStarted",
+        Severity = severity,
+        Date = Now.AddHours(-id),
+        UserId = byUser ? Alice : (Guid?)null,
+        ShortOverview = shortOverview,
+        Overview = overview,
+        ItemId = itemId,
+    };
+
+    private void ScriptLog(object[]? entries = null, int? total = null)
+    {
+        entries ??= [Entry(1, "alice signed in")];
+        App.Server.OnGet("/Users", new[] { new { Id = Alice, Name = "alice" }, new { Id = Guid.NewGuid(), Name = "bob" } });
+        App.Server.OnGet("/System/ActivityLog/Entries", new { Items = entries, TotalRecordCount = total ?? entries.Length });
+    }
+
+    private IReadOnlyList<RecordedRequest> Loads() => App.Server.RequestsTo("/System/ActivityLog/Entries");
+
+    private IRenderedComponent<DashboardActivity> RenderPage(string? userActivity = null)
+    {
+        var cut = Render<DashboardActivity>(page => page.Add(p => p.UserActivity, userActivity));
+        cut.Eventually(() => Assert.NotEmpty(Loads()));
+        return cut;
+    }
+
+    private static AngleSharp.Dom.IElement SortLabel(IRenderedComponent<DashboardActivity> cut, string text) =>
+        cut.FindAll(".mud-table-sort-label").Single(label => label.TextContent.Trim() == text);
+
+    [Fact]
+    public void The_log_lists_what_happened()
+    {
+        SignIn(admin: true);
+        ScriptLog(
+        [
+            Entry(1, "alice signed in", shortOverview: "from Chrome", overview: "IP address: 10.0.0.2", itemId: "abc"),
+            Entry(2, "Scan failed", "Error", byUser: false),
+        ]);
+
+        var cut = RenderPage();
+
+        cut.Eventually(() => Assert.Equal(2, cut.FindAll("tbody tr.mud-table-row").Count));
+        var first = cut.FindAll("tbody tr.mud-table-row")[0].QuerySelectorAll("td");
+        Assert.Equal(7, first.Length);
+        Assert.Equal("2024-05-15 11:00:00", first[0].TextContent.Trim());
+        Assert.Equal(this.T("LogLevel.Information"), first[1].TextContent.Trim());
+        var avatar = first[2].QuerySelector("a.jf-dashboard-user-avatar-button")!;
+        Assert.Equal($"#/dashboard/users/{Alice:N}/profile", avatar.GetAttribute("href"));
+        Assert.Equal("alice", avatar.GetAttribute("title"));
+        Assert.Equal("alice signed in", first[3].TextContent.Trim());
+        Assert.Equal("from Chrome", first[4].QuerySelector(".jf-dashboard-activity-overview-text")!.TextContent);
+        Assert.NotNull(first[4].QuerySelector(".jf-dashboard-activity-overview-more"));
+        Assert.Equal("SessionStarted", first[5].TextContent.Trim());
+        Assert.Equal("#/details?id=abc", first[6].QuerySelector("a.jf-dashboard-activity-item-link")!.GetAttribute("href"));
+
+        var second = cut.FindAll("tbody tr.mud-table-row")[1].QuerySelectorAll("td");
+        Assert.Equal("2024-05-15 10:00:00", second[0].TextContent.Trim());
+        Assert.Equal(this.T("LogLevel.Error"), second[1].TextContent.Trim());
+        Assert.Null(second[2].QuerySelector("a"));
+        Assert.Null(second[4].QuerySelector(".jf-dashboard-activity-overview"));
+        Assert.Null(second[6].QuerySelector("a"));
+    }
+
+    [Fact]
+    public void The_first_page_is_asked_for_newest_first()
+    {
+        SignIn(admin: true);
+        ScriptLog();
+
+        RenderPage();
+
+        var load = Assert.Single(Loads());
+        Assert.Equal("0", load.Query("startIndex"));
+        Assert.Equal("25", load.Query("limit"));
+        Assert.Equal("DateCreated", load.Query("sortBy"));
+        Assert.Equal("Descending", load.Query("sortOrder"));
+        Assert.Null(load.Query("hasUserId"));
+        Assert.Null(load.Query("name"));
+        Assert.Null(load.Query("severity"));
+        Assert.Single(App.Server.RequestsTo("/Users"));
+    }
+
+    [Theory]
+    [InlineData(null, null, "All", 7)]
+    [InlineData("true", "true", "LabelUser", 7)]
+    [InlineData("1", "true", "LabelUser", 7)]
+    [InlineData("false", "false", "LabelSystem", 6)]
+    public void The_address_chooses_whose_activity_is_shown(string? parameter, string? hasUserId, string view, int columns)
+    {
+        SignIn(admin: true);
+        ScriptLog();
+
+        var cut = RenderPage(parameter);
+
+        Assert.Equal(hasUserId, Assert.Single(Loads()).Query("hasUserId"));
+        Assert.Equal(columns, cut.FindAll("thead tr:first-child th").Count);
+        Assert.Equal(this.T(view), cut.Find(".jf-dashboard-activity-views .mud-toggle-item-selected").TextContent.Trim());
+    }
+
+    [Fact]
+    public async Task Choosing_a_view_loads_it_and_changes_the_address()
+    {
+        SignIn(admin: true);
+        ScriptLog();
+        var cut = RenderPage();
+
+        await cut.FindAll(".jf-dashboard-activity-views .mud-toggle-item")[1].ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Equal(2, Loads().Count));
+        Assert.Equal("true", Loads()[1].Query("hasUserId"));
+        Assert.EndsWith("/dashboard/activity?useractivity=true", App.Browser.Hash, StringComparison.Ordinal);
+
+        await cut.FindAll(".jf-dashboard-activity-views .mud-toggle-item")[2].ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Equal(3, Loads().Count));
+        Assert.Equal("false", Loads()[2].Query("hasUserId"));
+        Assert.EndsWith("/dashboard/activity?useractivity=false", App.Browser.Hash, StringComparison.Ordinal);
+        cut.Eventually(() => Assert.Equal(6, cut.FindAll("thead tr:first-child th").Count));
+
+        await cut.FindAll(".jf-dashboard-activity-views .mud-toggle-item")[0].ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Equal(4, Loads().Count));
+        Assert.Null(Loads()[3].Query("hasUserId"));
+        Assert.EndsWith("/dashboard/activity", App.Browser.Hash, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_changed_address_shows_its_view()
+    {
+        SignIn(admin: true);
+        ScriptLog();
+        var cut = RenderPage("true");
+
+        cut.Render(page => page.Add(p => p.UserActivity, "false"));
+
+        cut.Eventually(() => Assert.Equal(2, Loads().Count));
+        Assert.Equal("false", Loads()[1].Query("hasUserId"));
+        Assert.Equal(this.T("LabelSystem"), cut.Find(".jf-dashboard-activity-views .mud-toggle-item-selected").TextContent.Trim());
+    }
+
+    [Fact]
+    public async Task The_columns_filter_on_the_server()
+    {
+        SignIn(admin: true);
+        ScriptLog();
+        var cut = RenderPage();
+        Assert.Empty(cut.FindAll(".jf-dashboard-table-filter"));
+
+        await cut.Find(".jf-dashboard-table-filter-toggle").ClickAsync(new MouseEventArgs());
+        Assert.Equal(5, cut.FindAll(".jf-dashboard-table-filter").Count);
+        Assert.Equal(
+            ["", "alice", "bob"],
+            cut.FindAll(".jf-dashboard-activity-filter-user option").Select(option => option.GetAttribute("value")));
+        Assert.Equal(8, cut.FindAll(".jf-dashboard-activity-filter-severity option").Count);
+
+        await cut.Find(".jf-dashboard-activity-filter-name").ChangeAsync(new ChangeEventArgs { Value = " scan " });
+        cut.Eventually(() => Assert.Equal(2, Loads().Count));
+        Assert.Equal("scan", Loads()[1].Query("name"));
+
+        await cut.Find(".jf-dashboard-activity-filter-severity").ChangeAsync(new ChangeEventArgs { Value = "Error" });
+        cut.Eventually(() => Assert.Equal(3, Loads().Count));
+        Assert.Equal("Error", Loads()[2].Query("severity"));
+        Assert.Equal("scan", Loads()[2].Query("name"));
+
+        await cut.Find(".jf-dashboard-activity-filter-user").ChangeAsync(new ChangeEventArgs { Value = "alice" });
+        await cut.Find(".jf-dashboard-activity-filter-overview").ChangeAsync(new ChangeEventArgs { Value = "chrome" });
+        await cut.Find(".jf-dashboard-activity-filter-type").ChangeAsync(new ChangeEventArgs { Value = "SessionStarted" });
+        cut.Eventually(() => Assert.Equal(6, Loads().Count));
+        Assert.Equal("alice", Loads()[5].Query("username"));
+        Assert.Equal("chrome", Loads()[5].Query("shortOverview"));
+        Assert.Equal("SessionStarted", Loads()[5].Query("type"));
+
+        // Hiding the filters takes them back.
+        await cut.Find(".jf-dashboard-table-filter-toggle").ClickAsync(new MouseEventArgs());
+        cut.Eventually(() => Assert.Equal(7, Loads().Count));
+        Assert.Null(Loads()[6].Query("name"));
+        Assert.Null(Loads()[6].Query("severity"));
+        Assert.Null(Loads()[6].Query("username"));
+        Assert.Empty(cut.FindAll(".jf-dashboard-table-filter"));
+    }
+
+    [Fact]
+    public async Task The_columns_sort_on_the_server()
+    {
+        SignIn(admin: true);
+        ScriptLog();
+        var cut = RenderPage();
+
+        await SortLabel(cut, this.T("LabelName")).ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Equal(2, Loads().Count));
+        Assert.Equal("Name", Loads()[1].Query("sortBy"));
+        Assert.Equal("Ascending", Loads()[1].Query("sortOrder"));
+
+        await SortLabel(cut, this.T("LabelName")).ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Equal(3, Loads().Count));
+        Assert.Equal("Name", Loads()[2].Query("sortBy"));
+        Assert.Equal("Descending", Loads()[2].Query("sortOrder"));
+    }
+
+    [Fact]
+    public async Task The_pages_are_loaded_from_the_server()
+    {
+        SignIn(admin: true);
+        ScriptLog(total: 60);
+        var cut = RenderPage();
+        cut.Eventually(() => Assert.Single(cut.FindAll("tbody tr.mud-table-row")));
+
+        await cut.FindAll(".mud-table-pagination-actions button")[2].ClickAsync(new MouseEventArgs());
+
+        cut.Eventually(() => Assert.Equal(2, Loads().Count));
+        Assert.Equal("25", Loads()[1].Query("startIndex"));
+        Assert.Equal("25", Loads()[1].Query("limit"));
+    }
+
+    [Fact]
+    public void An_error_is_shown_when_the_users_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/System/ActivityLog/Entries", new { Items = Array.Empty<object>(), TotalRecordCount = 0 });
+
+        var cut = Render<DashboardActivity>();
+
+        cut.Eventually(() => Assert.Equal(this.T("ActivitiesLoadError"), cut.Find(".mud-alert").TextContent.Trim()));
+        Assert.Empty(cut.FindAll("table"));
+    }
+
+    [Fact]
+    public void An_error_is_shown_when_the_log_cannot_be_loaded()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", Array.Empty<object>());
+
+        var cut = Render<DashboardActivity>();
+
+        cut.Eventually(() => Assert.Equal(this.T("ActivitiesLoadError"), cut.Find(".mud-alert").TextContent.Trim()));
+        Assert.Empty(cut.FindAll("table"));
+    }
+}
