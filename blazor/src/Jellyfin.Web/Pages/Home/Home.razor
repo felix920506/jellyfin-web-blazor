@@ -6,7 +6,7 @@
 <Page Id="indexPage" Class="mainAnimatedPage homePage libraryPage allLibraryPage backdropPage pageWithAbsoluteTabs withTabs" BackButton="false">
     @* As in the original's modern layout the two tabs have no tab bar: Favorites is reached from the navigation ("#/home?tab=1"). *@
     <PageTabs Tabs="@TabNames" Visible="false">
-        <TabContent Index="0" Id="homeTab">
+        <TabContent Index="0" Id="homeTab" RefreshItemsOnResume="true">
             <HomeTab />
         </TabContent>
         <TabContent Index="1" Id="favoritesTab">

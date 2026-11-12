@@ -15,6 +15,7 @@
     private readonly List<object> _views = [View(1, "Films", "movies"), View(2, "Series", "tvshows")];
     private readonly List<object> _favoriteMovies = [];
     private AppLocation _location = AppLocation.Parse("/home");
+    private bool _hideFirstLatest;
 
     public override async Task InitializeAsync()
     {
@@ -26,7 +27,9 @@
         });
         App.Server.OnGet("/Shows/NextUp", new { Items = new[] { Episode(21, "Next one") } });
         App.Server.OnGet("/Items/Latest", request => request.Query("parentId") == TestItems.Id(1)
-            ? new[] { TestItems.Movie(31, "New one"), TestItems.Movie(32, "New two") }
+            ? _hideFirstLatest
+                ? new[] { TestItems.Movie(32, "New two") }
+                : new[] { TestItems.Movie(31, "New one"), TestItems.Movie(32, "New two") }
             : []);
         App.Server.OnGet("/Items", request => new
         {
@@ -329,5 +332,25 @@
         cut.WaitForAssertion(() => Assert.NotEmpty(App.Server.RequestsTo("/Items")));
         Assert.Empty(cut.FindAll("#homeTab .sections"));
         Assert.Empty(App.Server.RequestsTo("/UserItems/Resume"));
+    }
+
+    [Fact]
+    public void Returning_to_home_refreshes_its_sections()
+    {
+        SignIn();
+        var cut = RenderHome();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".section6 .card").Count));
+        var latestRequests = App.Server.RequestsTo("/Items/Latest").Count;
+
+        _location = AppLocation.Parse("/home?tab=1");
+        Rerender(cut);
+        cut.WaitForAssertion(() => Assert.True(cut.Find("#favoritesTab").ClassList.Contains("is-active")));
+
+        _hideFirstLatest = true;
+        _location = AppLocation.Parse("/home");
+        Rerender(cut);
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".section6 .card")));
+        Assert.True(App.Server.RequestsTo("/Items/Latest").Count > latestRequests);
     }
 }

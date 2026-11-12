@@ -8,7 +8,9 @@
     @if (_activated)
     {
         <CascadingValue Value="!IsActive" Name="ItemsPaused">
-            @ChildContent
+            <CascadingValue Value="RefreshItemsOnResume" Name="ItemsRefreshOnResume">
+                @ChildContent
+            </CascadingValue>
         </CascadingValue>
     }
 </div>
@@ -30,6 +32,10 @@
     /// <summary>False renders the content right away, even while the tab is not selected.</summary>
     [Parameter]
     public bool Lazy { get; set; } = true;
+
+    /// <summary>Reload item containers when this tab becomes active again.</summary>
+    [Parameter]
+    public bool RefreshItemsOnResume { get; set; }
 
     [Parameter]
     public RenderFragment? ChildContent { get; set; }

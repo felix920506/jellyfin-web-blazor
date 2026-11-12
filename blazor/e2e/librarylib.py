@@ -3,7 +3,10 @@ import json
 import time
 import traceback
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from lib import PASSWORD, SERVER, USER, finish, shot
+from playback import show_osd
 
 AUTH = 'MediaBrowser Client="e2e", Device="e2e", DeviceId="e2e-library", Version="1"'
 PHONE = ("Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -163,10 +166,31 @@ def media_time(page, kind):
 
 def stop_playback(page):
     # The now playing bar's button is .stopButton (as in the original); the video OSD's is .btnStop.
-    for selector in (".nowPlayingBar .stopButton:visible", ".btnStop:visible"):
-        if page.locator(selector).count():
-            page.locator(selector).first.click()
-            break
+    # Video playback hides the OSD after a few seconds, so reveal it as a user would before looking
+    # for its stop button. Audio playback has no video OSD and is stopped from the now-playing bar.
+    video_visible = page.locator("video:visible").count() > 0
+    if video_visible:
+        show_osd(page)
+    selectors = (".btnStop:visible", ".nowPlayingBar .stopButton:visible") if video_visible else (
+        ".nowPlayingBar .stopButton:visible", ".btnStop:visible")
+    for selector in selectors:
+        for _ in range(3):
+            button = page.locator(selector).first
+            if not button.count():
+                break
+            try:
+                button.click(timeout=5_000)
+                return wait_until(lambda: not player(page).get("isPlaying"), timeout=15)
+            except PlaywrightTimeoutError:
+                page.wait_for_timeout(200)
+    # The video page's back control is the public way out when a player has no
+    # dedicated stop button. Leaving the page stops playback, like the original.
+    back = page.locator(".headerBackButton:visible").first
+    if back.count():
+        try:
+            back.click(timeout=5_000)
+        except PlaywrightTimeoutError:
+            pass
     return wait_until(lambda: not player(page).get("isPlaying"), timeout=15)
 
 

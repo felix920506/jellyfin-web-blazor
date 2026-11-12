@@ -93,6 +93,10 @@
     [CascadingParameter(Name = "ItemsPaused")]
     public bool TabPaused { get; set; }
 
+    /// <summary>Whether the containing tab asks lists to refresh whenever it resumes.</summary>
+    [CascadingParameter(Name = "ItemsRefreshOnResume")]
+    public bool RefreshOnResume { get; set; }
+
     /// <summary>Raised after the items changed (loaded, refreshed).</summary>
     [Parameter]
     public EventCallback<IReadOnlyList<BaseItemDto>> OnItemsChanged { get; set; }
@@ -188,7 +192,7 @@
             _needsRefresh = false;
             await RefreshAsync();
         }
-        else if (resumed && _needsRefresh)
+        else if (resumed && (_needsRefresh || RefreshOnResume))
         {
             await RefreshAsync();
         }
