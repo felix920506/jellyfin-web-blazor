@@ -58,6 +58,7 @@ public class ItemDialogCommandTests : ItemDialogsTestContext
     }
 
     [Theory]
+    [InlineData(ItemCommand.Record)]
     [InlineData("play")]
     [InlineData("delete")]
     [InlineData("copy-stream")]
@@ -75,7 +76,6 @@ public class ItemDialogCommandTests : ItemDialogsTestContext
         var timer = TestItems.Item(new { Id = MovieId, Name = type, ServerId = TestApp.ServerId });
         timer.EnsureExtras().TypeName = type;
 
-        // The dialog area declines to edit a timer; Live TV's handler is the one that does.
         Assert.True(Handlers.CanHandle(ItemCommand.Edit, timer));
         Assert.True(Handlers.CanHandle(ItemCommand.Refresh, timer));
     }

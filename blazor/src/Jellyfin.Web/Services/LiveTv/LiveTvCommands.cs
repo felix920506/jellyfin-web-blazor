@@ -13,8 +13,12 @@ public sealed class LiveTvCommandHandler(AppDialogs dialogs, RecordingHelper rec
 {
     public bool CanHandle(string command, BaseItemDto item) => command switch
     {
-        ItemCommand.Record or ItemCommand.ProgramDialog or ItemCommand.ToggleRecording
-            or ItemCommand.CancelTimer or ItemCommand.CancelSeriesTimer => true,
+        // The context-menu command is offered only for programmes. Card actions use
+        // ToggleRecording for timers and recordings, just like shortcuts.js.
+        ItemCommand.Record or ItemCommand.ProgramDialog => item.TypeName() == "Program",
+        ItemCommand.ToggleRecording => item.TypeName() == "Program"
+            || !string.IsNullOrEmpty(item.TimerId) || !string.IsNullOrEmpty(item.SeriesTimerId),
+        ItemCommand.CancelTimer or ItemCommand.CancelSeriesTimer => true,
         ItemCommand.Edit => item.TypeName() is "Timer" or "SeriesTimer",
         _ => false
     };

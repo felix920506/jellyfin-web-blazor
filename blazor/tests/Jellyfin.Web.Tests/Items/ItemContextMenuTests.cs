@@ -600,7 +600,6 @@ public class ItemCommandHandlerTests : ItemsTestContext
 
         Assert.True(handlers.CanHandle("edit", item));
         Assert.True(handlers.CanHandle("share", item));
-        // Live TV now answers "record", so a command nobody owns is the one that stays unanswered.
         Assert.False(handlers.CanHandle("playmenu", item));
         Assert.Equal(ItemCommandResult.None, await handlers.ExecuteAsync("playmenu", item));
         Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);

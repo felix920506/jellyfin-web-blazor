@@ -155,6 +155,19 @@ public class LiveTvPageTests : ItemsTestContext
         Assert.StartsWith("2024-05-18", last.Query("MinEndDate"));
     }
 
+    [Fact]
+    public async Task A_programme_context_command_is_owned_by_live_tv_only_for_programmes()
+    {
+        var handler = Get<LiveTvCommandHandler>();
+        var movie = TestItems.Item(TestItems.Movie(1, "Movie"));
+        var program = TestItems.Item(new { Id = TestItems.Id(2), Type = "Program" });
+
+        Assert.False(handler.CanHandle(ItemCommand.Record, movie));
+        Assert.True(handler.CanHandle(ItemCommand.Record, program));
+        Assert.False(handler.CanHandle(ItemCommand.ProgramDialog, movie));
+        Assert.True(handler.CanHandle(ItemCommand.ProgramDialog, program));
+    }
+
     /// <summary>Renders the page as the router does, with the location it is shown at.</summary>
     private IRenderedComponent<Pages.LiveTvPage> RenderAt(string url)
     {

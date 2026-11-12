@@ -1,0 +1,15 @@
+// Live TV's original stylesheet is included unchanged in the main bundle. These are the two
+// small layout rules that the legacy page applies outside the guide component's own stylesheet.
+.guideVerticalScroller {
+    padding-bottom: 15em;
+}
+
+#guideTab {
+    @media all and (min-width: 62.5em) {
+        padding-left: 0.5em;
+    }
+}
+
+#channelsTab .cardImageContainer {
+    background-size: contain;
+}
