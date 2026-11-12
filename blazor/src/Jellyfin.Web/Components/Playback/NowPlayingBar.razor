@@ -12,6 +12,7 @@
 @inject ItemActions ItemActions
 @inject JellyfinApi Api
 @inject IPlaybackTimers Timers
+@inject SyncPlayService SyncPlay
 
 <div class="nowPlayingBar @StateClass" @onclick="OpenNowPlaying">
     @if (_item is { } item)
@@ -28,7 +29,7 @@
             <PlaybackSlider ContainerClass="nowPlayingBarPositionContainer" Dir="ltr" Class="slider-medium-thumb nowPlayingBarPositionSlider"
                             Step=".01" KeepProgress="true" Value="PositionPercent" Disabled="@(!Playback.CanSeek())"
                             Clear="@(Playback.CurrentMediaSource is { RunTimeTicks: null })" Buffered="BufferedPercent"
-                            BubbleText="PositionBubbleText" OnChange="value => Playback.SeekPercentAsync(value)" />
+                            BubbleText="PositionBubbleText" OnChange="SeekPercentAsync" />
 
             <div class="nowPlayingBarInfoContainer">
                 <div class="nowPlayingImage" style="@(imageUrl is null ? "display:none;" : $"background-image:url('{imageUrl}');")"></div>
@@ -50,11 +51,11 @@
 
             <div class="nowPlayingBarCenter @(mobile ? "hide" : null)" dir="ltr">
                 <button type="button" class="previousTrackButton mediaButton paper-icon-button-light" title="@Globalize["ButtonPreviousTrack"]"
-                        @onclick="OnPreviousTrackAsync" @onclick:stopPropagation="true" @ondblclick="() => Playback.PreviousTrackAsync()">
+                         @onclick="OnPreviousTrackAsync" @onclick:stopPropagation="true" @ondblclick="PreviousTrackAsync">
                     <span class="material-icons skip_previous" aria-hidden="true"></span>
                 </button>
                 <button type="button" class="playPauseButton mediaButton paper-icon-button-light" title="@Globalize[paused ? "Play" : "ButtonPause"]"
-                        @onclick="() => Playback.PlayPauseAsync()" @onclick:stopPropagation="true">
+                         @onclick="PlayPauseAsync" @onclick:stopPropagation="true">
                     <span class="material-icons @(paused ? "play_arrow" : "pause")" aria-hidden="true"></span>
                 </button>
                 <button type="button" class="stopButton mediaButton paper-icon-button-light" title="@Globalize["ButtonStop"]"
@@ -64,7 +65,7 @@
                 @if (!mobile)
                 {
                     <button type="button" class="nextTrackButton mediaButton paper-icon-button-light" title="@Globalize["ButtonNextTrack"]"
-                            @onclick="() => Playback.NextTrackAsync()" @onclick:stopPropagation="true">
+                             @onclick="NextTrackAsync" @onclick:stopPropagation="true">
                         <span class="material-icons skip_next" aria-hidden="true"></span>
                     </button>
                 }
@@ -91,11 +92,11 @@
                 </button>
 
                 <button type="button" class="toggleRepeatButton mediaButton paper-icon-button-light @(repeatMode == PlayQueue.RepeatNone ? null : "buttonActive") @(commands.Contains("SetRepeatMode") ? null : "hide")"
-                        title="@Globalize["Repeat"]" @onclick="ToggleRepeat" @onclick:stopPropagation="true">
+                         title="@Globalize["Repeat"]" @onclick="ToggleRepeatAsync" @onclick:stopPropagation="true">
                     <span class="material-icons @(repeatMode == PlayQueue.RepeatOne ? "repeat_one" : "repeat")" aria-hidden="true"></span>
                 </button>
                 <button type="button" class="btnShuffleQueue mediaButton paper-icon-button-light @(Playback.ShuffleMode == PlayQueue.Shuffled ? "buttonActive" : null) @(mobile ? "hide" : null)"
-                        title="@Globalize["Shuffle"]" @onclick="Playback.ToggleQueueShuffleMode" @onclick:stopPropagation="true">
+                         title="@Globalize["Shuffle"]" @onclick="ToggleShuffleAsync" @onclick:stopPropagation="true">
                     <span class="material-icons shuffle" aria-hidden="true"></span>
                 </button>
 
@@ -286,15 +287,50 @@
             }
         }
 
-        return Playback.PreviousTrackAsync();
+        return PreviousTrackAsync();
     }
 
-    private void ToggleRepeat() => Playback.SetRepeatMode(Playback.RepeatMode switch
+    private Task ToggleRepeatAsync()
     {
-        PlayQueue.RepeatAll => PlayQueue.RepeatOne,
-        PlayQueue.RepeatOne => PlayQueue.RepeatNone,
-        _ => PlayQueue.RepeatAll,
-    });
+        var mode = Playback.RepeatMode switch
+        {
+            PlayQueue.RepeatAll => PlayQueue.RepeatOne,
+            PlayQueue.RepeatOne => PlayQueue.RepeatNone,
+            _ => PlayQueue.RepeatAll,
+        };
+
+        if (SyncPlay.IsEnabled)
+        {
+            return SyncPlay.SetRepeatModeAsync(mode);
+        }
+
+        Playback.SetRepeatMode(mode);
+        return Task.CompletedTask;
+    }
+
+    private Task ToggleShuffleAsync()
+    {
+        if (SyncPlay.IsEnabled)
+        {
+            var mode = Playback.ShuffleMode == PlayQueue.Shuffled ? PlayQueue.Sorted : PlayQueue.Shuffled;
+            return SyncPlay.SetShuffleModeAsync(mode);
+        }
+
+        Playback.ToggleQueueShuffleMode();
+        return Task.CompletedTask;
+    }
+
+    private Task PlayPauseAsync() => SyncPlay.IsEnabled
+        ? (Playback.IsPaused ? SyncPlay.UnpauseAsync() : SyncPlay.PauseAsync())
+        : Playback.PlayPauseAsync();
+
+    private Task NextTrackAsync() => SyncPlay.IsEnabled ? SyncPlay.NextItemAsync() : Playback.NextTrackAsync();
+
+    private Task PreviousTrackAsync() => SyncPlay.IsEnabled ? SyncPlay.PreviousItemAsync() : Playback.PreviousTrackAsync();
+
+    private Task SeekPercentAsync(double value) => SyncPlay.IsEnabled
+        ? SyncPlay.SeekAsync((long)((Playback.DurationTicks ?? 0) * value / 100d))
+        : Playback.SeekPercentAsync(value);
 
     private async Task ShowContextMenuAsync()
     {

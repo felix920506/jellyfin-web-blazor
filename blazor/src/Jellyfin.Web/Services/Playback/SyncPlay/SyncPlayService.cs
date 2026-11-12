@@ -57,6 +57,7 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
     public bool IsEnabled => Group is not null;
     public SyncPlayGroupState? Group { get; private set; }
     public SyncPlayQueueState? Queue { get; private set; }
+    public SyncPlayStateUpdate? LastStateUpdate { get; private set; }
     public SyncPlayCommand? LastCommand { get; private set; }
     public bool IsFollowingGroupPlayback { get; private set; } = true;
     public bool IsBuffering => _buffering;
@@ -108,6 +109,17 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
         PostAsync("SyncPlay/SetNewQueue", new { PlayingQueue = itemIds, PlayingItemPosition = itemPosition, StartPositionTicks = startPositionTicks });
 
     public Task SetPlaylistItemAsync(string playlistItemId) => PostAsync("SyncPlay/SetPlaylistItem", new { PlaylistItemId = playlistItemId });
+
+    public Task MovePlaylistItemAsync(string playlistItemId, int newIndex) =>
+        PostAsync("SyncPlay/MovePlaylistItem", new { PlaylistItemId = playlistItemId, NewIndex = newIndex });
+
+    public Task NextItemAsync() => PostAsync("SyncPlay/NextItem", new { PlaylistItemId = Queue?.CurrentPlaylistItemId });
+
+    public Task PreviousItemAsync() => PostAsync("SyncPlay/PreviousItem", new { PlaylistItemId = Queue?.CurrentPlaylistItemId });
+
+    public Task SetRepeatModeAsync(string mode) => PostAsync("SyncPlay/SetRepeatMode", new { Mode = mode });
+
+    public Task SetShuffleModeAsync(string mode) => PostAsync("SyncPlay/SetShuffleMode", new { Mode = mode });
 
     public Task RequestQueueAsync(string itemId, int? count = null) => PostAsync("SyncPlay/Queue", new { ItemId = itemId, ItemCount = count });
 
@@ -210,6 +222,10 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
                 Group = Deserialize<SyncPlayGroupState>(payload);
                 Changed?.Invoke();
                 break;
+            case "StateUpdate":
+                LastStateUpdate = Deserialize<SyncPlayStateUpdate>(payload);
+                Changed?.Invoke();
+                break;
             case "PlayQueue":
                 await ProcessQueueAsync(payload);
                 break;
@@ -287,6 +303,7 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
     {
         Group = null;
         Queue = null;
+        LastStateUpdate = null;
         LastCommand = null;
         _groupPoller?.Dispose();
         _groupPoller = null;
@@ -312,10 +329,28 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
             return;
         }
 
-        if (wasDifferent || LastCommand is null)
+        if (queue.Reason is "RepeatMode" or "ShuffleMode")
+        {
+            await ApplyLocallyAsync(() => ApplyQueueModeAsync(queue));
+        }
+        else if (wasDifferent || LastCommand is null || queue.Reason is "NewPlaylist" or "SetCurrentItem" or "NextItem" or "PreviousItem" or "RemoveItems")
         {
             await StartQueuePlaybackAsync(queue);
         }
+    }
+
+    private Task ApplyQueueModeAsync(SyncPlayQueueState queue)
+    {
+        if (queue.Reason == "RepeatMode" && queue.RepeatMode is PlayQueue.RepeatNone or PlayQueue.RepeatAll or PlayQueue.RepeatOne)
+        {
+            _playback.SetRepeatMode(queue.RepeatMode);
+        }
+        else if (queue.Reason == "ShuffleMode" && queue.ShuffleMode is PlayQueue.Sorted or PlayQueue.Shuffled)
+        {
+            _playback.SetQueueShuffleMode(queue.ShuffleMode);
+        }
+
+        return Task.CompletedTask;
     }
 
     private async Task StartQueuePlaybackAsync(SyncPlayQueueState queue)
@@ -328,6 +363,8 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
             StartIndex = Math.Max(0, queue.PlayingItemIndex),
             StartPositionTicks = EstimateCurrentTicks(queue.StartPositionTicks, queue.LastUpdate)
         }));
+
+        await ApplyLocallyAsync(() => ApplyQueueModeAsync(queue));
     }
 
     private void OnPlaybackEvent(string name)
@@ -340,7 +377,9 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
             case PlaybackEvents.PlaybackStart: Run(SendReadyAfterQueueAsync()); break;
             case PlaybackEvents.Playing: Run(SendReadyAsync(false)); break;
             case PlaybackEvents.Waiting: Run(SendReadyAsync(true)); break;
-            case "seek": Run(SeekAsync(_playback.CurrentTimeTicks)); break;
+            case "seek": Run(SendSeekCommandAsync()); break;
+            case PlaybackEvents.RepeatModeChange: Run(SetRepeatModeAsync(_playback.RepeatMode)); break;
+            case PlaybackEvents.ShuffleQueueModeChange: Run(SetShuffleModeAsync(_playback.ShuffleMode)); break;
             case PlaybackEvents.TimeUpdate: CorrectDrift(); break;
         }
     }
@@ -360,6 +399,10 @@ public sealed class SyncPlayService : IStartupTask, IDisposable
     }
 
     private Task SendStateAsync(string command) => command == "Pause" ? PauseAsync() : UnpauseAsync();
+
+    private Task SendSeekCommandAsync() => IsEnabled
+        ? SeekAsync(_playback.CurrentTimeTicks)
+        : Task.CompletedTask;
 
     private Task SendReadyAsync(bool buffering)
     {

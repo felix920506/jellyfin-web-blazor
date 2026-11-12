@@ -72,13 +72,43 @@ def main():
                 host.wait_for_selector("video", state="attached", timeout=30000)
                 host.wait_for_function("document.querySelector('video')?.currentTime > 0", timeout=30000)
                 shot(host, "syncplay-host-playing")
-                guest.wait_for_selector("video", state="attached", timeout=30000)
+                guest.wait_for_function("document.querySelector('video')?.readyState >= 2", timeout=30000)
                 guest.wait_for_function("document.querySelector('video')?.currentTime > 0", timeout=30000)
                 shot(guest, "syncplay-guest-playing")
                 host.wait_for_timeout(3000)
-                host.locator(".btnPause").dispatch_event("click")
+                host.mouse.move(400, 300)
+                host.mouse.move(420, 320)
+                host.wait_for_selector(".videoOsdBottom:not(.hide):not(.videoOsdBottom-hidden)", timeout=5000)
+                host.locator(".videoOsdBottom .btnPause").click()
+                host.wait_for_function("document.querySelector('video')?.paused === true", timeout=5000)
                 guest.wait_for_function("document.querySelector('video')?.paused === true", timeout=15000)
                 print("ok   pause command follows to the other device")
+                host.mouse.move(400, 300)
+                host.locator(".videoOsdBottom .btnPause").click()
+                host.wait_for_function("document.querySelector('video')?.paused === false", timeout=5000)
+                guest.wait_for_function("document.querySelector('video')?.paused === false", timeout=15000)
+                print("ok   unpause command follows to the other device")
+                host.mouse.move(400, 300)
+                host.wait_for_selector("input.osdPositionSlider", timeout=5000)
+                host.locator("input.osdPositionSlider").fill("50")
+                host.locator("input.osdPositionSlider").dispatch_event("change")
+                guest.wait_for_function(
+                    "position => Math.abs(document.querySelector('video')?.currentTime - position) < 2",
+                    arg=host.locator("video").evaluate("video => video.currentTime"),
+                    timeout=15000,
+                )
+                print("ok   host seek follows within tolerance")
+                guest.mouse.move(400, 300)
+                guest.mouse.move(420, 320)
+                guest.wait_for_selector("input.osdPositionSlider", timeout=5000)
+                guest.locator("input.osdPositionSlider").fill("25")
+                guest.locator("input.osdPositionSlider").dispatch_event("change")
+                host.wait_for_function(
+                    "position => Math.abs(document.querySelector('video')?.currentTime - position) < 2",
+                    arg=guest.locator("video").evaluate("video => video.currentTime"),
+                    timeout=15000,
+                )
+                print("ok   guest seek reaches the host within tolerance")
                 go(host, "/home")
                 host.wait_for_selector(".jf-syncplay-button")
                 host.click(".jf-syncplay-button")
