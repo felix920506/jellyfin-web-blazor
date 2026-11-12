@@ -21,7 +21,7 @@
                 <div style="flex-grow:1;">
                     <label class="inputLabel @(_pathFocused ? "inputLabelFocused" : "inputLabelUnfocused")" for="@_pathId">@Globalize["LabelFileOrUrl"]</label>
                     <input @ref="_pathInput" id="@_pathId" class="emby-input txtPath" type="text" value="@_path" required autocomplete="off"
-                           @oninput="args => _path = args.Value?.ToString()"
+                           @oninput="PathInputAsync"
                            @onfocus="() => _pathFocused = true" @onblur="() => _pathFocused = false" />
                 </div>
                 <IconButton Icon="search" id="btnSelectPath" Class="emby-input-iconbutton" OnClick="SelectPathAsync" />
@@ -63,6 +63,7 @@
     private string? _sports;
     private string? _userAgent;
     private bool _pathFocused;
+    private bool _pathEdited;
     private bool _loaded;
     private string? _loadedFor;
 
@@ -93,6 +94,7 @@
 
         _loaded = true;
         _loadedFor = ProviderId;
+        _pathEdited = false;
         await ReloadAsync();
     }
 
@@ -119,7 +121,10 @@
         {
             var configuration = await LiveTv.GetConfigurationAsync();
             var info = LiveTvAdmin.FindProvider(configuration, ProviderId) ?? await LiveTv.GetDefaultProviderAsync();
-            _path = info.Text("Path");
+            if (!_pathEdited)
+            {
+                _path = info.Text("Path");
+            }
             _kids = Join(info, "KidsCategories");
             _news = Join(info, "NewsCategories");
             _sports = Join(info, "SportsCategories");
@@ -143,9 +148,17 @@
         if (!string.IsNullOrEmpty(path))
         {
             _path = path;
+            _pathEdited = true;
             StateHasChanged();
             await _pathInput.FocusAsync();
         }
+    }
+
+    private Task PathInputAsync(ChangeEventArgs args)
+    {
+        _path = args.Value?.ToString();
+        _pathEdited = true;
+        return Task.CompletedTask;
     }
 
     private async Task SubmitAsync()

@@ -39,8 +39,8 @@
                     <div style="display: flex; align-items: center;">
                         <div style="flex-grow: 1;">
                             <label class="inputLabel @(_pathFocused ? "inputLabelFocused" : "inputLabelUnfocused")" for="txtDevicePath">@Globalize[_form.PathLabel]</label>
-                            <input id="txtDevicePath" class="emby-input txtDevicePath" type="text" value="@_form.Url" required="@_form.SupportsSelectablePath" autocomplete="off"
-                                   @oninput="args => _form.Url = args.Value?.ToString()"
+                            <input id="txtDevicePath" class="emby-input txtDevicePath" type="text" @bind-value="_form.Url" @bind-value:event="oninput"
+                                   required="@_form.SupportsSelectablePath" autocomplete="off"
                                    @onfocus="() => _pathFocused = true" @onblur="() => _pathFocused = false" />
                         </div>
                         <IconButton Icon="search" Class="@("btnSelectPath emby-input-iconbutton" + Hide(!_form.SupportsSelectablePath))" OnClick="SelectPathAsync" />

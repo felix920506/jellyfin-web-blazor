@@ -1,4 +1,6 @@
 @using System.Net
+@using System.Net.Http.Headers
+@using System.Text
 @using Jellyfin.Web
 @using Jellyfin.Web.Components
 @using Jellyfin.Web.Pages.Dashboard
@@ -78,6 +80,62 @@
         var body = Assert.Single(BodiesTo("/System/Configuration/livetv"));
         Assert.Equal(300, body.GetProperty("PrePaddingSeconds").GetInt64());
         Assert.Equal("3", body.GetProperty("GuideDays").GetString());
+    }
+
+    [Fact]
+    public async Task Typing_a_tuner_path_updates_the_saved_payload()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/LiveTv/TunerHosts/Types", new[] { new { Id = "m3u", Name = "M3U Tuner" } });
+        App.Server.OnPost("/LiveTv/TunerHosts");
+        var cut = Render<DashboardLiveTvTuner>();
+        cut.Eventually(() => Assert.NotNull(cut.Find(".selectType")));
+
+        await cut.Find(".selectType").ChangeAsync(new ChangeEventArgs { Value = "m3u" });
+        await cut.Find("#txtDevicePath").InputAsync(new ChangeEventArgs { Value = "/media/typed.m3u" });
+        await cut.Find("form").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/LiveTv/TunerHosts")));
+        Assert.Equal("/media/typed.m3u", Assert.Single(App.Server.RequestsTo("/LiveTv/TunerHosts")).JsonBody().Text("Url"));
+    }
+
+    [Fact]
+    public async Task XMLTV_typing_before_defaults_arrive_is_not_overwritten()
+    {
+        SignIn(admin: true);
+        var configurationLoaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        App.Server.OnGet("/System/Configuration/livetv", _ => DelayedJson("{}", configurationLoaded.Task));
+        App.Server.OnGet("/LiveTv/ListingProviders/Default", new { Type = "xmltv", Path = "/media/default.xml" });
+        var cut = Render<XmlTvProvider>();
+        cut.Eventually(() => Assert.NotNull(cut.Find("input.txtPath")));
+
+        await cut.Find("input.txtPath").InputAsync(new ChangeEventArgs { Value = "/media/typed.xml" });
+        configurationLoaded.SetResult();
+
+        cut.Eventually(() => Assert.Equal("/media/typed.xml", cut.Find("input.txtPath").GetAttribute("value")));
+    }
+
+    private static HttpResponseMessage DelayedJson(string json, Task gate)
+    {
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new DelayedJsonContent(json, gate),
+        };
+    }
+
+    private sealed class DelayedJsonContent(string json, Task gate) : HttpContent
+    {
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            await gate;
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(json));
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = -1;
+            return false;
+        }
     }
 
     [Fact]

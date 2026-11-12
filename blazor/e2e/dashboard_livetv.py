@@ -46,21 +46,14 @@ def main():
             open_page(page, "/dashboard/livetv/tuner", ".selectType")
             page.select_option(".selectType", "m3u")
             page.locator("input.txtDevicePath").fill("/media/livetv-e2e.m3u")
-            # The legacy tuner template keeps this optional field visually hidden for M3U, but it
-            # remains part of the submitted host payload.
-            set_input = "(el, value) => { el.value = value; el.dispatchEvent(new Event('input', {bubbles: true})); }"
-            page.locator("input.txtFriendlyName").evaluate(set_input, "e2e M3U tuner")
-            page.locator("input.txtTunerCount").evaluate(set_input, "1")
+            page.locator("input.txtTunerCount").fill("1")
             page.locator("form button[type=submit]").click()
             page.wait_for_selector(".jf-dashboard-livetv-card", timeout=30_000)
-            tuner = next(t for t in api(page, "GET", "/System/Configuration/livetv", token)["TunerHosts"] if t.get("FriendlyName") == "e2e M3U tuner")
+            tuner = next(t for t in api(page, "GET", "/System/Configuration/livetv", token)["TunerHosts"] if t.get("Url") == "/media/livetv-e2e.m3u")
             assert tuner["Url"] == "/media/livetv-e2e.m3u"
 
             open_page(page, "/dashboard/livetv/guide?type=xmltv", ".xmltvForm")
-            # The provider form loads its defaults asynchronously after the form is rendered.
-            # Wait for that load before entering the path so it cannot overwrite the input.
-            page.wait_for_timeout(500)
-            page.locator("input.txtPath").evaluate(set_input, "/media/livetv-e2e.xml")
+            page.locator("input.txtPath").fill("/media/livetv-e2e.xml")
             page.locator(".xmltvForm button[type=submit]").click()
             page.wait_for_selector(".jf-dashboard-livetv-providers", timeout=30_000)
             providers = api(page, "GET", "/System/Configuration/livetv", token)["ListingProviders"]
@@ -71,7 +64,6 @@ def main():
             shot(page, "dashboard-livetv-recordings")
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
             page.set_viewport_size({"width": 390, "height": 844})
-            page.wait_for_timeout(300)
             shot(page, "dashboard-livetv-recordings-phone")
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
 
