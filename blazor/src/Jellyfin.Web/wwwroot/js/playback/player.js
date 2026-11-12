@@ -835,7 +835,7 @@ export function setMediaSession(info) {
     }
 }
 
-// --- test support --------------------------------------------------------------------------------
+// --- diagnostics ----------------------------------------------------------------------------------
 
 // Read-only view of the elements for the browser tests (blazor/e2e/playback.py).
 export function debugState() {
@@ -847,12 +847,4 @@ export function debugState() {
             : null;
     }
     return result;
-}
-
-/**
- * Browser-test hook: runs a playback command in the app (see PlaybackTestHook.cs). The e2e script calls
- * it because no page of this workstream starts playback by itself.
- */
-export function testCommand(name, args) {
-    return window.DotNet.invokeMethodAsync('Jellyfin.Web', 'PlaybackTestCommand', name, args || {});
 }

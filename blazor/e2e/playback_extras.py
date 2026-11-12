@@ -1,6 +1,6 @@
 """Two real devices: session targeting, remote playback/state, navigation, messages and text.
 
-Uses only the public UI to select a target and start/control playback; no PlaybackTestHook.
+Uses only the public UI to select a target and start/control playback.
     ./dev e2e playback_extras.py
 """
 import json
