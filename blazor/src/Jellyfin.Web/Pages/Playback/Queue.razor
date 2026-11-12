@@ -23,6 +23,7 @@
 @inject IPlaybackTimers Timers
 @inject ItemActions ItemActions
 @inject Backdrop Backdrops
+@inject SyncPlayService SyncPlay
 
 @{
     var item = Playback.CurrentItem;
@@ -142,7 +143,7 @@
                     <div class="nowPlayingPositionSliderContainer">
                         <PlaybackSlider Class="nowPlayingPositionSlider" Step="1" KeepProgress="true" Value="PositionPercent"
                                         Disabled="@(!Playback.CanSeek())" Clear="@(Playback.CurrentMediaSource is { RunTimeTicks: null })"
-                                        BubbleText="PositionBubbleText" OnChange="value => Playback.SeekPercentAsync(value)" />
+                                         BubbleText="PositionBubbleText" OnChange="SeekPercentAsync" />
                     </div>
                     <div class="runtime">@RuntimeText</div>
                 </div>
@@ -158,7 +159,7 @@
                             <span class="material-icons replay_10" aria-hidden="true"></span>
                         </button>
                         <button type="button" class="btnPreviousTrack btnPlayStateCommand autoSize paper-icon-button-light @(item is null ? "hide" : null)"
-                                title="@Globalize["ButtonPreviousTrack"]" @onclick="OnPreviousTrackAsync" @ondblclick="() => Playback.PreviousTrackAsync()">
+                                 title="@Globalize["ButtonPreviousTrack"]" @onclick="OnPreviousTrackAsync" @ondblclick="PreviousTrackAsync">
                             <span class="material-icons skip_previous" aria-hidden="true"></span>
                         </button>
                         <button type="button" class="btnPlayPause btnPlayStateCommand autoSize paper-icon-button-light @(item is null ? "hide" : null)"
@@ -170,7 +171,7 @@
                             <span class="material-icons stop" aria-hidden="true"></span>
                         </button>
                         <button type="button" class="btnPlayStateCommand btnNextTrack autoSize paper-icon-button-light @(item is null ? "hide" : null)"
-                                title="@Globalize["ButtonNextTrack"]" @onclick="() => Playback.NextTrackAsync()">
+                                 title="@Globalize["ButtonNextTrack"]" @onclick="NextTrackAsync">
                             <span class="material-icons skip_next" aria-hidden="true"></span>
                         </button>
                         <button type="button" class="btnPlayStateCommand btnFastForward btnNowPlayingFastForward autoSize paper-icon-button-light @(showSkip ? null : "hide")"
@@ -544,20 +545,37 @@
         _ => PlayQueue.RepeatAll,
     });
 
-    private Task JumpToAsync(string? playlistItemId) =>
-        playlistItemId is null ? Task.CompletedTask : Playback.SetCurrentPlaylistItemAsync(playlistItemId);
+    private Task JumpToAsync(string? playlistItemId) => playlistItemId is null
+        ? Task.CompletedTask
+        : SyncPlay.IsEnabled ? SyncPlay.SetPlaylistItemAsync(playlistItemId) : Playback.SetCurrentPlaylistItemAsync(playlistItemId);
 
-    private Task RemoveAsync(string? playlistItemId) =>
-        playlistItemId is null ? Task.CompletedTask : Playback.RemoveFromPlaylistAsync([playlistItemId]);
+    private Task RemoveAsync(string? playlistItemId) => playlistItemId is null
+        ? Task.CompletedTask
+        : SyncPlay.IsEnabled ? SyncPlay.RemoveFromPlaylistAsync([playlistItemId]) : Playback.RemoveFromPlaylistAsync([playlistItemId]);
 
     /// <summary>Stands in for the original's drag reordering.</summary>
     private void Move(string? playlistItemId, int newIndex)
     {
         if (playlistItemId is not null)
         {
-            Playback.MovePlaylistItem(playlistItemId, newIndex);
+            if (SyncPlay.IsEnabled)
+            {
+                _ = SyncPlay.MovePlaylistItemAsync(playlistItemId, newIndex);
+            }
+            else
+            {
+                Playback.MovePlaylistItem(playlistItemId, newIndex);
+            }
         }
     }
+
+    private Task NextTrackAsync() => SyncPlay.IsEnabled ? SyncPlay.NextItemAsync() : Playback.NextTrackAsync();
+
+    private Task PreviousTrackAsync() => SyncPlay.IsEnabled ? SyncPlay.PreviousItemAsync() : Playback.PreviousTrackAsync();
+
+    private Task SeekPercentAsync(double value) => SyncPlay.IsEnabled
+        ? SyncPlay.SeekAsync((long)((Playback.DurationTicks ?? 0) * value / 100d))
+        : Playback.SeekPercentAsync(value);
 
     private async Task ShowAudioMenuAsync()
     {

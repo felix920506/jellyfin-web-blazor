@@ -30,6 +30,7 @@ public sealed record SyncPlayQueueItem
 public sealed record SyncPlayQueueState
 {
     public DateTimeOffset LastUpdate { get; init; }
+    public string Reason { get; init; } = string.Empty;
     public IReadOnlyList<SyncPlayQueueItem> Playlist { get; init; } = [];
     public int PlayingItemIndex { get; init; } = -1;
     public long StartPositionTicks { get; init; }
@@ -38,6 +39,13 @@ public sealed record SyncPlayQueueState
 
     public string? CurrentPlaylistItemId =>
         PlayingItemIndex >= 0 && PlayingItemIndex < Playlist.Count ? Playlist[PlayingItemIndex].PlaylistItemId : null;
+}
+
+/// <summary>A state transition reported by a SyncPlay group.</summary>
+public sealed record SyncPlayStateUpdate
+{
+    public string State { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
 }
 
 /// <summary>A timestamped command sent by the SyncPlay server.</summary>

@@ -156,7 +156,7 @@
                 <div dir="ltr">
                     <button type="button" class="btnPreviousTrack autoSize paper-icon-button-light @(hasPlaylist ? null : "hide")"
                             title="@(Globalize["PreviousTrack"] + " (Shift+P)")" aria-label="@Globalize["PreviousTrack"]"
-                            @onclick="() => Playback.PreviousTrackAsync()">
+                             @onclick="PreviousTrackAsync">
                         <span class="xlargePaperIconButton material-icons skip_previous" aria-hidden="true"></span>
                     </button>
                     <button type="button" class="btnPreviousChapter autoSize paper-icon-button-light @(hasChapters ? null : "hide")"
@@ -166,17 +166,17 @@
                     </button>
                     <button type="button" class="btnRewind paper-icon-button-light" disabled="@(!canSeek)"
                             title="@(Globalize["Rewind"] + " (J)")" aria-label="@Globalize["Rewind"]"
-                            @onclick="() => Playback.RewindAsync()">
+                             @onclick="RewindAsync">
                         <span class="xlargePaperIconButton material-icons fast_rewind" aria-hidden="true"></span>
                     </button>
                     <button type="button" class="btnPause autoSize paper-icon-button-light"
                             title="@(Globalize[paused ? "Play" : "ButtonPause"] + " (K)")" aria-label="@Globalize[paused ? "Play" : "ButtonPause"]"
-                            @onclick="() => Playback.PlayPauseAsync()">
+                             @onclick="PlayPauseAsync">
                         <span class="xlargePaperIconButton material-icons @(paused ? "play_arrow" : "pause")" aria-hidden="true"></span>
                     </button>
                     <button type="button" class="btnFastForward paper-icon-button-light" disabled="@(!canSeek)"
                             title="@(Globalize["FastForward"] + " (L)")" aria-label="@Globalize["FastForward"]"
-                            @onclick="() => Playback.FastForwardAsync()">
+                             @onclick="FastForwardAsync">
                         <span class="xlargePaperIconButton material-icons fast_forward" aria-hidden="true"></span>
                     </button>
                     <button type="button" class="btnNextChapter autoSize paper-icon-button-light @(hasChapters ? null : "hide")"
@@ -186,7 +186,7 @@
                     </button>
                     <button type="button" class="btnNextTrack autoSize paper-icon-button-light @(hasPlaylist ? null : "hide")"
                             title="@(Globalize["NextTrack"] + " (Shift+N)")" aria-label="@Globalize["NextTrack"]"
-                            @onclick="() => Playback.NextTrackAsync()">
+                             @onclick="NextTrackAsync">
                         <span class="xlargePaperIconButton material-icons skip_next" aria-hidden="true"></span>
                     </button>
                 </div>
@@ -382,7 +382,7 @@
 
         if (DigitOf(code) is { } digit)
         {
-            await Playback.SeekPercentAsync(digit * 10);
+            await SeekPercentAsync(digit * 10);
             return;
         }
 
@@ -390,14 +390,14 @@
         {
             case "Space":
             case "KeyK":
-                await Playback.PlayPauseAsync();
+                 await PlayPauseAsync();
                 ShowOsd();
                 break;
             case "Enter":
             case "NumpadEnter":
                 if (onPositionSlider)
                 {
-                    await Playback.PlayPauseAsync();
+                     await PlayPauseAsync();
                 }
 
                 ShowOsd();
@@ -418,12 +418,12 @@
                 break;
             case "KeyL":
             case "ArrowRight":
-                await Playback.FastForwardAsync();
+                 await FastForwardAsync();
                 ShowOsd();
                 break;
             case "KeyJ":
             case "ArrowLeft":
-                await Playback.RewindAsync();
+                 await RewindAsync();
                 ShowOsd();
                 break;
             case "Comma":
@@ -457,14 +457,14 @@
             case "KeyP":
                 if (shift)
                 {
-                    await Playback.PreviousTrackAsync();
+                     await PreviousTrackAsync();
                 }
 
                 break;
             case "KeyN":
                 if (shift)
                 {
-                    await Playback.NextTrackAsync();
+                     await NextTrackAsync();
                 }
 
                 break;
@@ -477,10 +477,10 @@
                 Playback.SetSubtitleOffset(Playback.SubtitleOffset + 0.1);
                 break;
             case "Home":
-                await Playback.SeekPercentAsync(0);
+                 await SeekPercentAsync(0);
                 break;
             case "End":
-                await Playback.SeekPercentAsync(100);
+                 await SeekPercentAsync(100);
                 break;
             case "PageUp":
                 await Playback.NextChapterAsync();
@@ -514,7 +514,7 @@
 
         var frameRate = Playback.CurrentMediaSource?.MediaStreams?
             .FirstOrDefault(stream => stream.Type == MediaStream_Type.Video)?.ReferenceFrameRate ?? 24;
-        return frameRate > 0 ? Playback.SeekRelativeAsync((long)(frames / (double)frameRate * TicksPerSecond)) : Task.CompletedTask;
+        return frameRate > 0 ? SeekRelativeAsync((long)(frames / (double)frameRate * TicksPerSecond)) : Task.CompletedTask;
     }
 
     // --- pointer -----------------------------------------------------------------------------------
@@ -553,7 +553,7 @@
 
                 break;
             default:
-                _ = Playback.PlayPauseAsync();
+                _ = PlayPauseAsync();
                 ShowOsd();
                 break;
         }
@@ -568,7 +568,7 @@
         }
 
         _clickPending = false;
-        await Playback.PlayPauseAsync();
+        await PlayPauseAsync();
         ShowOsd();
     }
 
@@ -876,7 +876,7 @@
     private async Task StartNextNowAsync()
     {
         HideUpNext();
-        await Playback.NextTrackAsync();
+        await NextTrackAsync();
     }
 
     // --- menus -------------------------------------------------------------------------------------
@@ -966,7 +966,29 @@
     private Task SeekPositionAsync(double percent) =>
         Text.LiveTvProgress(Playback.CurrentItem) is not null
             ? Task.CompletedTask
-            : Playback.SeekPercentAsync(percent);
+            : SyncPlay.IsEnabled
+                ? SyncPlay.SeekAsync((long)((Playback.DurationTicks ?? 0) * percent / 100d))
+                : Playback.SeekPercentAsync(percent);
+
+    private Task PlayPauseAsync() => SyncPlay.IsEnabled
+        ? (Playback.IsPaused ? SyncPlay.UnpauseAsync() : SyncPlay.PauseAsync())
+        : Playback.PlayPauseAsync();
+
+    private Task NextTrackAsync() => SyncPlay.IsEnabled ? SyncPlay.NextItemAsync() : Playback.NextTrackAsync();
+
+    private Task PreviousTrackAsync() => SyncPlay.IsEnabled ? SyncPlay.PreviousItemAsync() : Playback.PreviousTrackAsync();
+
+    private Task SeekRelativeAsync(long offsetTicks) => SyncPlay.IsEnabled
+        ? SyncPlay.SeekAsync(Playback.CurrentTimeTicks + offsetTicks)
+        : Playback.SeekRelativeAsync(offsetTicks);
+
+    private Task SeekPercentAsync(double percent) => SyncPlay.IsEnabled
+        ? SyncPlay.SeekAsync((long)((Playback.DurationTicks ?? 0) * percent / 100d))
+        : Playback.SeekPercentAsync(percent);
+
+    private Task FastForwardAsync() => SeekRelativeAsync(UserSettings.SkipForwardLength * 10000L);
+
+    private Task RewindAsync() => SeekRelativeAsync(-UserSettings.SkipBackLength * 10000L);
 
     // --- texts and previews ------------------------------------------------------------------------
 
