@@ -1,0 +1,93 @@
+@namespace Jellyfin.Web.Pages
+@*
+    The search page (apps/legacy/routes/search.tsx): the search field, suggestions while it is empty and
+    the result rows once something was typed. ?query= follows the field; ?parentId= and ?collectionType=
+    limit the search to a library.
+*@
+@attribute [Route("/search")]
+@attribute [Access(AccessLevel.User)]
+@implements IDisposable
+@inject Globalize Globalize
+@inject AppRouter Router
+
+<Page Id="searchPage" Title="@Globalize["Search"]" Class="mainAnimatedPage libraryPage allLibraryPage noSecondaryNavPage">
+    <SearchFields Query="@_query" OnSearch="OnSearch" />
+    @if (string.IsNullOrEmpty(_debouncedQuery))
+    {
+        <SearchSuggestions ParentId="@ParentId" />
+    }
+    else
+    {
+        <SearchResults ParentId="@ParentId" CollectionType="@CollectionType" Query="@_debouncedQuery" />
+    }
+</Page>
+
+@code {
+    private CancellationTokenSource? _debounce;
+    private string _query = string.Empty;
+    private string _debouncedQuery = string.Empty;
+    private bool _initialized;
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = default!;
+
+    private string? ParentId => Text(Location["parentId"]);
+
+    private string? CollectionType => Text(Location["collectionType"]);
+
+    protected override void OnParametersSet()
+    {
+        var query = Location["query"] ?? string.Empty;
+        if (!_initialized)
+        {
+            // The first value is searched for at once, as useDebounceValue starts with it.
+            _initialized = true;
+            _query = query;
+            _debouncedQuery = query;
+        }
+        else if (query != _query)
+        {
+            // The address changed from outside (a link, the back button).
+            _query = query;
+            Debounce();
+        }
+    }
+
+    public void Dispose() => _debounce?.Cancel();
+
+    private static string? Text(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+    private void OnSearch(string query)
+    {
+        if (query == _query)
+        {
+            return;
+        }
+
+        _query = query;
+        Router.Navigate(Location.With(("query", query.Length > 0 ? query : null)).Url, replace: true);
+        Debounce();
+    }
+
+    private void Debounce()
+    {
+        _debounce?.Cancel();
+        _debounce = new CancellationTokenSource();
+        _ = ApplyAsync(_query, _debounce.Token);
+    }
+
+    private async Task ApplyAsync(string query, CancellationToken cancellation)
+    {
+        try
+        {
+            await Task.Delay(SearchService.Debounce, cancellation);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        _debouncedQuery = query;
+        await InvokeAsync(StateHasChanged);
+    }
+}

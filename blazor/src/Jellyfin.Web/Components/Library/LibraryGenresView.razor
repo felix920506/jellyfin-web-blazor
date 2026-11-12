@@ -1,0 +1,163 @@
+@namespace Jellyfin.Web.Components
+@*
+    The genres view of a library (features/libraries/components/genres/GenresItemsContainer.tsx): one row
+    of items per genre, ten genres at a time as the end of the list comes into view, with its own
+    alphabet picker.
+*@
+@implements IAsyncDisposable
+@inject LibraryData Data
+@inject ILibraryInterop Interop
+@inject AppRouter Router
+@inject LoadingService Loading
+
+<div class="padded-bottom-page jf-library-genres">
+    <LibraryAlphabetPicker Value="@_alphabet" ValueChanged="SetAlphabetAsync" />
+    @if (_loaded && _genres.Count == 0 && _alphabet is null)
+    {
+        <NoItemsMessage Message="MessageNoGenresAvailable" />
+    }
+    else
+    {
+        @foreach (var genre in _genres)
+        {
+            <ItemsSection @key="@(_generation + ":" + genre.IdText())" Title="@genre.Name" Href="@GenreUrl(genre)" Fetch="@FetchFor(genre)" CardOptions="_cards"
+                          ParentId="@ParentId" Context="@Content.CollectionType" data-genre="@genre.Name" />
+        }
+    }
+</div>
+<div @ref="_sentinel" class="jf-library-sentinel"></div>
+
+@code {
+    private readonly List<BaseItemDto> _genres = [];
+    private readonly Dictionary<string, Func<Task<IReadOnlyList<BaseItemDto>>>> _fetches = [];
+    private CardOptions _cards = new();
+    private ElementReference _sentinel;
+    private IAsyncDisposable? _watch;
+    private string? _alphabet;
+    private int _page;
+    private int _generation;
+    private bool _loaded;
+    private bool _loading;
+    private bool _hasMore = true;
+    private bool _disposed;
+
+    [Parameter, EditorRequired]
+    public LibraryTabContent Content { get; set; } = default!;
+
+    /// <summary>The library (?topParentId=); nothing is loaded without one.</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cards = LibraryViewOptions.GenreCards(Content);
+        if (string.IsNullOrEmpty(ParentId))
+        {
+            _hasMore = false;
+            _loaded = true;
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            await LoadMoreAsync();
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var watch = await Interop.WatchVisibilityAsync(_sentinel, "200px", () => _ = InvokeAsync(LoadMoreAsync));
+            if (_disposed)
+            {
+                await watch.DisposeAsync();
+            }
+            else
+            {
+                _watch = watch;
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        if (_watch is { } watch)
+        {
+            _watch = null;
+            await watch.DisposeAsync();
+        }
+    }
+
+    private async Task SetAlphabetAsync(string? letter)
+    {
+        _alphabet = letter;
+        _generation++;
+        _page = 0;
+        _hasMore = true;
+        _loading = false;
+        _genres.Clear();
+        _fetches.Clear();
+        await LoadMoreAsync();
+    }
+
+    private async Task LoadMoreAsync()
+    {
+        if (_loading || !_hasMore || _disposed || string.IsNullOrEmpty(ParentId))
+        {
+            return;
+        }
+
+        var generation = _generation;
+        _loading = true;
+        try
+        {
+            var genres = await Data.GetGenresAsync(ParentId, Content.ItemTypes, _alphabet, _page);
+            if (generation != _generation)
+            {
+                return;
+            }
+
+            _page++;
+            _hasMore = genres.Count >= LibraryData.GenrePageSize;
+            _genres.AddRange(genres);
+        }
+        catch (HttpRequestException exception)
+        {
+            _hasMore = false;
+            AppLog.Warn("Loading the genres failed: " + exception.Message);
+        }
+        finally
+        {
+            if (generation == _generation)
+            {
+                _loading = false;
+                _loaded = true;
+            }
+        }
+
+        StateHasChanged();
+    }
+
+    private string GenreUrl(BaseItemDto genre) =>
+        Router.GetRouteUrl(genre, new RouteOptions { Context = Content.CollectionType, ParentId = ParentId });
+
+    // ItemsSection loads once per delegate instance, so every genre keeps its own.
+    private Func<Task<IReadOnlyList<BaseItemDto>>> FetchFor(BaseItemDto genre)
+    {
+        var id = genre.IdText() ?? string.Empty;
+        if (!_fetches.TryGetValue(id, out var fetch))
+        {
+            fetch = () => Data.GetGenreItemsAsync(id, ParentId, Content.ItemTypes);
+            _fetches[id] = fetch;
+        }
+
+        return fetch;
+    }
+}

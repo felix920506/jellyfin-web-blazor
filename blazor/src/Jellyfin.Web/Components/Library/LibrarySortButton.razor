@@ -1,0 +1,47 @@
+@namespace Jellyfin.Web.Components
+@*
+    The sort menu of a library view (features/libraries/components/library/SortButton.tsx): choosing the
+    current entry flips the order, another entry sorts ascending by it; both go back to the first page.
+*@
+@inject Globalize Globalize
+
+<MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" Class="jf-library-sort" ListClass="jf-library-sort-list">
+    <ActivatorContent Context="menu">
+        <MudIconButton Icon="@MdIcon.Of("sort_by_alpha")" Color="Color.Inherit" Class="jf-library-btn-sort" title="@Globalize["Sort"]"
+                       aria-label="@Globalize["Sort"]" OnClick="@(e => menu.ToggleAsync(e))" />
+    </ActivatorContent>
+    <ChildContent>
+        @foreach (var option in LibraryQueryBuilder.SortOptions(ViewType))
+        {
+            var current = option;
+            var selected = IsSelected(current);
+            <MudMenuItem @key="current.Label" AutoClose="false" Class="@(selected ? "jf-menu-selected" : null)" data-sort="@string.Join(',', current.Value)"
+                         OnClick="() => SelectAsync(current)">
+                <span class="jf-menu-row">
+                    <span class="jf-menu-text">@Globalize[current.Label]</span>
+                    @if (selected)
+                    {
+                        <span class="material-icons @(Settings.SortOrder == "Descending" ? "arrow_downward" : "arrow_upward")" aria-hidden="true"></span>
+                    }
+                </span>
+            </MudMenuItem>
+        }
+    </ChildContent>
+</MudMenu>
+
+@code {
+    [Parameter, EditorRequired]
+    public string ViewType { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public LibraryViewSettings Settings { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<LibraryViewSettings> SettingsChanged { get; set; }
+
+    private bool IsSelected(LibrarySortOption option) => option.Value.SequenceEqual(Settings.SortBy);
+
+    private Task SelectAsync(LibrarySortOption option) => SettingsChanged.InvokeAsync(IsSelected(option)
+        ? Settings with { StartIndex = 0, SortOrder = Settings.SortOrder == "Ascending" ? "Descending" : "Ascending" }
+        : Settings with { StartIndex = 0, SortBy = option.Value, SortOrder = "Ascending" });
+}

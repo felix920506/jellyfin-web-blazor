@@ -36,6 +36,14 @@ public sealed class ItemActionContext
 
     /// <summary>Changes the context-menu options of the list before the menu opens.</summary>
     public Func<ItemMenuOptions, ItemMenuOptions>? ConfigureMenu { get; init; }
+
+    /// <summary>
+    /// The items a command applies to when that is not just the item it is executed for: the selection of
+    /// multi-select ("add to collection", "add to playlist", "refresh" for several items), or an empty list for
+    /// "new collection" / "new playlist", where the command's item is only a placeholder carrying the server id.
+    /// Null (the default) means the command is about its item alone.
+    /// </summary>
+    public IReadOnlyList<BaseItemDto>? SelectedItems { get; init; }
 }
 
 /// <summary>

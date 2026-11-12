@@ -1,0 +1,166 @@
+@namespace Jellyfin.Web.Components
+@*
+    A library page (features/libraries/components/library/LibraryPage.tsx + PageTabContent.tsx): the
+    toolbar and the view picked by ?tab= for the library in ?topParentId=. The route decides the
+    LibraryRouteConfig; the page of another workstream (Live TV) renders this component with its own.
+*@
+@implements IDisposable
+@inject UserSettings UserSettings
+@inject UserViews Views
+@inject LibraryViewSettingsStore Store
+@inject LibraryData Data
+@inject AppRouter Router
+
+@* PORT-TODO(library): the original rotates backdrops of Config.BackdropTypes here; the port has no backdrop service yet. *@
+<Page Id="@Config.PageId" Class="mainAnimatedPage libraryPage pageWithAbsoluteTabs withTabs" Title="@_title">
+    <LibraryToolbar Config="Config" View="_view" OnViewSelected="SelectView" ParentId="@_libraryId" Item="_item" Settings="_settings"
+                    SettingsChanged="SetSettings" Result="_result" Pending="_pending" PageSize="_pageSize" OnChanged="RefreshItemsAsync" />
+    @if (_view.Content.Component is { } component)
+    {
+        <DynamicComponent @key="_key" Type="component" Parameters="ComponentParameters" />
+    }
+    else if (_view.View == LibraryTab.Suggestions)
+    {
+        <LibrarySuggestionsView @key="_key" Content="_view.Content" ParentId="@_libraryId" />
+    }
+    else if (_view.View == LibraryTab.Upcoming)
+    {
+        <LibraryUpcomingView @key="_key" Content="_view.Content" ParentId="@_libraryId" />
+    }
+    else if (_view.View == LibraryTab.Genres)
+    {
+        <LibraryGenresView @key="_key" Content="_view.Content" ParentId="@_libraryId" />
+    }
+    else if (_view.Content.HasItemList)
+    {
+        <LibraryItemsView @key="_key" @ref="_itemsView" Content="_view.Content" ParentId="@_libraryId" Settings="_settings" SettingsChanged="SetSettings"
+                          PageSize="_pageSize" OnLoaded="OnLoaded" />
+    }
+</Page>
+
+@code {
+    private LibraryViewDefinition _view = default!;
+    private LibraryViewSettings _settings = new();
+    private LibraryItemsView? _itemsView;
+    private LibraryItemsResult? _result;
+    private BaseItemDto? _item;
+    private string? _libraryId;
+    private string? _settingsKey;
+    private string? _key;
+    private string? _titleFor;
+    private string? _title;
+    private bool _pending;
+    private int _pageSize;
+
+    [Parameter, EditorRequired]
+    public LibraryRouteConfig Config { get; set; } = default!;
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = default!;
+
+    private Dictionary<string, object?> ComponentParameters => new()
+    {
+        ["Content"] = _view.Content,
+        ["ParentId"] = _libraryId
+    };
+
+    protected override void OnInitialized() => UserSettings.Changed += OnSettingChanged;
+
+    public void Dispose() => UserSettings.Changed -= OnSettingChanged;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _libraryId = Location["topParentId"];
+        var collectionType = Location["collectionType"];
+        _settingsKey = collectionType == "livetv" ? "livetv" : _libraryId;
+        _pageSize = UserSettings.LibraryPageSize;
+        var index = int.TryParse(Location["tab"], out var tab) ? tab : Config.GetDefaultViewIndex(_libraryId, UserSettings);
+        _view = Config.ViewAt(index);
+
+        var key = $"{Config.Path}-{_view.View}-{_libraryId}";
+        if (key != _key)
+        {
+            _key = key;
+            _settings = Store.Load(_view.View, _settingsKey);
+            _result = null;
+            _itemsView = null;
+            _pending = _view.Content.HasItemList;
+        }
+
+        var titleFor = $"{Config.Path}-{_libraryId}-{collectionType}";
+        if (titleFor == _titleFor)
+        {
+            return;
+        }
+
+        _titleFor = titleFor;
+        _item = null;
+        try
+        {
+            var views = await Views.GetAsync();
+            if (titleFor != _titleFor)
+            {
+                return;
+            }
+
+            var type = collectionType ?? Config.CollectionType;
+            var view = views.FirstOrDefault(candidate => SameId(candidate.IdText(), _libraryId))
+                ?? views.FirstOrDefault(candidate => type is not null && candidate.CollectionTypeName() == type);
+            _title = view?.Name;
+            StateHasChanged();
+
+            var item = await Data.GetLibraryItemAsync(_libraryId);
+            if (titleFor == _titleFor)
+            {
+                _item = item;
+            }
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Loading the library failed: " + exception.Message);
+        }
+    }
+
+    private static bool SameId(string? left, string? right) =>
+        !string.IsNullOrEmpty(left) && !string.IsNullOrEmpty(right)
+        && string.Equals(left.Replace("-", string.Empty), right.Replace("-", string.Empty), StringComparison.OrdinalIgnoreCase);
+
+    private void SelectView(LibraryViewDefinition view)
+    {
+        if (view.Index != _view.Index)
+        {
+            Router.Navigate(Location.With(("tab", view.Index.ToString(System.Globalization.CultureInfo.InvariantCulture))).Url);
+        }
+    }
+
+    private void SetSettings(LibraryViewSettings settings)
+    {
+        if (settings == _settings)
+        {
+            return;
+        }
+
+        _settings = settings;
+        _pending = _view.Content.HasItemList;
+        Store.Save(_view.View, _settingsKey, settings);
+    }
+
+    private void OnLoaded(LibraryItemsResult result)
+    {
+        _result = result;
+        _pending = false;
+    }
+
+    private Task RefreshItemsAsync() => _itemsView?.RefreshAsync() ?? Task.CompletedTask;
+
+    // The library page size is a display setting; a change applies to the open page.
+    private void OnSettingChanged(string name)
+    {
+        var pageSize = UserSettings.LibraryPageSize;
+        if (pageSize != _pageSize)
+        {
+            _pageSize = pageSize;
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+}

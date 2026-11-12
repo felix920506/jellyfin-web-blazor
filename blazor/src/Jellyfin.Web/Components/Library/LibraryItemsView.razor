@@ -1,0 +1,113 @@
+@namespace Jellyfin.Web.Components
+@*
+    The item list of a library view (features/libraries/components/library/ItemsView.tsx): one page of
+    cards or list rows per the view settings, the alphabet picker and the empty state. The list reloads
+    when the settings change and, through ItemsContainer, when the server reports library changes.
+*@
+@inject JellyfinApi Api
+@inject LibraryData Data
+@inject LoadingService Loading
+
+<div class="padded-bottom-page jf-library-items">
+    @if (Content.IsAlphabetPickerEnabled && !Settings.SortBy.Contains("Random"))
+    {
+        <LibraryAlphabetPicker Value="@Settings.Alphabet" ValueChanged="SetAlphabetAsync" />
+    }
+    <ItemsContainer @ref="_container" Class="@(Settings.IsList ? "vertical-list padded-left padded-right" : "vertical-wrap padded-left padded-right")"
+                    Fetch="_fetch" CardOptions="@(Settings.IsList ? null : LibraryViewOptions.Cards(Content, Settings))"
+                    ListOptions="@(Settings.IsList ? LibraryViewOptions.List(Content, Settings) : null)"
+                    ParentId="@ParentId" Context="@Content.CollectionType" />
+    @if (_loaded && _total == 0)
+    {
+        <NoItemsMessage Message="@Content.NoItemsMessage" />
+    }
+</div>
+
+@code {
+    private readonly Func<Task<IReadOnlyList<BaseItemDto>>> _fetch;
+    private ItemsContainer? _container;
+    private LibraryViewSettings? _appliedSettings;
+    private int _appliedPageSize;
+    private bool _loaded;
+    private bool _showLoading = true;
+    private int _total;
+    private int _version;
+
+    public LibraryItemsView() => _fetch = FetchAsync;
+
+    [Parameter, EditorRequired]
+    public LibraryTabContent Content { get; set; } = default!;
+
+    /// <summary>The library (?topParentId=).</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    [Parameter, EditorRequired]
+    public LibraryViewSettings Settings { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<LibraryViewSettings> SettingsChanged { get; set; }
+
+    /// <summary>The user's library page size; 0 loads everything.</summary>
+    [Parameter]
+    public int PageSize { get; set; }
+
+    /// <summary>Raised with every page that was loaded.</summary>
+    [Parameter]
+    public EventCallback<LibraryItemsResult> OnLoaded { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var changed = _appliedSettings is not null && (_appliedSettings != Settings || _appliedPageSize != PageSize);
+        _appliedSettings = Settings;
+        _appliedPageSize = PageSize;
+        if (changed && _container is { } container)
+        {
+            _showLoading = true;
+            await container.RefreshAsync();
+        }
+    }
+
+    /// <summary>Loads the current page again.</summary>
+    public Task RefreshAsync() => _container?.RefreshAsync() ?? Task.CompletedTask;
+
+    private async Task<IReadOnlyList<BaseItemDto>> FetchAsync()
+    {
+        var version = ++_version;
+        var showLoading = _showLoading;
+        _showLoading = false;
+        if (showLoading)
+        {
+            Loading.Show();
+        }
+
+        var result = LibraryItemsResult.Empty;
+        try
+        {
+            var context = new LibraryQueryContext(Content, ParentId, Settings, PageSize, Api.UserIdText);
+            result = await Data.GetPageAsync(Content.Request?.Invoke(context) ?? LibraryQueryBuilder.Build(context));
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Loading the library items failed: " + exception.Message);
+        }
+        finally
+        {
+            if (showLoading)
+            {
+                Loading.Hide();
+            }
+        }
+
+        if (version == _version)
+        {
+            _loaded = true;
+            _total = result.TotalRecordCount;
+            await OnLoaded.InvokeAsync(result);
+        }
+
+        return result.Items;
+    }
+
+    private Task SetAlphabetAsync(string? letter) => SettingsChanged.InvokeAsync(Settings with { StartIndex = 0, Alphabet = letter });
+}

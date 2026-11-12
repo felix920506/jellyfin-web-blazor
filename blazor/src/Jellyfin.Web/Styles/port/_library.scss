@@ -1,0 +1,231 @@
+// Library pages (Components/Library): the layout the original gets from MUI's sx props in
+// apps/modern/features/libraries. The legacy list page and the search page use the original CSS only.
+
+// --- Toolbar (LibraryToolbar.tsx) ---------------------------------------------------------------
+// The original puts this row into the fixed app bar; here it is the first row of the page and sticks
+// below the app bar, with the same see-through/solid switch.
+.jf-library-toolbar {
+    position: sticky;
+    top: 48px;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 48px;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+
+    .jf-scrolled & {
+        background-color: var(--mud-palette-appbar-background);
+        box-shadow: var(--mud-elevation-1);
+        color: var(--mud-palette-appbar-text);
+    }
+
+    .mud-button-root {
+        text-transform: none;
+    }
+}
+
+// The app bar ends at the toolbar while a library page is scrolled.
+.jf-scrolled:has(.jf-library-toolbar) .mud-appbar.jf-appbar {
+    box-shadow: none;
+}
+
+.jf-library-view-button.mud-button-root {
+    padding-left: 8px;
+    padding-right: 4px;
+}
+
+.jf-library-view-label {
+    font-size: 1.5rem;
+    font-weight: 400;
+    line-height: 1.334;
+    white-space: nowrap;
+}
+
+.jf-library-toolbar-count {
+    display: flex;
+    flex-direction: row-reverse;
+    flex-grow: 1;
+    align-items: center;
+    margin-left: 8px;
+
+    @media (min-width: 600px) {
+        flex-direction: row;
+        flex-grow: 0;
+    }
+}
+
+.jf-library-count.mud-chip {
+    margin: 0 4px;
+}
+
+.jf-library-toolbar-actions {
+    display: flex;
+    flex-basis: 100%;
+    flex-direction: row;
+    flex-grow: 1;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 4px;
+
+    @media (min-width: 600px) {
+        flex-basis: auto;
+        justify-content: flex-end;
+        padding-bottom: 0;
+    }
+}
+
+.jf-library-toolbar-play {
+    display: flex;
+    flex-grow: 1;
+    align-items: center;
+    gap: 8px;
+
+    @media (min-width: 600px) {
+        flex-grow: 0;
+    }
+
+    .mud-button-root {
+        min-width: 40px;
+    }
+
+    .material-icons {
+        font-size: 1.5rem;
+    }
+}
+
+// The button captions give way to the icons alone on phones.
+.jf-library-btn-text {
+    display: none;
+    margin-left: 8px;
+    white-space: nowrap;
+
+    @media (min-width: 600px) {
+        display: inline;
+    }
+}
+
+.jf-library-toolbar-menus {
+    display: flex;
+    align-items: center;
+}
+
+.jf-library-pagination.mud-button-group-root {
+    box-shadow: none;
+}
+
+// --- Menus --------------------------------------------------------------------------------------
+.jf-menu-selected.mud-menu-item,
+.jf-menu-selected.mud-list-item {
+    background-color: var(--mud-palette-action-default-hover);
+}
+
+.jf-menu-row {
+    display: flex;
+    flex-grow: 1;
+    align-items: center;
+    gap: 12px;
+    min-width: 10em;
+}
+
+.jf-menu-text {
+    flex-grow: 1;
+}
+
+.jf-menu-check {
+    width: 1em;
+    font-size: 1.25rem;
+}
+
+.jf-library-view-gridsettings.paper-icon-button-light {
+    margin: -8px 0;
+    font-size: 1rem;
+}
+
+.jf-library-view-switches {
+    display: flex;
+    flex-direction: column;
+    padding: 0 16px 8px;
+}
+
+.jf-library-filter-popover {
+    width: 250px;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+.jf-library-filter-list {
+    padding: 0;
+}
+
+.jf-library-filters .mud-expand-panel-content {
+    display: flex;
+    flex-direction: column;
+}
+
+// --- Alphabet picker (AlphabetPicker.tsx) -------------------------------------------------------
+.jf-library-alphapicker {
+    position: fixed;
+    top: 144px;
+    bottom: 0;
+    z-index: 9;
+    display: none;
+    align-items: flex-start;
+    font-size: 80%;
+
+    // useMediaQuery in ItemsView.tsx: the picker needs the height for its 27 buttons.
+    @media (min-height: 575px) {
+        display: flex;
+    }
+
+    @media (min-width: 600px) {
+        top: 96px;
+        align-items: center;
+        display: none;
+    }
+
+    @media (min-width: 600px) and (min-height: 610px) {
+        display: flex;
+    }
+}
+
+.jf-library-alphapicker-paper {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.jf-library-alpha {
+    margin: 0;
+    padding: 0 7px;
+    border: 0;
+    background: transparent;
+    color: var(--mud-palette-text-secondary);
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 500;
+    line-height: 1.3;
+    cursor: pointer;
+
+    &:hover {
+        background-color: var(--mud-palette-action-default-hover);
+    }
+}
+
+.jf-library-alpha-selected {
+    background-color: rgba(var(--mud-palette-primary-rgb), 0.16);
+    color: var(--mud-palette-primary);
+}
+
+// --- Views --------------------------------------------------------------------------------------
+// Observed to load the next page of the endless views (genres, upcoming).
+.jf-library-sentinel {
+    height: 1px;
+}
+
+// --- Multi-select -------------------------------------------------------------------------------
+// The panel over a card takes the click (Card.razor); the checkbox inside only shows the state.
+.itemSelectionPanel > .checkboxContainer {
+    pointer-events: none;
+}

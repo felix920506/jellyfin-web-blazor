@@ -1,0 +1,55 @@
+@namespace Jellyfin.Web.Components
+@*
+    The sort dialog of the list page (components/sortmenu): what to sort by and in which order. Every
+    change is reported through OnChange; the page saves the last value when the dialog closes.
+*@
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["Sort"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY">
+    <div class="dialogContentInner dialog-content-centered">
+        <form style="margin:auto;" onsubmit="return false;">
+            <div class="verticalSection verticalSection-extrabottompadding" style="margin-top:2em;">
+                <EmbySelect Class="selectSortBy" Label="@Globalize["LabelSortBy"]" Value="@_sort.SortBy" ValueChanged="value => Set(_sort with { SortBy = value ?? _sort.SortBy })">
+                    @foreach (var option in Options)
+                    {
+                        <option value="@option.Value" selected="@(option.Value == _sort.SortBy)">@Globalize[option.Name]</option>
+                    }
+                </EmbySelect>
+                <EmbySelect Class="selectSortOrder" Label="@Globalize["LabelSortOrder"]" Value="@_sort.SortOrder" ValueChanged="value => Set(_sort with { SortOrder = value ?? _sort.SortOrder })">
+                    <option value="Ascending" selected="@(!_sort.Descending)">@Globalize["Ascending"]</option>
+                    <option value="Descending" selected="@_sort.Descending">@Globalize["Descending"]</option>
+                </EmbySelect>
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private ListSort _sort = new("SortName", "Ascending");
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ListSortOption> Options { get; set; } = [];
+
+    /// <summary>The saved sort order.</summary>
+    [Parameter, EditorRequired]
+    public ListSort Sort { get; set; } = default!;
+
+    /// <summary>Called with the sort order after every change.</summary>
+    [Parameter]
+    public Action<ListSort>? OnChange { get; set; }
+
+    protected override void OnInitialized() => _sort = Sort;
+
+    private void Set(ListSort sort)
+    {
+        _sort = sort;
+        OnChange?.Invoke(sort);
+    }
+}

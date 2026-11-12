@@ -1,0 +1,74 @@
+@namespace Jellyfin.Web.Components
+@*
+    The selection toolbar of multi-select (components/multiSelect/multiSelect.js: showSelectionCommands)
+    with the original markup. It lives in the shell overlay, so it is there on every page, and it also
+    installs the document-level gestures that start a selection on a card (long press, ctrl/meta-click).
+*@
+@attribute [ShellSlot(ShellSlot.Overlay)]
+@implements IAsyncDisposable
+@inject MultiSelectState State
+@inject MultiSelectCommands Commands
+@inject ILibraryInterop Interop
+@inject AppRouter Router
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+@if (State.IsActive)
+{
+    <div class="selectionCommandsPanel">
+        <IconButton Icon="close" Class="btnCloseSelectionPanel autoSize" Title="@Globalize["Close"]" OnClick="State.Stop" />
+        <h1 class="itemSelectionCount">@Globalize.FormatNumber(State.Count)</h1>
+        <IconButton Icon="more_vert" Class="btnSelectionPanelOptions autoSize" Title="@Globalize["ButtonMore"]" OnClick="ShowMenuAsync" />
+    </div>
+}
+
+@code {
+    private IAsyncDisposable? _gestures;
+    private bool _disposed;
+
+    protected override void OnInitialized()
+    {
+        State.Changed += OnChanged;
+        Router.LocationChanged += OnLocationChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var gestures = await Interop.WatchSelectionGesturesAsync(id => _ = InvokeAsync(() => State.StartById(id)));
+            if (_disposed)
+            {
+                await gestures.DisposeAsync();
+            }
+            else
+            {
+                _gestures = gestures;
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        State.Changed -= OnChanged;
+        Router.LocationChanged -= OnLocationChanged;
+        if (_gestures is { } gestures)
+        {
+            _gestures = null;
+            await gestures.DisposeAsync();
+        }
+    }
+
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+
+    // viewbeforehide: leaving the page ends the selection; a changed query (paging, tabs) keeps the page and ends it too.
+    private void OnLocationChanged(AppLocation location) => _ = InvokeAsync(State.Stop);
+
+    private async Task ShowMenuAsync()
+    {
+        var items = await Commands.MenuAsync();
+        var command = await Dialogs.ActionSheetAsync(new ActionSheetOptions { Items = items });
+        await Commands.ExecuteAsync(command);
+    }
+}

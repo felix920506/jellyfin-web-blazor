@@ -1,0 +1,60 @@
+@namespace Jellyfin.Web.Components
+@*
+    The filter button of a library view (features/libraries/components/filter/FilterButton.tsx): a badge
+    while filters are set and a popover with the filter groups; the values the server offers for the
+    library are loaded once.
+*@
+@inject Globalize Globalize
+@inject LibraryData Data
+
+<MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Class="jf-library-filter" PopoverClass="jf-library-filter-popover" ListClass="jf-library-filter-list">
+    <ActivatorContent Context="menu">
+        <MudBadge Dot="true" Color="Color.Info" Overlap="true" Visible="Settings.HasFilterOptions" Class="jf-library-filter-badge">
+            <MudIconButton Icon="@MdIcon.Of("filter_alt")" Color="Color.Inherit" Class="jf-library-btn-filter" title="@Globalize["Filter"]"
+                           aria-label="@Globalize["Filter"]" OnClick="@(e => menu.ToggleAsync(e))" />
+        </MudBadge>
+    </ActivatorContent>
+    <ChildContent>
+        <LibraryFilterPanel ViewType="@Content.ViewType" Values="_values" Settings="Settings" SettingsChanged="SettingsChanged" />
+    </ChildContent>
+</MudMenu>
+
+@code {
+    private LibraryFilterValues _values = LibraryFilterValues.Empty;
+    private string? _loadedFor;
+
+    [Parameter, EditorRequired]
+    public LibraryTabContent Content { get; set; } = default!;
+
+    /// <summary>The library; without one (or for Live TV) the server is not asked for filter values.</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    [Parameter, EditorRequired]
+    public LibraryViewSettings Settings { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<LibraryViewSettings> SettingsChanged { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var key = Content.ViewType + "\n" + ParentId;
+        if (_loadedFor == key)
+        {
+            return;
+        }
+
+        _loadedFor = key;
+        _values = LibraryFilterValues.Empty;
+        if (string.IsNullOrEmpty(ParentId) || ParentId == "livetv")
+        {
+            return;
+        }
+
+        var values = await Data.GetFilterValuesAsync(Content.ViewType, ParentId, Content.ItemTypes);
+        if (_loadedFor == key)
+        {
+            _values = values;
+        }
+    }
+}

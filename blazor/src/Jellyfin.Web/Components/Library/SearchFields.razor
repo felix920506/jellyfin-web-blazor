@@ -1,0 +1,40 @@
+@namespace Jellyfin.Web.Components
+@*
+    The search field (apps/legacy/features/search/components/SearchFields.tsx). The on-screen alphabet of
+    the TV layout is not part of the port.
+*@
+@inject Globalize Globalize
+@inject ILibraryInterop Interop
+
+<div class="padded-left padded-right searchFields">
+    <div class="searchFieldsInner flex align-items-center justify-content-center">
+        <span class="searchfields-icon material-icons search" aria-hidden="true"></span>
+        <div class="inputContainer flex-grow" style="margin-bottom:0;">
+            <input @ref="_input" id="searchTextInput" class="emby-input searchfields-txtSearch" type="text" data-keyboard="true"
+                   placeholder="@Globalize["Search"]" aria-label="@Globalize["Search"]" autocomplete="off" autofocus
+                   value="@Query" @oninput="OnInputAsync" />
+        </div>
+    </div>
+</div>
+
+@code {
+    private ElementReference _input;
+
+    [Parameter]
+    public string? Query { get; set; }
+
+    /// <summary>Raised on every keystroke with the text of the field.</summary>
+    [Parameter]
+    public EventCallback<string> OnSearch { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // The autofocus attribute only works on page load, not when the page is navigated to.
+            await Interop.FocusAsync(_input);
+        }
+    }
+
+    private Task OnInputAsync(ChangeEventArgs args) => OnSearch.InvokeAsync(args.Value?.ToString() ?? string.Empty);
+}

@@ -1,0 +1,95 @@
+@namespace Jellyfin.Web.Components
+@*
+    The suggestions view of a library (features/libraries/components/suggestions/SuggestionsSectionView.tsx):
+    the configured rows (continue watching, latest, next up…) that have items, then the movie recommendations.
+*@
+@implements IDisposable
+@inject LibraryData Data
+@inject UserSettings UserSettings
+@inject AppRouter Router
+@inject Globalize Globalize
+@inject LoadingService Loading
+
+@if (_loaded && _sections.Count == 0 && _recommendations.Count == 0)
+{
+    <NoItemsMessage />
+}
+else
+{
+    <div class="jf-library-suggestions padded-bottom-page">
+        @foreach (var (section, items) in _sections)
+        {
+            <ItemsSection @key="section.Type" Title="@Globalize[section.Name]" Href="@(items.Count > 1 ? ListUrl(section) : null)" Items="items"
+                          CardOptions="@LibrarySections.CardsOf(section, UserSettings)" ParentId="@ParentId" Context="@Content.CollectionType" data-section="@section.Type" />
+        }
+        @foreach (var recommendation in _recommendations)
+        {
+            <ItemsSection @key="@($"{recommendation.RecommendationType}-{recommendation.CategoryId}")" Title="@Title(recommendation)" Items="recommendation.Items"
+                          CardOptions="@LibraryViewOptions.RecommendationCards(Content)" ParentId="@ParentId" Context="@Content.CollectionType" data-section="recommendation" />
+        }
+    </div>
+}
+
+@code {
+    private List<(LibrarySection Section, IReadOnlyList<BaseItemDto> Items)> _sections = [];
+    private IReadOnlyList<LibraryRecommendation> _recommendations = [];
+    private bool _loaded;
+    private bool _disposed;
+
+    [Parameter, EditorRequired]
+    public LibraryTabContent Content { get; set; } = default!;
+
+    /// <summary>The library (?topParentId=); nothing is loaded without one.</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (string.IsNullOrEmpty(ParentId))
+        {
+            _loaded = true;
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            var sections = new List<(LibrarySection, IReadOnlyList<BaseItemDto>)>();
+            foreach (var section in LibrarySections.For(Content.SuggestionSections))
+            {
+                var items = await Data.GetSectionItemsAsync(section, ParentId);
+                if (items.Count > 0)
+                {
+                    sections.Add((section, items));
+                }
+            }
+
+            IReadOnlyList<LibraryRecommendation> recommendations = Content.IsMovieRecommendations
+                ? (await Data.GetMovieRecommendationsAsync(ParentId)).Where(recommendation => recommendation.Items.Count > 0).ToList()
+                : [];
+            if (!_disposed)
+            {
+                _sections = sections;
+                _recommendations = recommendations;
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or System.Text.Json.JsonException)
+        {
+            AppLog.Warn("Loading the suggestions failed: " + exception.Message);
+        }
+        finally
+        {
+            _loaded = true;
+            Loading.Hide();
+        }
+    }
+
+    public void Dispose() => _disposed = true;
+
+    private string ListUrl(LibrarySection section) =>
+        Router.GetListUrl(new ListRouteOptions { ItemTypes = section.ItemTypes, ParentId = ParentId });
+
+    private string Title(LibraryRecommendation recommendation) => recommendation.TitleKey is { } key
+        ? Globalize.Translate(key, recommendation.BaselineItemName)
+        : recommendation.BaselineItemName ?? string.Empty;
+}

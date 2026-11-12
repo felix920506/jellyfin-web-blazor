@@ -1,0 +1,400 @@
+@* The list page: what it asks the server for per address, paging, the alphabet picker, the play buttons and its dialogs. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages
+@using Jellyfin.Web.Routing
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Items
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@inherits ItemsTestContext
+
+@code {
+    private static readonly string FolderId = TestItems.Id(1);
+    private static readonly string GenreId = TestItems.Id(50);
+
+    private readonly List<(int Number, string Name)> _movies = [(11, "Alpha"), (12, "Beta"), (13, "Bravo"), (14, "Gamma")];
+    private readonly RecordingHandler _handler = new();
+    private AppLocation _location = AppLocation.Parse("/list?parentId=" + FolderId);
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        App.Server.OnGet("/Items/" + FolderId, Folder("Folder", null));
+        App.Server.OnGet("/Items/" + GenreId, new { Id = GenreId, Name = "Drama", ServerId = TestApp.ServerId, Type = "Genre" });
+        App.Server.OnGet("/Items", request => Items(request));
+        App.Server.OnGet("/Items/Filters2", new { Genres = new[] { new { Name = "Drama", Id = GenreId } } });
+        App.Server.OnGet("/Shows/NextUp", new { Items = new[] { Episode(21, "Next one") }, TotalRecordCount = 1 });
+    }
+
+    protected override void ConfigureServices(IServiceCollection services) => services.AddSingleton<IItemCommandHandler>(_handler);
+
+    private static object Folder(string type, string? collectionType) => collectionType is null
+        ? (object)new { Id = FolderId, Name = "Stuff", ServerId = TestApp.ServerId, Type = type, IsFolder = true }
+        : new { Id = FolderId, Name = "Stuff", ServerId = TestApp.ServerId, Type = type, IsFolder = true, CollectionType = collectionType };
+
+    private static object Episode(int number, string name) => new
+    {
+        Id = TestItems.Id(number),
+        Name = name,
+        ServerId = TestApp.ServerId,
+        Type = "Episode",
+        MediaType = "Video",
+        SeriesName = "A series",
+        SeriesId = TestItems.Id(90),
+        IndexNumber = 2,
+        ParentIndexNumber = 1,
+        ImageTags = new { Primary = "tag" + number },
+        UserData = new { Played = false, IsFavorite = false, PlaybackPositionTicks = 0 }
+    };
+
+    private object Items(RecordedRequest request)
+    {
+        IEnumerable<(int Number, string Name)> movies = _movies;
+        if (request.Query("NameStartsWith") is { Length: > 0 } letter)
+        {
+            movies = movies.Where(movie => movie.Name.StartsWith(letter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (request.Query("Filters") is { Length: > 0 })
+        {
+            movies = movies.Take(1);
+        }
+
+        var all = movies.ToList();
+        var start = int.TryParse(request.Query("StartIndex"), out var startIndex) ? startIndex : 0;
+        var limit = int.TryParse(request.Query("Limit"), out var size) ? size : all.Count;
+        return new
+        {
+            Items = all.Skip(start).Take(limit).Select(movie => TestItems.Movie(movie.Number, movie.Name)).ToArray(),
+            TotalRecordCount = all.Count
+        };
+    }
+
+    private static bool IsTrue(string? value) => string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+
+    private IRenderedComponent<ContainerFragment> RenderPage() => Render(
+        @<CascadingValue Value="_location">
+            <ListPage />
+            <DialogHost />
+        </CascadingValue>);
+
+    private IRenderedComponent<ContainerFragment> RenderLoaded(int cards = 4)
+    {
+        var cut = RenderPage();
+        cut.WaitForAssertion(() => Assert.Equal(cards, cut.FindAll(".itemsContainer .card").Count));
+        return cut;
+    }
+
+    private static string[] Names(IRenderedComponent<ContainerFragment> cut) =>
+        cut.FindAll(".itemsContainer .card .cardText-first").Select(text => text.TextContent.Trim()).ToArray();
+
+    private static string Paging(IRenderedComponent<ContainerFragment> cut) => cut.Find(".listPaging span").TextContent.Trim();
+
+    private static bool Hidden(IRenderedComponent<ContainerFragment> cut, string selector) => cut.Find(selector).ClassList.Contains("hide");
+
+    private RecordedRequest LastItemsRequest => App.Server.RequestsTo("/Items")[^1];
+
+    private ListParameters Parameters => ListParameters.From(_location);
+
+    [Fact]
+    public void A_folder_lists_its_children()
+    {
+        SignIn();
+
+        var cut = RenderLoaded();
+
+        var page = cut.Find("#listPage");
+        Assert.Equal("page libraryPage noSecondaryNavPage", page.ClassName);
+        Assert.Equal("Stuff", page.GetAttribute("data-title"));
+        Assert.Equal(new[] { "Alpha", "Beta", "Bravo", "Gamma" }, Names(cut));
+        Assert.Equal("1-4 of 4", Paging(cut));
+        Assert.Equal(2, cut.FindAll(".paging").Count);
+        Assert.Empty(cut.FindAll(".btnNextPage"));
+        Assert.Contains("vertical-wrap", cut.Find(".itemsContainer").ClassList);
+
+        var request = Assert.Single(App.Server.RequestsTo("/Items"));
+        Assert.Equal(FolderId, request.Query("ParentId"));
+        Assert.Equal("0", request.Query("StartIndex"));
+        Assert.Equal("100", request.Query("Limit"));
+        Assert.Equal("Ascending", request.Query("SortOrder"));
+        Assert.Null(request.Query("Recursive"));
+        Assert.Null(request.Query("IncludeItemTypes"));
+
+        // A folder can be played, queued and shuffled; "new" is for playlists.
+        Assert.False(Hidden(cut, ".btnPlay"));
+        Assert.False(Hidden(cut, ".btnQueue"));
+        Assert.False(Hidden(cut, ".btnShuffle"));
+        Assert.True(Hidden(cut, ".btnNewItem"));
+        Assert.False(Hidden(cut, ".btnSort"));
+        Assert.False(Hidden(cut, ".btnFilter"));
+        Assert.False(Hidden(cut, ".alphaPicker"));
+        Assert.Empty(cut.FindAll(".filterButtonBubble"));
+    }
+
+    [Fact]
+    public void A_small_page_size_pages_through_the_list()
+    {
+        SignIn();
+        Get<UserSettings>().LibraryPageSize = 2;
+
+        var cut = RenderLoaded(cards: 2);
+
+        Assert.Equal("1-2 of 4", Paging(cut));
+        Assert.True(cut.Find(".btnPreviousPage").HasAttribute("disabled"));
+
+        cut.Find(".btnNextPage").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Bravo", "Gamma" }, Names(cut)));
+        cut.WaitForAssertion(() => Assert.Equal("3-4 of 4", Paging(cut)));
+        Assert.Equal("2", LastItemsRequest.Query("StartIndex"));
+        Assert.True(cut.Find(".btnNextPage").HasAttribute("disabled"));
+
+        cut.Find(".btnPreviousPage").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Alpha", "Beta" }, Names(cut)));
+    }
+
+    [Fact]
+    public void The_alphabet_picker_filters_by_first_letter_and_clears_on_a_second_click()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        cut.Find(".alphaPickerButton[data-value='B']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Beta", "Bravo" }, Names(cut)));
+        Assert.Equal("B", LastItemsRequest.Query("NameStartsWith"));
+        Assert.Contains("alphaPickerButton-selected", cut.Find(".alphaPickerButton[data-value='B']").ClassList);
+
+        cut.Find(".alphaPickerButton[data-value='B']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(4, cut.FindAll(".itemsContainer .card").Count));
+        Assert.Null(LastItemsRequest.Query("NameStartsWith"));
+    }
+
+    [Fact]
+    public void Play_queue_and_shuffle_hand_the_folder_to_the_player()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        cut.Find(".btnPlay").Click();
+        cut.Find(".btnQueue").Click();
+        cut.Find(".btnShuffle").Click();
+
+        Assert.Equal(new[] { "Play", "Queue", "Shuffle" }, Playback.Calls);
+        var play = Playback.PlayRequests[0];
+        Assert.Equal(FolderId, Assert.Single(play.Items!).IdText());
+        Assert.Equal("Ascending", play.QueryOptions!["SortOrder"]);
+        Assert.Equal(FolderId, Assert.Single(Playback.PlayRequests[1].Items!).IdText());
+    }
+
+    [Fact]
+    public void A_filtered_folder_plays_the_items_the_filters_leave()
+    {
+        SignIn();
+        Get<ListPageSettings>().SetFilters(Parameters, new ListFilters().With("IsFavorite", true));
+        var cut = RenderLoaded(cards: 1);
+        Assert.NotEmpty(cut.FindAll(".filterButtonBubble"));
+        Assert.Equal("IsFavorite", LastItemsRequest.Query("Filters"));
+
+        cut.Find(".btnPlay").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(Playback.PlayRequests));
+        Assert.Equal(new[] { "Alpha" }, Playback.PlayRequests[0].Items!.Select(item => item.Name));
+        Assert.Equal(ListPageModel.PlayLimit.ToString(), LastItemsRequest.Query("Limit"));
+
+        cut.Find(".btnShuffle").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(2, Playback.PlayRequests.Count));
+        Assert.Equal("Random", LastItemsRequest.Query("SortBy"));
+        Assert.Equal(new[] { "Play", "Play" }, Playback.Calls);
+    }
+
+    [Fact]
+    public void The_sort_dialog_applies_and_saves_the_order_when_it_closes()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        cut.Find("button.btnSort").Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("select.selectSortBy")));
+        Assert.Contains("DateCreated,SortName", cut.FindAll("select.selectSortBy option").Select(option => option.GetAttribute("value")));
+        cut.Find("select.selectSortBy").Change("DateCreated,SortName");
+        cut.Find("select.selectSortOrder").Change("Descending");
+
+        // Nothing happens until the dialog is closed.
+        Assert.Single(App.Server.RequestsTo("/Items"));
+        cut.Find(".btnCancel").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(2, App.Server.RequestsTo("/Items").Count));
+        Assert.Equal("DateCreated,SortName", LastItemsRequest.Query("SortBy"));
+        Assert.Equal("Descending", LastItemsRequest.Query("SortOrder"));
+        Assert.Equal(new ListSort("DateCreated,SortName", "Descending"), Get<ListPageSettings>().GetSort(Parameters));
+        cut.WaitForAssertion(() => Assert.Contains("arrow_downward", cut.Find(".btnSortIcon").ClassList));
+
+        // The alphabet picker stays while the name is part of the order (updateAlphaPickerState).
+        Assert.False(Hidden(cut, ".alphaPicker"));
+    }
+
+    [Fact]
+    public void The_filter_dialog_offers_the_genres_of_the_server_and_applies_when_it_closes()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        cut.Find("button.btnFilter").Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("input.chkGenreFilter")));
+        Assert.Equal(FolderId, App.Server.RequestsTo("/Items/Filters2")[^1].Query("ParentId"));
+        cut.Find("input.chkFavorite").Change(true);
+        cut.Find("input.chkGenreFilter").Change(true);
+        Assert.Single(App.Server.RequestsTo("/Items"));
+        cut.Find(".btnCancel").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(2, App.Server.RequestsTo("/Items").Count));
+        Assert.Equal("IsFavorite", LastItemsRequest.Query("Filters"));
+        Assert.Equal(GenreId, LastItemsRequest.Query("GenreIds"));
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".filterButtonBubble").Count));
+        var saved = Get<ListPageSettings>().GetFilters(Parameters);
+        Assert.True(saved.IsFavorite);
+        Assert.Equal(GenreId, saved.GenreIds);
+    }
+
+    [Fact]
+    public void A_dialog_closed_without_changes_reloads_nothing()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        cut.Find("button.btnFilter").Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("input.chkFavorite")));
+        cut.Find(".btnCancel").Click();
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("input.chkFavorite")));
+        Assert.Single(App.Server.RequestsTo("/Items"));
+    }
+
+    [Fact]
+    public void The_view_settings_dialog_switches_to_a_list()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        cut.Find("button.btnViewSettings").Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("select.selectImageType")));
+        Assert.NotEmpty(cut.FindAll("input.chkShowTitle"));
+        cut.Find("select.selectImageType").Change("list");
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("input.chkShowTitle")));
+        cut.Find(".btnCancel").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(4, cut.FindAll(".itemsContainer .listItem").Count));
+        Assert.Contains("vertical-list", cut.Find(".itemsContainer").ClassList);
+        Assert.Equal("list", Get<ListPageSettings>().GetView(Parameters, null).ImageType);
+    }
+
+    [Fact]
+    public void A_genre_lists_the_items_of_the_library_that_have_it()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/list?genreId=" + GenreId + "&parentId=" + FolderId);
+
+        var cut = RenderLoaded();
+
+        Assert.Equal("Drama", cut.Find("#listPage").GetAttribute("data-title"));
+        var request = LastItemsRequest;
+        Assert.Equal(GenreId, request.Query("GenreIds"));
+        Assert.Equal(FolderId, request.Query("parentId"));
+        Assert.True(IsTrue(request.Query("Recursive")));
+        Assert.Equal("Audiobook,Book,BoxSet,Movie,Series,Video", request.Query("IncludeItemTypes"));
+        Assert.Single(App.Server.RequestsTo("/Items/" + GenreId));
+        Assert.Empty(App.Server.RequestsTo("/Items/" + FolderId));
+    }
+
+    [Fact]
+    public void A_type_without_a_folder_lists_all_items_of_the_type()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/list?type=Movie&IsFavorite=true");
+
+        var cut = RenderLoaded();
+
+        var request = LastItemsRequest;
+        Assert.Equal("Movie", request.Query("IncludeItemTypes"));
+        Assert.True(IsTrue(request.Query("Recursive")));
+        Assert.True(IsTrue(request.Query("IsFavorite")));
+        Assert.Null(request.Query("ParentId"));
+        Assert.True(Hidden(cut, ".alphaPicker"));
+        Assert.True(Hidden(cut, ".btnQueue"));
+    }
+
+    [Fact]
+    public void Next_up_asks_for_the_next_episodes_and_has_no_sort_or_shuffle()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/list?type=nextup");
+
+        var cut = RenderLoaded(cards: 1);
+
+        Assert.Equal(Get<Globalize>()["NextUp"], cut.Find("#listPage").GetAttribute("data-title"));
+        var request = Assert.Single(App.Server.RequestsTo("/Shows/NextUp"));
+        Assert.Equal("Primary,Backdrop,Thumb", request.Query("EnableImageTypes"));
+        Assert.Empty(App.Server.RequestsTo("/Items"));
+        Assert.True(Hidden(cut, ".btnSort"));
+        Assert.True(Hidden(cut, ".btnFilter"));
+        Assert.True(Hidden(cut, ".btnShuffle"));
+        Assert.False(Hidden(cut, ".btnPlay"));
+        Assert.Equal("videoplayback", cut.Find(".itemsContainer").GetAttribute("data-monitor"));
+    }
+
+    [Fact]
+    public void A_library_folder_has_no_play_buttons_and_the_playlists_library_offers_a_new_playlist()
+    {
+        SignIn();
+        _handler.Commands.Add(ItemCommand.AddToPlaylist);
+        App.Server.OnGet("/Items/" + FolderId, Folder("CollectionFolder", "playlists"));
+
+        var cut = RenderLoaded();
+
+        Assert.True(Hidden(cut, ".btnPlay"));
+        Assert.True(Hidden(cut, ".btnShuffle"));
+        Assert.False(Hidden(cut, ".btnNewItem"));
+
+        cut.Find(".btnNewItem").Click();
+
+        var call = Assert.Single(_handler.Calls);
+        Assert.Equal(ItemCommand.AddToPlaylist, call.Command);
+        Assert.Empty(call.Context.SelectedItems!);
+        cut.WaitForAssertion(() => Assert.Equal(2, App.Server.RequestsTo("/Items").Count));
+    }
+
+    [Fact]
+    public void Another_address_shows_another_list()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        _location = AppLocation.Parse("/list?type=nextup");
+        Rerender(cut);
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".itemsContainer .card")));
+        Assert.Single(App.Server.RequestsTo("/Shows/NextUp"));
+        cut.WaitForAssertion(() => Assert.True(Hidden(cut, ".btnSort")));
+    }
+
+    private sealed class RecordingHandler : IItemCommandHandler
+    {
+        public HashSet<string> Commands { get; } = [];
+
+        public List<(string Command, BaseItemDto Item, ItemActionContext Context)> Calls { get; } = [];
+
+        public bool CanHandle(string command, BaseItemDto item) => Commands.Contains(command);
+
+        public Task<ItemCommandResult> ExecuteAsync(string command, BaseItemDto item, ItemActionContext context)
+        {
+            Calls.Add((command, item, context));
+            return Task.FromResult(ItemCommandResult.None);
+        }
+    }
+}

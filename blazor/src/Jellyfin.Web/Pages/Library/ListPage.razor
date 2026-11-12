@@ -1,0 +1,413 @@
+@namespace Jellyfin.Web.Pages
+@*
+    The generic list page (controllers/list.js + list.html): the children of a folder, genre, studio,
+    person, playlist or collection, all items of a type, the favorites of a type, "next up" or a list of
+    Live TV programs/recordings, with paging, the alphabet picker, play / queue / shuffle and its own sort,
+    filter and view settings dialogs. The query logic lives in ListPageModel.
+*@
+@attribute [Route("/list")]
+@attribute [Access(AccessLevel.User)]
+@implements IDisposable
+@inject Globalize Globalize
+@inject JellyfinApi Api
+@inject ItemQueries Queries
+@inject LibraryData Data
+@inject ListPageSettings Settings
+@inject UserSettings UserSettings
+@inject IPlaybackManager Playback
+@inject ItemCommandHandlers Handlers
+@inject AppDialogs Dialogs
+@inject LoadingService Loading
+@inject MultiSelectState MultiSelect
+@inject IBrowser Browser
+
+<Page Id="listPage" Class="libraryPage noSecondaryNavPage" Title="@_title">
+    <AlphaPicker Value="@_alphabet" ValueChanged="SetAlphabetAsync" Visible="@(ListPageModel.ShowAlphaPicker(_item, _sort))" />
+    <div class="padded-left padded-right padded-bottom-page @(ListPageModel.HasAlphaPicker(_item) ? "padded-right-withalphapicker" : null)">
+        <div class="flex align-items-center focuscontainer-x itemsViewSettingsContainer padded-top padded-bottom flex-wrap-wrap">
+            <ListPaging StartIndex="_startIndex" StartIndexChanged="SetStartIndexAsync" Limit="_pageSize" Total="_total" />
+            <EmbyButton Class="@("btnPlay button-flat listTextButton-autohide" + Hide(ShowPlay))" OnClick="PlayAsync">
+                <span>@Globalize["HeaderPlayAll"]</span>
+            </EmbyButton>
+            <IconButton Icon="play_arrow" Class="@("btnPlay listIconButton-autohide" + Hide(ShowPlay))" Title="@Globalize["HeaderPlayAll"]" OnClick="PlayAsync" />
+            <EmbyButton Class="@("btnQueue button-flat listTextButton-autohide" + Hide(ShowQueue))" OnClick="QueueAsync">
+                <span>@Globalize["AddToPlayQueue"]</span>
+            </EmbyButton>
+            <IconButton Icon="playlist_add" Class="@("btnQueue listIconButton-autohide" + Hide(ShowQueue))" Title="@Globalize["AddToPlayQueue"]" OnClick="QueueAsync" />
+            <EmbyButton Class="@("btnShuffle button-flat listTextButton-autohide" + Hide(ShowShuffle))" OnClick="ShuffleAsync">
+                <span>@Globalize["Shuffle"]</span>
+            </EmbyButton>
+            <IconButton Icon="shuffle" Class="@("btnShuffle listIconButton-autohide" + Hide(ShowShuffle))" Title="@Globalize["Shuffle"]" OnClick="ShuffleAsync" />
+            <EmbyButton Class="@("btnNewItem button-flat listTextButton-autohide" + Hide(ShowNew))" OnClick="NewItemAsync">
+                <span>@Globalize["New"]</span>
+            </EmbyButton>
+            <IconButton Icon="add" Class="@("btnNewItem listIconButton-autohide" + Hide(ShowNew))" Title="@Globalize["New"]" OnClick="NewItemAsync" />
+
+            <EmbyButton Class="@("btnSort button-flat listTextButton-autohide" + Hide(ShowSort))" OnClick="ShowSortMenuAsync">
+                <span class="btnSortText">@SortText</span>
+                <span class="material-icons btnSortIcon @(_sort.Descending ? "arrow_downward" : "arrow_upward")" aria-hidden="true"></span>
+            </EmbyButton>
+            <IconButton Icon="sort_by_alpha" Class="@("btnSort listIconButton-autohide" + Hide(ShowSort))" Title="@Globalize["Sort"]" OnClick="ShowSortMenuAsync" />
+            <EmbyButton Class="@("btnFilter button-flat listTextButton-autohide" + FilterClass)" OnClick="ShowFilterMenuAsync">
+                @if (_filters.HasAny)
+                {
+                    <div class="filterButtonBubble">!</div>
+                }
+                <span>@Globalize["Filter"]</span>
+            </EmbyButton>
+            <button type="button" class="@("paper-icon-button-light btnFilter listIconButton-autohide" + FilterClass)" data-ripple="false" style="overflow:visible;"
+                    title="@Globalize["Filter"]" aria-label="@Globalize["Filter"]" @onclick="ShowFilterMenuAsync">
+                @if (_filters.HasAny)
+                {
+                    <div class="filterButtonBubble">!</div>
+                }
+                <span class="material-icons filter_alt" aria-hidden="true"></span>
+            </button>
+            <EmbyButton Class="btnViewSettings button-flat listTextButton-autohide" Title="@Globalize["ButtonMore"]" OnClick="ShowViewSettingsMenuAsync">
+                <span class="material-icons more_vert" aria-hidden="true"></span>
+            </EmbyButton>
+            <IconButton Icon="more_vert" Class="btnViewSettings listIconButton-autohide" Title="@Globalize["ButtonMore"]" OnClick="ShowViewSettingsMenuAsync" />
+        </div>
+        @if (_ready)
+        {
+            <ItemsContainer @key="_key" @ref="_container" Class="@(_view.IsList ? "vertical-list" : "vertical-wrap")" Fetch="_fetch"
+                            CardOptions="@(_view.IsList ? null : ListPageModel.Cards(_parameters, _item, _view))"
+                            ListOptions="@(_view.IsList ? ListOptions : null)"
+                            ParentId="@_parameters.ParentId" Monitor="@Monitor" Context="@Context" />
+        }
+        <div class="flex align-items-center justify-content-center flex-wrap-wrap padded-top padded-left padded-right padded-bottom focuscontainer-x">
+            <ListPaging StartIndex="_startIndex" StartIndexChanged="SetStartIndexAsync" Limit="_pageSize" Total="_total" />
+        </div>
+    </div>
+</Page>
+
+@code {
+    // The original's data-refreshinterval of the program lists.
+    private static readonly TimeSpan ProgramsRefreshInterval = TimeSpan.FromMinutes(5);
+
+    private static readonly ListViewOptions ListOptions = new();
+
+    private readonly Func<Task<IReadOnlyList<BaseItemDto>>> _fetch;
+    private ItemsContainer? _container;
+    private ListParameters _parameters = new();
+    private ListParameters? _appliedParameters;
+    private BaseItemDto? _item;
+    private ListSort _sort = new("SortName", "Ascending");
+    private ListFilters _filters = new();
+    private ListViewSettings _view = new(true, true, "primary", "images");
+    private CancellationTokenSource? _programsRefresh;
+    private string? _alphabet;
+    private string? _title = string.Empty;
+    private bool _ready;
+    private bool _recursive;
+    private int _startIndex;
+    private int _pageSize;
+    private int _total;
+    private int _key;
+    private int _version;
+
+    public ListPage() => _fetch = FetchAsync;
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = default!;
+
+    private bool ShowPlay => _ready && ListPageModel.ShowPlay(_parameters, _item);
+
+    private bool ShowShuffle => _ready && ListPageModel.ShowShuffle(_parameters, _item);
+
+    private bool ShowQueue => _item is not null && Playback.CanQueue(_item);
+
+    private bool ShowNew => _item?.CollectionTypeName() == "playlists";
+
+    private bool ShowSort => _parameters.Type != "nextup";
+
+    private string? FilterClass =>
+        (ListPageModel.VisibleFilters(_parameters).Count > 0 ? null : " hide") + (_filters.HasAny ? " btnFilterWithBubble" : null);
+
+    private string? SortText =>
+        ListPageModel.SortOptions(_parameters).FirstOrDefault(option => option.Value == _sort.SortBy) is { } option
+            ? Globalize.Translate("SortByValue", Globalize[option.Name])
+            : null;
+
+    // data-monitor of the lists that have no folder (list.js).
+    private string? Monitor => _parameters.ParentId is not null ? null : _parameters.Type switch
+    {
+        "nextup" => "videoplayback",
+        "favoritemovies" => "markfavorite",
+        _ => null
+    };
+
+    private string? Context =>
+        _parameters.Type == "Programs" ? "livetv" : _item?.CollectionTypeName() == "folders" ? "folders" : null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var parameters = ListParameters.From(Location);
+        if (parameters == _appliedParameters)
+        {
+            return;
+        }
+
+        _appliedParameters = parameters;
+        _parameters = parameters;
+        var version = ++_version;
+        _programsRefresh?.Cancel();
+        _programsRefresh = null;
+        _ready = false;
+        _item = null;
+        _alphabet = null;
+        _startIndex = 0;
+        _total = 0;
+        _pageSize = UserSettings.LibraryPageSize;
+        _sort = Settings.GetSort(parameters);
+        _filters = Settings.GetFilters(parameters);
+        _view = Settings.GetView(parameters, null);
+
+        BaseItemDto? item = null;
+        if (ListPageModel.ItemId(parameters) is { } itemId)
+        {
+            try
+            {
+                item = await Queries.GetItemAsync(itemId);
+            }
+            catch (HttpRequestException exception)
+            {
+                AppLog.Warn("Loading the item of the list failed: " + exception.Message);
+            }
+        }
+
+        if (version != _version)
+        {
+            return;
+        }
+
+        _item = item;
+        _view = Settings.GetView(parameters, item);
+        var (key, text) = ListPageModel.Title(parameters, item);
+        _title = key is not null ? Globalize[key] : text ?? string.Empty;
+        _key = version;
+        _ready = true;
+        if (parameters.ParentId is null && parameters.Type == "Programs")
+        {
+            _programsRefresh = new CancellationTokenSource();
+            _ = RefreshProgramsAsync(_programsRefresh.Token);
+        }
+    }
+
+    public void Dispose() => _programsRefresh?.Cancel();
+
+    private static string? Hide(bool show) => show ? null : " hide";
+
+    private LibraryRequest Request(string? sortBy, int startIndex, int? limit, out bool recursive) => ListPageModel.Request(
+        _parameters,
+        _item,
+        _sort,
+        _filters,
+        _alphabet,
+        ListPageModel.HasAlphaPicker(_item),
+        Api.UserIdText,
+        UserSettings.EnableRewatchingInNextUp,
+        sortBy,
+        startIndex,
+        limit,
+        out recursive);
+
+    private async Task<IReadOnlyList<BaseItemDto>> FetchAsync()
+    {
+        var version = _version;
+        var result = LibraryItemsResult.Empty;
+        Loading.Show();
+        try
+        {
+            var request = Request(null, _startIndex, _pageSize > 0 ? _pageSize : null, out var recursive);
+            _recursive = recursive;
+            result = await Data.GetPageAsync(request);
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Loading the list failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+
+        if (version == _version)
+        {
+            _total = result.TotalRecordCount;
+            StateHasChanged();
+        }
+
+        return result.Items;
+    }
+
+    // The items "play all", "queue" and "shuffle" take when they cannot hand the folder to the player.
+    private async Task<IReadOnlyList<BaseItemDto>> FetchForPlaybackAsync(string? sortBy)
+    {
+        try
+        {
+            return (await Data.GetPageAsync(Request(sortBy, 0, ListPageModel.PlayLimit, out _))).Items;
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Loading the items to play failed: " + exception.Message);
+            return [];
+        }
+    }
+
+    private Task RefreshAsync() => _container?.RefreshAsync() ?? Task.CompletedTask;
+
+    private async Task RefreshProgramsAsync(CancellationToken cancellation)
+    {
+        try
+        {
+            while (!cancellation.IsCancellationRequested)
+            {
+                await Task.Delay(ProgramsRefreshInterval, cancellation);
+                await InvokeAsync(RefreshAsync);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The page went away or shows another list.
+        }
+    }
+
+    private Task SetStartIndexAsync(int startIndex)
+    {
+        _startIndex = startIndex;
+        Browser.ScrollTo(0, 0);
+        return RefreshAsync();
+    }
+
+    private Task SetAlphabetAsync(string? letter)
+    {
+        _alphabet = letter;
+        _startIndex = 0;
+        return RefreshAsync();
+    }
+
+    private async Task PlayAsync()
+    {
+        if (_item is not null && !_filters.HasAny)
+        {
+            await Playback.PlayAsync(new PlayOptions
+            {
+                Items = [_item],
+                QueryOptions = new Dictionary<string, string> { ["SortBy"] = _sort.SortBy, ["SortOrder"] = _sort.SortOrder }
+            });
+            return;
+        }
+
+        await Playback.PlayAsync(new PlayOptions { Items = await FetchForPlaybackAsync(null) });
+    }
+
+    private async Task QueueAsync()
+    {
+        if (_item is not null && !_filters.HasAny)
+        {
+            await Playback.QueueAsync(new PlayOptions { Items = [_item] });
+            return;
+        }
+
+        await Playback.QueueAsync(new PlayOptions { Items = await FetchForPlaybackAsync(null) });
+    }
+
+    private async Task ShuffleAsync()
+    {
+        if (_item is not null && !_filters.HasAny)
+        {
+            await Playback.ShuffleAsync(_item);
+            return;
+        }
+
+        await Playback.PlayAsync(new PlayOptions { Items = await FetchForPlaybackAsync("Random") });
+    }
+
+    // The playlist editor belongs to the item dialogs; an empty selection means "create a new one".
+    private async Task NewItemAsync()
+    {
+        await Handlers.ExecuteAsync(
+            ItemCommand.AddToPlaylist,
+            new BaseItemDto { ServerId = _parameters.ServerId ?? Api.ServerId },
+            new ItemActionContext { SelectedItems = [] });
+        await RefreshAsync();
+    }
+
+    // The dialogs report every change; like the original, the page saves and applies the last value once
+    // the dialog is closed, however that happened.
+    private async Task ShowSortMenuAsync()
+    {
+        var sort = _sort;
+        await Dialogs.ShowAsync<ListSortDialog>(
+            new Dictionary<string, object?>
+            {
+                [nameof(ListSortDialog.Options)] = ListPageModel.SortOptions(_parameters),
+                [nameof(ListSortDialog.Sort)] = _sort,
+                [nameof(ListSortDialog.OnChange)] = (Action<ListSort>)(value => sort = value)
+            },
+            new AppDialogOptions { Size = "small", Class = "formDialog" });
+        if (sort == _sort)
+        {
+            return;
+        }
+
+        _sort = sort;
+        Settings.SetSort(_parameters, sort);
+        _startIndex = 0;
+        StateHasChanged();
+        await RefreshAsync();
+    }
+
+    private async Task ShowFilterMenuAsync()
+    {
+        var filters = _filters;
+        await Dialogs.ShowAsync<ListFilterDialog>(
+            new Dictionary<string, object?>
+            {
+                [nameof(ListFilterDialog.Parameters)] = _parameters,
+                [nameof(ListFilterDialog.Recursive)] = _recursive,
+                [nameof(ListFilterDialog.Filters)] = _filters,
+                [nameof(ListFilterDialog.Visible)] = ListPageModel.VisibleFilters(_parameters),
+                [nameof(ListFilterDialog.OnChange)] = (Action<ListFilters>)(value => filters = value)
+            },
+            new AppDialogOptions { Size = "small", Class = "formDialog" });
+        if (filters == _filters)
+        {
+            return;
+        }
+
+        _filters = filters;
+        Settings.SetFilters(_parameters, filters);
+        _startIndex = 0;
+        if (filters.HasAny)
+        {
+            MultiSelect.Stop();
+        }
+
+        StateHasChanged();
+        await RefreshAsync();
+    }
+
+    private async Task ShowViewSettingsMenuAsync()
+    {
+        var view = _view;
+        await Dialogs.ShowAsync<ListViewSettingsDialog>(
+            new Dictionary<string, object?>
+            {
+                [nameof(ListViewSettingsDialog.Settings)] = _view,
+                [nameof(ListViewSettingsDialog.Visible)] = ListPageModel.VisibleViewSettings(_item),
+                [nameof(ListViewSettingsDialog.OnChange)] = (Action<ListViewSettings>)(value => view = value)
+            },
+            new AppDialogOptions { Size = "small", Class = "formDialog" });
+        if (view == _view)
+        {
+            return;
+        }
+
+        _view = view;
+        Settings.SetView(_parameters, view.ShowTitle, view.ImageType);
+        StateHasChanged();
+        await RefreshAsync();
+    }
+}

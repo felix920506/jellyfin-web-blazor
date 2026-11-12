@@ -1,0 +1,84 @@
+@namespace Jellyfin.Web.Components
+@*
+    The result rows of a search (apps/legacy/features/search/components/SearchResults.tsx and
+    SearchResultsRow.tsx): one horizontal row of cards per kind of result, or the "nothing found" message
+    with the offer to search everywhere when the search was limited to a library.
+*@
+@inject Globalize Globalize
+@inject SearchService Search
+@inject LoadingService Loading
+
+@if (_sections is { Count: 0 })
+{
+    <div class="noItemsMessage centerMessage">
+        @Globalize.Translate("SearchResultsEmpty", _shownQuery)
+        @if (!string.IsNullOrEmpty(CollectionType))
+        {
+            <div>
+                <a class="emby-button" href="@("#/search?query=" + Uri.EscapeDataString(_shownQuery ?? string.Empty))">@Globalize["RetryWithGlobalSearch"]</a>
+            </div>
+        }
+    </div>
+}
+else if (_sections is not null)
+{
+    <div class="searchResults padded-top padded-bottom-page">
+        @foreach (var (section, index) in _sections.Select((section, index) => (section, index)))
+        {
+            <ItemsSection @key="@($"{_generation}-{section.Title}-{index}")" Items="section.Items" CardOptions="section.Cards" data-section="@section.Title">
+                <Header>
+                    <h2 class="sectionTitle sectionTitle-cards focuscontainer-x padded-left padded-right">@Globalize[section.Title]</h2>
+                </Header>
+            </ItemsSection>
+        }
+    </div>
+}
+
+@code {
+    private IReadOnlyList<SearchSection>? _sections;
+    private string? _applied;
+    private string? _shownQuery;
+    private int _generation;
+    private int _version;
+
+    /// <summary>The library the search is limited to (?parentId=), or null.</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    /// <summary>The kind of library the search is limited to (?collectionType=), or null.</summary>
+    [Parameter]
+    public string? CollectionType { get; set; }
+
+    [Parameter, EditorRequired]
+    public string Query { get; set; } = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var applied = $"{ParentId}\n{CollectionType}\n{Query}";
+        if (_applied == applied)
+        {
+            return;
+        }
+
+        _applied = applied;
+        var version = ++_version;
+        var query = Query;
+        IReadOnlyList<SearchSection> sections = [];
+        Loading.Show();
+        try
+        {
+            sections = await Search.SearchAsync(ParentId, CollectionType, query);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+
+        if (version == _version)
+        {
+            _sections = sections;
+            _shownQuery = query;
+            _generation = version;
+        }
+    }
+}

@@ -1,0 +1,30 @@
+@namespace Jellyfin.Web.Components
+@*
+    The vertical alphabet picker of the legacy pages (components/alphaPicker/alphaPicker.js) with the
+    original markup and classes: "#" and A to Z; clicking the selected letter clears it.
+*@
+<div class="alphaPicker alphaPicker-vertical alphaPicker-fixed alphaPicker-fixed-right focuscontainer-y focuscontainer-right focusable @(Visible ? null : "hide")">
+    <div class="alphaPickerRow alphaPickerRow-vertical">
+        @foreach (var letter in LibraryAlphabetPicker.Letters)
+        {
+            <button @key="letter" type="button" data-value="@letter" class="alphaPickerButton alphaPickerButton-vertical @(IsSelected(letter) ? "alphaPickerButton-selected" : null)"
+                    @onclick="() => SelectAsync(letter)">@letter</button>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>The selected letter ("#" for everything before A), or null.</summary>
+    [Parameter]
+    public string? Value { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    [Parameter]
+    public bool Visible { get; set; } = true;
+
+    private bool IsSelected(string letter) => string.Equals(Value, letter, StringComparison.OrdinalIgnoreCase);
+
+    private Task SelectAsync(string letter) => ValueChanged.InvokeAsync(IsSelected(letter) ? null : letter);
+}
