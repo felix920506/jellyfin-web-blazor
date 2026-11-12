@@ -12,7 +12,7 @@ public sealed record PlayerStatCategory(string? Name, IReadOnlyList<PlayerStat> 
 /// components/playback/playMethodHelper.ts: what the "Playback info" overlay shows.
 /// </summary>
 [AppService]
-public sealed class PlayerStatsBuilder(PlaybackManager playback, JellyfinApi api, Globalize globalize, IPlaybackTimers timers)
+public sealed class PlayerStatsBuilder(PlaybackManager playback, JellyfinApi api, Globalize globalize, IPlaybackTimers timers, SyncPlayService syncPlay)
 {
     /// <summary>The server is asked for this device's session at most this often.</summary>
     public const int SessionIntervalMs = 10000;
@@ -68,7 +68,15 @@ public sealed class PlayerStatsBuilder(PlaybackManager playback, JellyfinApi api
 
         categories.Add(new PlayerStatCategory(globalize["LabelOriginalMediaInfo"], MediaSourceStats()));
 
-        // PORT-TODO(playback): the SyncPlay category ("LabelSyncPlayInfo") belongs to the SyncPlay workstream.
+        if (syncPlay.IsEnabled)
+        {
+            categories.Add(new PlayerStatCategory(globalize["LabelSyncPlayInfo"],
+            [
+                new PlayerStat(globalize["LabelSyncPlaySyncMethod"], syncPlay.SyncMethod),
+                new PlayerStat(globalize["LabelSyncPlayPlaybackDiff"], syncPlay.PlaybackDifferenceMilliseconds.ToString("0.00", CultureInfo.InvariantCulture) + " ms"),
+                new PlayerStat(globalize["LabelSyncPlayTimeSyncOffset"], syncPlay.TimeSync.OffsetMilliseconds.ToString("0.00", CultureInfo.InvariantCulture) + " ms")
+            ]));
+        }
         return categories;
     }
 

@@ -6,7 +6,7 @@
    - the header is drawn by the page (the app bar is not shown on this route);
    - the show transitions are simplified: "hide" is added by a timer instead of transitionend;
    - buttons are not focused when the OSD appears.
-   PORT-TODO(playback): recording controls, SyncPlay, AirPlay, the TV
+   PORT-TODO(playback): recording controls, AirPlay, the TV
    layout's key handling and the iOS forced-fullscreen back navigation are not ported. *@
 @attribute [Route("/video")]
 @attribute [Access(AccessLevel.User)]
@@ -25,6 +25,7 @@
 @inject IPlaybackTimers Timers
 @inject IPlaybackUiInterop Ui
 @inject MediaSegmentService MediaSegments
+@inject SyncPlayService SyncPlay
 
 @{
     var item = Playback.CurrentItem;
@@ -88,6 +89,17 @@
                 </div>
             </div>
             <div class="osdTextContainer osdSecondaryMediaInfo hide"></div>
+            @if (SyncPlay.IsEnabled)
+            {
+                <div class="jf-syncplay-osd-marker" data-syncplay="active">
+                    <span class="material-icons groups" aria-hidden="true"></span>
+                    <span>@Globalize["ButtonSyncPlay"]</span>
+                    @if (SyncPlay.IsBuffering)
+                    {
+                        <span class="jf-syncplay-osd-buffering">@Globalize["Buffering"]</span>
+                    }
+                </div>
+            }
 
             <div class="flex flex-direction-row align-items-center" dir="ltr">
                 <div class="osdTextContainer startTimeText osdPositionText" style="margin: 0 .25em 0 0;">@(liveProgress?.StartText ?? Text.RunningTime(position))</div>
