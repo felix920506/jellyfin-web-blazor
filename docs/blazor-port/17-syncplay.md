@@ -9,7 +9,7 @@ The Blazor port now has the SyncPlay core and the modern toolbar UI under
   `SyncPlayCommand` and `SyncPlayGroupUpdate` and keeps group membership,
   queue identity, server clock offset, following/ignore-wait state, and
   buffering state separate from the session remote player.
-* Server time is estimated from the eight lowest-latency `/GetServerTime`
+* Server time is estimated from the eight lowest-latency `/GetUtcTime`
   measurements. Timestamped pause, unpause, seek and stop commands are
   scheduled against that clock. Commands applied locally use echo suppression,
   so a local command is not sent back as a duplicate server command.

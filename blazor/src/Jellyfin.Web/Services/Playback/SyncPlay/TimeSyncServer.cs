@@ -23,7 +23,7 @@ public sealed class TimeSyncServer(JellyfinApi api, IPlaybackTimers timers)
     public async Task<bool> UpdateAsync(CancellationToken cancellationToken = default)
     {
         var sent = timers.NowMs;
-        using var response = await api.SendAsync(HttpMethod.Get, "GetServerTime", null, cancellationToken);
+        using var response = await api.SendAsync(HttpMethod.Get, "GetUtcTime", null, cancellationToken);
         response.EnsureSuccessStatusCode();
         var received = timers.NowMs;
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));

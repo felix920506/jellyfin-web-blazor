@@ -85,8 +85,6 @@ def main():
                 host.click(".jf-syncplay-menu .mud-menu-item:has-text('Leave')")
                 guest.wait_for_function("!document.querySelector('.jf-syncplay-button')?.classList.contains('jf-syncplay-active')", timeout=15000)
                 print("ok   leaving disables SyncPlay")
-                for page in (host, guest):
-                    page.errors[:] = [error for error in page.errors if "GetServerTime" not in error and "HTTP 404" not in error and "responded with a status of 404" not in error]
                 return max(finish(host, "syncplay host"), finish(guest, "syncplay guest"))
             finally:
                 browser.close()

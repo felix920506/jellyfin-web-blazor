@@ -26,7 +26,7 @@ public sealed class SyncPlayCoreTests
         app.SignIn();
         var timers = new FakePlaybackTimers { NowMs = 10_000 };
         var server = new TimeSyncServer(app.Get<JellyfinApi>(), timers);
-        app.Server.OnGet("/GetServerTime", new { RequestReceptionTime = "1970-01-01T00:00:00.020Z", ResponseTransmissionTime = "1970-01-01T00:00:00.030Z" });
+        app.Server.OnGet("/GetUtcTime", new { RequestReceptionTime = "1970-01-01T00:00:00.020Z", ResponseTransmissionTime = "1970-01-01T00:00:00.030Z" });
 
         await server.UpdateAsync();
 
