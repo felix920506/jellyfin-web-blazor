@@ -90,7 +90,7 @@ public class PlaybackFlowTests
         Assert.Equal(1, (double?)report["PlaybackRate"]);
         Assert.Equal(2, (int?)report["AudioStreamIndex"]);
         Assert.Equal("DirectPlay", (string?)report["PlayMethod"]);
-        Assert.Equal(string.Empty, (string?)report["PlaySessionId"]);
+        Assert.Equal("session-1", (string?)report["PlaySessionId"]);
         Assert.Equal(PlaybackServer.MovieId, (string?)report["MediaSourceId"]);
         Assert.True((bool?)report["CanSeek"]);
         Assert.Equal(PlaybackServer.MovieId, (string?)report["ItemId"]);

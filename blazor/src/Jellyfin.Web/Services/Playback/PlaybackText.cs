@@ -56,6 +56,27 @@ public sealed class PlaybackText(Globalize globalize, JellyfinApi api, IPlayback
     /// <summary>Port of datetime.getDisplayTime(): the time of day in the user's locale.</summary>
     public string DisplayTime(DateTimeOffset value) => globalize.FormatDate(value, new { hour = "numeric", minute = "2-digit" });
 
+    /// <summary>The programme shown by the OSD for a live channel, or the item itself otherwise.</summary>
+    public static BaseItemDto DisplayItem(BaseItemDto item) =>
+        item.TypeName() == "TvChannel" ? item.CurrentProgram ?? item : item;
+
+    /// <summary>Whether the OSD should render the wall-clock programme progress bar.</summary>
+    public static bool UsesLiveTvProgress(BaseItemDto? item) =>
+        item?.TypeName() == "TvChannel" && item.CurrentProgram?.StartDate is not null && item.CurrentProgram.EndDate is not null;
+
+    /// <summary>Returns the current live programme's wall-clock progress, clamped to 0..100.</summary>
+    public LiveTvProgress? LiveTvProgress(BaseItemDto? item)
+    {
+        if (!UsesLiveTvProgress(item) || item!.CurrentProgram is not { StartDate: { } start, EndDate: { } end } || end <= start)
+        {
+            return null;
+        }
+
+        var now = DateTimeOffset.FromUnixTimeMilliseconds(timers.NowMs);
+        var percent = Math.Clamp((now - start).TotalMilliseconds / (end - start).TotalMilliseconds * 100, 0, 100);
+        return new LiveTvProgress(start, end, percent, DisplayTime(start), DisplayTime(end));
+    }
+
     /// <summary>Port of mediaInfo.getEndsAtFromPosition().</summary>
     public string EndsAt(long runtimeTicks, long positionTicks, double playbackRate)
     {
@@ -239,3 +260,11 @@ public sealed class PlaybackText(Globalize globalize, JellyfinApi api, IPlayback
 
     private string Number(long value) => globalize.FormatNumber(value);
 }
+
+/// <summary>The time-of-day values needed to render a live programme in the video OSD.</summary>
+public sealed record LiveTvProgress(
+    DateTimeOffset Start,
+    DateTimeOffset End,
+    double Percent,
+    string StartText,
+    string EndText);

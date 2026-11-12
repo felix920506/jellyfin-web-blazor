@@ -35,11 +35,16 @@ public sealed partial class PlaybackManager
     public async Task PlayAsync(PlayOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var request = new PlayRequest(options);
 
-        // PORT-TODO(playback): when the current player is not a local one (remote session, cast), the
-        // original hands the whole request to it (player.play(options)). Players of later workstreams
-        // plug in here.
+        // A remote target gets the whole request (the original's player.play(options)) and builds
+        // its own queue from it.
+        if (Remote is { } remote)
+        {
+            await remote.PlayAsync(options);
+            return;
+        }
+
+        var request = new PlayRequest(options);
         if (request.Fullscreen)
         {
             _loading.Show();
@@ -69,11 +74,18 @@ public sealed partial class PlaybackManager
     public Task QueueNextAsync(PlayOptions options) => QueueAsync(options, next: true);
 
     /// <inheritdoc />
-    public Task ShuffleAsync(BaseItemDto item) => PlayAsync(new PlayOptions { Items = [item], Shuffle = true });
+    public Task ShuffleAsync(BaseItemDto item) =>
+        Remote is { } remote ? remote.ShuffleAsync(item) : PlayAsync(new PlayOptions { Items = [item], Shuffle = true });
 
     /// <inheritdoc />
     public async Task InstantMixAsync(BaseItemDto item)
     {
+        if (Remote is { } remote)
+        {
+            await remote.InstantMixAsync(item);
+            return;
+        }
+
         var result = await GetAsync(
             _api.GetUrl($"Items/{IdOf(item)}/InstantMix", ("UserId", _api.UserIdText), ("Limit", 200)),
             BaseItemDtoQueryResult.CreateFromDiscriminatorValue);
@@ -83,6 +95,12 @@ public sealed partial class PlaybackManager
     /// <inheritdoc />
     public async Task PlayTrailersAsync(BaseItemDto item)
     {
+        if (Remote is { } remote)
+        {
+            await remote.PlayTrailersAsync(item);
+            return;
+        }
+
         if (item.LocalTrailerCount is > 0)
         {
             using var response = await _api.SendAsync(HttpMethod.Get, $"Users/{_api.UserIdText}/Items/{IdOf(item)}/LocalTrailers");
@@ -232,6 +250,12 @@ public sealed partial class PlaybackManager
         items = await TranslateItemsForPlaybackAsync(items, request);
         if (items.Count == 0)
         {
+            return;
+        }
+
+        if (player is IRemotePlayer remote)
+        {
+            await (next ? remote.QueueNextAsync(items) : remote.QueueAsync(items));
             return;
         }
 
@@ -657,6 +681,7 @@ public sealed partial class PlaybackManager
             MediaSourceId = options.MediaSourceId;
             AudioStreamIndex = options.AudioStreamIndex;
             SubtitleStreamIndex = options.SubtitleStreamIndex;
+            SecondarySubtitleStreamIndex = options.SecondarySubtitleStreamIndex;
             Shuffle = options.Shuffle;
             Fullscreen = options.Fullscreen;
             QueryOptions = options.QueryOptions;
@@ -676,6 +701,8 @@ public sealed partial class PlaybackManager
 
         public int? SubtitleStreamIndex { get; }
 
+        public int? SecondarySubtitleStreamIndex { get; }
+
         public bool Shuffle { get; }
 
         public bool Fullscreen { get; }
@@ -689,6 +716,7 @@ public sealed partial class PlaybackManager
             MediaSourceId = MediaSourceId,
             AudioStreamIndex = AudioStreamIndex,
             SubtitleStreamIndex = SubtitleStreamIndex,
+            SecondarySubtitleStreamIndex = SecondarySubtitleStreamIndex,
             StartPositionTicks = StartPositionTicks,
         };
     }

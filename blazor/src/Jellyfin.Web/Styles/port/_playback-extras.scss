@@ -1,0 +1,55 @@
+// Playback extras: remote control, lyrics, the video OSD additions and SyncPlay. What the original
+// styles (remotecontrol.scss, lyrics.scss, videoosd.scss, ...) do not cover because the port draws
+// the toolbar menus with MudBlazor.
+
+// --- The "cast" button of the app bar and its menus -------------------------------------------
+.jf-remote-play-button-active.mud-button-root {
+    max-width: 14em;
+    text-transform: none;
+
+    .mud-button-label {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+}
+
+// On a phone the name of the target does not fit next to the other buttons.
+@media (max-width: 600px) {
+    .jf-remote-play-button-active.mud-button-root {
+        min-width: 0;
+        max-width: 3.5em;
+
+        .mud-button-label {
+            display: none;
+        }
+
+        .mud-button-icon-start {
+            margin: 0;
+        }
+    }
+}
+
+.jf-menu-subheader {
+    padding: 8px 16px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 2;
+}
+
+.jf-menu-check.material-icons {
+    width: 24px;
+    font-size: 20px;
+}
+
+.jf-menu-lines {
+    display: flex;
+    flex-direction: column;
+    min-width: 10em;
+}
+
+.jf-menu-secondary {
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.875rem;
+}

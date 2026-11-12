@@ -11,8 +11,8 @@ import sys
 from playwright.sync_api import sync_playwright
 
 from lib import go, new_page, shot, sign_in
-from librarylib import (Api, card_ids, check, close_menu, finish_without_config, media_time, new_phone_page, player,
-                        set_page_size, step, stop_playback, wait_until)
+from librarylib import (Api, card_ids, check, close_menu, finish_without_config, media_time, new_phone_page,
+                        player, public_queue_count, set_page_size, step, stop_playback, wait_until)
 
 ITEMS = ".itemsContainer .card[data-id], .itemsContainer .listItem[data-id]"
 BY_YEAR = "[data-sort='ProductionYear,PremiereDate,SortName']"
@@ -238,7 +238,7 @@ def movies_page(page, api, media):
         check(page, wait_until(lambda: route(page).startswith("#/video"), timeout=30), "play all opens the video player")
         check(page, wait_until(lambda: media_time(page, "video") > 1.0, timeout=40), "the movie really plays")
         state = player(page)
-        print("player:", {key: state.get(key) for key in ("isPlaying", "queueIndex", "playMethod")})
+        print("player:", {key: state.get(key) for key in ("isPlaying", "currentTime", "duration")})
         shot(page, "library-movies-playing")
         check(page, stop_playback(page), "playback stops")
         if not wait_until(lambda: route(page).startswith("#/movies"), timeout=15):
@@ -351,7 +351,7 @@ def music_page(page, media):
     page.click(f"{scope} .jf-library-btn-shuffle")
     check(page, wait_until(lambda: player(page).get("isPlaying") and media_time(page, "audio") > 0.5, timeout=40),
           "shuffle on the songs plays music")
-    check(page, len(player(page).get("queue") or []) == len(media.songs), f"all songs are queued ({len(player(page).get('queue') or [])})")
+    check(page, public_queue_count(page) == len(media.songs), f"all songs are queued ({len(media.songs)})")
     # No view of the original enables the queue button (isBtnQueueEnabled is false in its defaults).
     check(page, page.locator(f"{scope} .jf-library-btn-queue").count() == 0, "the songs have no queue button, as in the original")
     check(page, stop_playback(page), "the music stops again")
@@ -474,7 +474,7 @@ def list_page(page, api, media):
         page.locator(f"{scope} .btnPlay:visible").first.click()
         check(page, wait_until(lambda: player(page).get("isPlaying") and media_time(page, "audio") > 0.5, timeout=40),
               "play all on the list page plays the album")
-        check(page, len(player(page).get("queue") or []) == len(tracks), f"the album is queued ({len(player(page).get('queue') or [])})")
+        check(page, public_queue_count(page) == len(tracks), f"the album is queued ({len(tracks)})")
         check(page, wait_until(lambda: page.locator(f"{scope} .btnQueue:visible").count() == 1, timeout=10),
               "the queue button appears while something plays")
         check(page, stop_playback(page), "the album stops")

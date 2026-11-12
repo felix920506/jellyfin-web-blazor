@@ -263,6 +263,53 @@ public class PlaybackControlsTests
     }
 
     [Fact]
+    public async Task Secondary_external_subtitles_and_offset_rebuild_native_cues()
+    {
+        await using var harness = await PlaybackHarness.WithMediaAsync();
+        var source = PlaybackServer.MediaSource();
+        source["MediaStreams"]!.AsArray().Add(new JsonObject
+        {
+            ["Index"] = 5, ["Type"] = "Subtitle", ["Codec"] = "subrip", ["Language"] = "deu",
+            ["IsExternal"] = true, ["IsTextSubtitleStream"] = true, ["SupportsExternalStream"] = true,
+            ["DeliveryMethod"] = "External", ["DeliveryUrl"] = "/Videos/movie/Subtitles/5/0/Stream.vtt",
+            ["DisplayTitle"] = "German - SUBRIP - External",
+        });
+        PlaybackServer.ScriptPlaybackInfo(harness.Server, direct: source);
+        harness.Server.OnGet("/Subtitles/0/0/Stream.js", new JsonObject
+        {
+            ["TrackEvents"] = new JsonArray(new JsonObject
+            {
+                ["StartPositionTicks"] = 10_000_000,
+                ["EndPositionTicks"] = 30_000_000,
+                ["Text"] = "Hello",
+            }),
+        });
+        harness.Server.OnGet("/Subtitles/5/0/Stream.js", new JsonObject
+        {
+            ["TrackEvents"] = new JsonArray(new JsonObject
+            {
+                ["StartPositionTicks"] = 10_000_000,
+                ["EndPositionTicks"] = 30_000_000,
+                ["Text"] = "Hello",
+            }),
+        });
+
+        await harness.PlayMovieAsync();
+        await harness.Manager.SetSubtitleStreamIndexAsync(0);
+        await PlaybackHarness.Eventually(() => harness.Player.SubtitleCues.Count == 2, "the primary cues");
+
+        await harness.Manager.SetSecondarySubtitleStreamIndexAsync(5);
+        await PlaybackHarness.Eventually(() => harness.Player.SecondarySubtitleCues.LastOrDefault() is not null, "the secondary cues");
+        Assert.NotEmpty(harness.Server.RequestsTo("/Subtitles/5/0/Stream.js"));
+        Assert.Equal(new SubtitleCue(1, 3, "‎Hello"), Assert.Single(harness.Player.SecondarySubtitleCues.Last(cues => cues is not null)!));
+
+        harness.Manager.SetSubtitleOffset(2);
+        await PlaybackHarness.Eventually(() => harness.Player.SubtitleCues.Count == 3, "the offset primary cues");
+        Assert.Equal(new SubtitleCue(0, 1, "‎Hello"), Assert.Single(harness.Player.SubtitleCues.Last(cues => cues is not null)!));
+        Assert.Equal(2, harness.Manager.SubtitleOffset);
+    }
+
+    [Fact]
     public async Task The_next_subtitle_track_is_followed_by_off()
     {
         await using var harness = await PlaybackHarness.WithMediaAsync();

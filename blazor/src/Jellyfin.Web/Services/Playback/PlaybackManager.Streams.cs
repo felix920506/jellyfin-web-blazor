@@ -19,6 +19,7 @@ internal sealed class PlaybackInfoOptions
     public bool IsPlayback { get; set; }
     public int? AudioStreamIndex { get; set; }
     public int? SubtitleStreamIndex { get; set; }
+    public int? SecondarySubtitleStreamIndex { get; set; }
     public bool? EnableDirectPlay { get; set; }
     public bool? EnableDirectStream { get; set; }
     public bool? AllowVideoStreamCopy { get; set; }
@@ -382,7 +383,11 @@ public sealed partial class PlaybackManager
             body["SubtitleStreamIndex"] = subtitle;
         }
 
-        // PORT-TODO(playback): SecondarySubtitleStreamIndex (secondary subtitles are not ported).
+        if (options.SecondarySubtitleStreamIndex is { } secondarySubtitle)
+        {
+            body["SecondarySubtitleStreamIndex"] = secondarySubtitle;
+        }
+
         if (options.EnableDirectPlay is { } enableDirectPlay)
         {
             body["EnableDirectPlay"] = enableDirectPlay;
@@ -587,6 +592,7 @@ public sealed partial class PlaybackManager
                 IsPlayback = true,
                 AudioStreamIndex = audioStreamIndex,
                 SubtitleStreamIndex = subtitleStreamIndex,
+                SecondarySubtitleStreamIndex = data.SecondarySubtitleStreamIndex,
                 EnableDirectPlay = parameters.EnableDirectPlay,
                 EnableDirectStream = parameters.EnableDirectStream,
                 AllowVideoStreamCopy = parameters.AllowVideoStreamCopy,
@@ -599,10 +605,15 @@ public sealed partial class PlaybackManager
             }
 
             var source = result.MediaSources[0];
+            source.PlaySessionId = result.PlaySessionId ?? source.PlaySessionId;
             source.HasAlternateVersions = currentSource.HasAlternateVersions;
             source.AlbumNormalizationGain ??= currentSource.AlbumNormalizationGain;
 
             var streamInfo = CreateStreamInfo(currentItem.MediaType.ToApiString(), currentItem, source, ticks);
+            if (string.IsNullOrEmpty(streamInfo.PlaySessionId))
+            {
+                streamInfo.PlaySessionId = source.PlaySessionId;
+            }
             streamInfo.Fullscreen = currentPlayOptions.Fullscreen;
             streamInfo.AspectRatio = current.AspectRatio;
             streamInfo.ResetSubtitleOffset = false;
@@ -667,7 +678,7 @@ public sealed partial class PlaybackManager
     /// <summary>Port of cancelPlayback().</summary>
     private void CancelPlayback()
     {
-        if (CurrentPlayer is { } player)
+        if (CurrentPlayer is { IsLocalPlayer: true } player)
         {
             StopProgressTimer();
             Data(player).StreamInfo = null;
@@ -752,6 +763,7 @@ public sealed partial class PlaybackManager
             StartPosition = startPosition,
             AudioStreamIndex = playOptions.AudioStreamIndex,
             SubtitleStreamIndex = playOptions.SubtitleStreamIndex,
+            SecondarySubtitleStreamIndex = playOptions.SecondarySubtitleStreamIndex,
         };
 
         var (autoAudio, autoSubtitle) = AutoSetNextTracks(
@@ -776,12 +788,16 @@ public sealed partial class PlaybackManager
 
         var source = await GetPlaybackMediaSourceAsync(player, deviceProfile, item, mediaSourceId, options);
 
-        // PORT-TODO(playback): secondary subtitles (a second text track next to the first) are not ported.
         var playedItem = await GetItemOfMediaSourceAsync(item, source, sourceItem);
         var streamInfo = CreateStreamInfo(item.MediaType.ToApiString(), playedItem, source, startPosition);
+        if (string.IsNullOrEmpty(streamInfo.PlaySessionId))
+        {
+            streamInfo.PlaySessionId = source.PlaySessionId;
+        }
         streamInfo.AspectRatio = playOptions.AspectRatio;
         streamInfo.Fullscreen = playOptions.Fullscreen;
         streamInfo.MaxStreamingBitrate = maxBitrate;
+        streamInfo.SecondarySubtitleStreamIndex = playOptions.SecondarySubtitleStreamIndex;
 
         var data = Data(player);
         data.IsChangingStream = false;
@@ -855,9 +871,13 @@ public sealed partial class PlaybackManager
         using var response = await _api.SendAsync(HttpMethod.Post, $"Items/{IdOf(item)}/PlaybackInfo", body);
         response.EnsureSuccessStatusCode();
         var result = KiotaJson.Parse(await response.Content.ReadAsStringAsync(), PlaybackInfoResponse.CreateFromDiscriminatorValue);
+        var sources = (result?.MediaSources ?? []).Select(s => new PlaybackSource(s)
+        {
+            PlaySessionId = result?.PlaySessionId,
+        }).ToList();
         return new PlaybackInfoResult
         {
-            MediaSources = (result?.MediaSources ?? []).Select(s => new PlaybackSource(s)).ToList(),
+            MediaSources = sources,
             PlaySessionId = result?.PlaySessionId,
             ErrorCode = result?.ErrorCode.ToApiString(),
         };

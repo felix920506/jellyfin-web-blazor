@@ -184,7 +184,7 @@ public class PlaybackUiTests : PlaybackTestContext
         cut.Find(".btnVideoOsdSettings").Click();
         dialogs.WaitForAssertion(() => Assert.NotEmpty(dialogs.FindAll(".actionSheetMenuItem")), Timeout);
         var ids = dialogs.FindAll(".actionSheetMenuItem").Select(e => e.GetAttribute("data-id")).ToList();
-        Assert.Equal(new[] { "aspectratio", "playbackrate", "repeatmode", "stats" }, ids);
+        Assert.Equal(new[] { "aspectratio", "playbackrate", "repeatmode", "suboffset", "stats" }, ids);
         Assert.Equal(Globalize["Auto"], dialogs.Find("[data-id=aspectratio] .actionSheetItemAsideText").TextContent);
         Assert.Equal("1x", dialogs.Find("[data-id=playbackrate] .actionSheetItemAsideText").TextContent);
 

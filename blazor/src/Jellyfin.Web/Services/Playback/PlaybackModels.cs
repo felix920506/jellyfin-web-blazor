@@ -47,6 +47,9 @@ public static class PlaybackEvents
     public const string PlaybackRateChange = "playbackratechange";
     public const string Click = "click";
     public const string DblClick = "dblclick";
+
+    /// <summary>Raised by a remote player when its state changed in a way the other events do not cover.</summary>
+    public const string StateChange = "statechange";
 }
 
 /// <summary>
@@ -57,6 +60,9 @@ public static class PlaybackEvents
 public sealed class PlaybackSource(MediaSourceInfo info)
 {
     public MediaSourceInfo Info { get; } = info;
+
+    /// <summary>The server playback session returned by PlaybackInfo.</summary>
+    public string? PlaySessionId { get; set; }
 
     /// <summary>The source's own path can be given to the player (remote http sources).</summary>
     public bool EnableDirectPlay { get; set; }
@@ -71,6 +77,9 @@ public sealed class PlaybackSource(MediaSourceInfo info)
 
 /// <summary>An external subtitle track the player can show itself.</summary>
 public sealed record TextTrackInfo(string Url, string Language, bool IsDefault, int Index, string? Format);
+
+/// <summary>A server-defined media segment that can be skipped in the OSD.</summary>
+public sealed record PlaybackMediaSegment(string Type, long StartTicks, long? EndTicks);
 
 /// <summary>What a player is asked to play. Port of the object createStreamInfo() builds.</summary>
 public sealed class StreamInfo
@@ -91,6 +100,8 @@ public sealed class StreamInfo
     public bool Fullscreen { get; set; } = true;
     public string? AspectRatio { get; set; }
     public bool ResetSubtitleOffset { get; set; } = true;
+    public double SubtitleOffset { get; set; }
+    public int? SecondarySubtitleStreamIndex { get; set; }
     public bool Started { get; set; }
     public bool Ended { get; set; }
     public long PlaybackStartTimeTicks { get; set; }
@@ -242,6 +253,11 @@ public interface IMediaPlayer
     bool CanSetAudioStreamIndex { get; }
     void SetAudioStreamIndex(int index);
     void SetSubtitleStreamIndex(int index);
+    int? SecondarySubtitleStreamIndex { get; }
+    void SetSecondarySubtitleStreamIndex(int index);
+    double SubtitleOffset { get; }
+    void SetSubtitleOffset(double seconds);
+    bool SupportsSubtitleOffset { get; }
     string AspectRatio { get; }
     void SetAspectRatio(string value);
     bool IsFullscreen { get; }
@@ -278,6 +294,7 @@ public interface IPlayerInterop
     void SetAspectRatio(string value);
     void SetAudioTrack(int position);
     void SetSubtitleCues(IReadOnlyList<SubtitleCue>? cues);
+    void SetSecondarySubtitleCues(IReadOnlyList<SubtitleCue>? cues);
     void ToggleFullscreen();
     void SetPictureInPicture(bool enabled);
     void NavigatedToOsd();

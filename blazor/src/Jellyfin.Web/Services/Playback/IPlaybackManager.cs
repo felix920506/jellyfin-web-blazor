@@ -19,6 +19,7 @@ public sealed record PlayOptions
     public string? MediaSourceId { get; init; }
     public int? AudioStreamIndex { get; init; }
     public int? SubtitleStreamIndex { get; init; }
+    public int? SecondarySubtitleStreamIndex { get; init; }
     public bool Shuffle { get; init; }
 
     /// <summary>Play in full screen (video). Default true.</summary>

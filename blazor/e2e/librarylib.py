@@ -146,24 +146,38 @@ def card_ids(page, scope):
 
 
 def player(page, name="state", args=None):
-    """Runs a test-hook command of the player (wwwroot/js/playback/player.js); returns the manager's state."""
-    raw = page.evaluate(
-        "async ([name, args]) => (await import('/js/playback/player.js')).testCommand(name, args)",
-        [name, args or {}],
-    )
-    return json.loads(raw) if raw else {}
+    """Returns observable media state; playback is controlled through public page controls."""
+    kind = "audio" if page.locator("audio").count() else "video"
+    media = page.locator(kind).first
+    if not media.count():
+        return {"isPlaying": False}
+    state = media.evaluate("e => ({isPlaying: !e.paused, paused: e.paused, currentTime: e.currentTime, duration: e.duration})")
+    state["isPlaying"] = not state["paused"]
+    return state
 
 
 def media_time(page, kind):
     """The current time in seconds of the video or audio element, or -1."""
-    media = page.evaluate("async () => (await import('/js/playback/player.js')).debugState()")[kind]
-    return media["currentTime"] if media else -1
+    return page.locator(kind).first.evaluate("e => e.currentTime") if page.locator(kind).count() else -1
 
 
 def stop_playback(page):
-    if player(page).get("isPlaying"):
-        player(page, "stop")
+    if page.locator(".btnStop:visible").count():
+        page.locator(".btnStop:visible").first.click()
+    elif page.locator(".headerBackButton:visible").count():
+        page.locator(".headerBackButton:visible").first.click()
     return wait_until(lambda: not player(page).get("isPlaying"), timeout=15)
+
+
+def public_queue_count(page):
+    """Counts queue entries through the public now-playing page."""
+    if page.locator(".nowPlayingBarText:visible").count():
+        page.locator(".nowPlayingBarText:visible").first.click()
+    page.wait_for_selector("#nowPlayingPage .playlist .listItem", timeout=10_000)
+    count = page.locator("#nowPlayingPage .playlist .listItem").count()
+    page.go_back()
+    page.wait_for_timeout(500)
+    return count
 
 
 def close_menu(page):

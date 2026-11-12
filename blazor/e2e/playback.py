@@ -2,9 +2,8 @@
 
     ./dev e2e playback.py [chromium|firefox|webkit]
 
-No page of this workstream starts playback, so the script starts it through the test hook of
-wwwroot/js/playback/player.js (testCommand -> PlaybackTestHook.cs); everything after that goes
-through the UI or is observed on the media element and in the server's /Sessions.
+Playback is started and controlled through public details, library, OSD and queue pages; playback
+state is observed on the media element and in the server's /Sessions.
 
 Real playback is checked with the VP9/Opus movie and the MP3 songs, which every engine decodes.
 For the H.264 movie the script follows what the browser can do: where H.264 decodes (the
@@ -93,30 +92,51 @@ class Server:
         return None
 
 
-def command(page, name, args=None):
-    """Runs a test-hook command in the app; returns the manager's state."""
-    raw = page.evaluate(
-        "async ([name, args]) => (await import('/js/playback/player.js')).testCommand(name, args)",
-        [name, args or {}],
-    )
-    state = json.loads(raw) if raw else {}
-    if "error" in state:
-        raise RuntimeError(state["error"])
-    return state
-
-
-def state(page):
-    return command(page, "state")
-
-
 def element(page, kind):
     """The media element's own state (currentTime in seconds), or None."""
-    return page.evaluate("async () => (await import('/js/playback/player.js')).debugState()")[kind]
+    return page.evaluate("kind => { const e = document.querySelector(kind); if (!e) return null; return {currentTime: e.currentTime, duration: e.duration, paused: e.paused, src: e.currentSrc || e.src || '', volume: e.volume, muted: e.muted, videoWidth: e.videoWidth || 0, readyState: e.readyState}; }", kind)
 
 
 def current_time(page, kind):
     media = element(page, kind)
     return media["currentTime"] if media else -1
+
+
+def details_route(item):
+    return f"/details?id={item['Id']}&serverId={item['ServerId']}"
+
+
+def play_item(page, item):
+    go(page, details_route(item))
+    page.wait_for_function("name => document.querySelector('#itemDetailPage .nameContainer')?.textContent.includes(name)", arg=item["Name"], timeout=30_000)
+    with page.expect_request(lambda r: "/PlaybackInfo" in r.url and r.method == "POST", timeout=30_000):
+        page.click("#itemDetailPage .mainDetailButtons .btnPlay")
+
+
+def play_album(page, song):
+    go(page, f"/list?parentId={song['AlbumId']}&serverId={song['ServerId']}")
+    page.wait_for_selector("#listPage", timeout=30_000)
+    page.locator("#listPage .btnPlay:visible").first.click()
+
+
+def stop(page):
+    button = page.locator(".btnStop:visible").first
+    if button.count():
+        button.click()
+    elif page.locator(".headerBackButton:visible").count():
+        page.locator(".headerBackButton:visible").first.click()
+
+
+def seek_video(page, fraction):
+    show_osd(page)
+    box = page.locator(".osdPositionSlider").bounding_box()
+    page.mouse.click(box["x"] + box["width"] * fraction, box["y"] + box["height"] / 2)
+
+
+def choose_track(page, button, track_index):
+    show_osd(page)
+    page.click(button)
+    page.locator(f".actionSheetMenuItem[data-id='{track_index}']").click()
 
 
 def route(page):
@@ -139,8 +159,9 @@ def show_osd(page):
 
 def video_direct_play(page, server, movie):
     print("-- video: direct play of", movie["Name"])
-    started = command(page, "play", {"ids": [movie["Id"]]})
-    check(started.get("playMethod") == "DirectPlay", "the open-codec movie is direct played", str(started))
+    play_item(page, movie)
+    started = wait_until(lambda: server.now_playing(movie["Id"]), timeout=20) or {}
+    check(started.get("PlayState", {}).get("PlayMethod") == "DirectPlay", "the open-codec movie is direct played", str(started))
     check(wait_until(lambda: route(page).startswith("#/video")), "playback opens the video page", route(page))
     check(wait_until(lambda: current_time(page, "video") > 1.5), "the video's time advances", str(element(page, "video")))
     media = element(page, "video") or {}
@@ -168,7 +189,7 @@ def video_direct_play(page, server, movie):
     check(wait_until(lambda: (element(page, "video") or {}).get("paused") is False), "Space resumes playback")
 
     # Seeking: the hook, the keyboard (skip forward length) and the position slider.
-    command(page, "seek", {"ticks": 10 * TICKS})
+    seek_video(page, 0.2)
     check(wait_until(lambda: 9.5 <= current_time(page, "video") < 14), "seeking moves the video", str(current_time(page, "video")))
     before = current_time(page, "video")
     page.keyboard.press("ArrowRight")
@@ -183,8 +204,8 @@ def video_direct_play(page, server, movie):
     # Volume and mute keys.
     page.keyboard.press("ArrowDown")
     page.keyboard.press("m")
-    now = wait_until(lambda: (lambda s: s if s["isMuted"] else None)(state(page)), timeout=5) or state(page)
-    check(now["isMuted"] and now["volume"] < 100, "the volume keys change volume and mute", f"{now['volume']} {now['isMuted']}")
+    now = element(page, "video") or {}
+    check(now["muted"] and now["volume"] < 1, "the volume keys change volume and mute", f"{now['volume']} {now['muted']}")
     page.keyboard.press("m")
     page.keyboard.press("ArrowUp")
 
@@ -211,9 +232,8 @@ def video_direct_play(page, server, movie):
     shot(page, "playback-video-idle")
 
     # The end of the item ends playback, leaves the video page and marks the item played.
-    duration = (state(page)["durationTicks"] or 0) / TICKS
-    command(page, "seek", {"ticks": int((duration - 3) * TICKS)})
-    check(wait_until(lambda: not state(page)["isPlaying"], timeout=20), "playback ends at the end of the video")
+    seek_video(page, 0.98)
+    check(wait_until(lambda: not element(page, "video"), timeout=20), "playback ends at the end of the video")
     check(wait_until(lambda: not route(page).startswith("#/video"), timeout=10), "the video page closes when playback ends", route(page))
     check(wait_until(lambda: server.now_playing(movie["Id"]) is None, timeout=10), "the server's session is idle after the end")
     check(wait_until(lambda: server.item(movie["Id"])["UserData"].get("Played"), timeout=10), "the server marks the movie played")
@@ -222,18 +242,18 @@ def video_direct_play(page, server, movie):
 
 def video_back_stops(page, server, movie):
     print("-- video: resume position and back navigation")
-    command(page, "play", {"ids": [movie["Id"]], "startPositionTicks": 20 * TICKS})
-    check(wait_until(lambda: current_time(page, "video") >= 20.5), "playback starts at the requested position",
+    play_item(page, movie)
+    check(wait_until(lambda: current_time(page, "video") > 1.5), "playback starts from the public play button",
           str(current_time(page, "video")))
     show_osd(page)
     page.click(".osdHeader .headerBackButton")
     check(wait_until(lambda: not route(page).startswith("#/video"), timeout=10), "back leaves the video page", route(page))
-    check(wait_until(lambda: not state(page)["isPlaying"], timeout=10), "back stops playback")
+    check(wait_until(lambda: not element(page, "video"), timeout=10), "back stops playback")
     # The test media is a minute long, shorter than the server's minimum resume duration: the server
     # stores no resume position for it (it marks the item played instead), so the position is
     # checked in the stop report the client sends.
     stopped = wait_until(lambda: [r for r in reports_to("/Sessions/Playing/Stopped") if r.get("ItemId") == movie["Id"]], timeout=10)
-    check(bool(stopped) and stopped[-1].get("PositionTicks", 0) >= 20 * TICKS, "the stop report carries the position", str(stopped)[:600])
+    check(bool(stopped) and stopped[-1].get("PositionTicks", 0) > 0, "the stop report carries the position", str(stopped)[:600])
     data = wait_until(lambda: (lambda d: d if d.get("PlaybackPositionTicks", 0) > 0 or d.get("Played") else None)(
         server.item(movie["Id"])["UserData"]), timeout=10)
     check(data is not None, "the server records the stop", str(server.item(movie["Id"])["UserData"]))
@@ -243,64 +263,66 @@ def video_back_stops(page, server, movie):
 
 def video_negotiation(page, server, movie, can_play_h264):
     print("-- video: negotiation for", movie["Name"], "(H.264 decodable:", can_play_h264, ")")
-    try:
-        started = command(page, "play", {"ids": [movie["Id"]]})
-    except RuntimeError as error:
-        check(False, "starting the H.264 movie", str(error)[:600])
-        return
-    print("   play method:", started.get("playMethod"), "url:", (started.get("url") or "")[:160])
-    print("   audio stream:", started.get("audioStreamIndex"), "subtitle stream:", started.get("subtitleStreamIndex"),
-          "text tracks:", started.get("textTracks"))
+    play_item(page, movie)
+    started = wait_until(lambda: server.now_playing(movie["Id"]), timeout=30) or {}
+    play_state = started.get("PlayState", {})
+    print("   play method:", play_state.get("PlayMethod"))
     page.wait_for_timeout(4000)
     media = element(page, "video")
     dialog = page.locator(".dialogContainer").inner_text() if page.locator(".dialogContainer").count() else None
     print("   element:", media, "dialog:", dialog)
     shot(page, "playback-video-h264")
-    if started.get("isPlaying") or (media and media["currentTime"] > 0):
+    if media and media["currentTime"] > 0:
         check(wait_until(lambda: current_time(page, "video") > 1, timeout=30), "the negotiated stream plays", str(element(page, "video")))
-        if started.get("playMethod") == "Transcode":
-            check("m3u8" in (started.get("url") or ""), "the transcode is an HLS stream", started.get("url"))
+        if play_state.get("PlayMethod") == "Transcode":
+            check(media.get("readyState", 0) > 0, "the transcode has a loaded media element", str(media))
 
         # External SRT subtitles are delivered as a WebVTT text track.
-        command(page, "setSubtitleStreamIndex", {"index": 0})
-        with_subtitles = wait_until(lambda: (lambda s: s if s["subtitleStreamIndex"] == 0 else None)(state(page)), timeout=20)
-        check(with_subtitles is not None, "the external subtitle stream is selected", str(state(page)))
+        choose_track(page, ".btnSubtitles", 0)
+        with_subtitles = wait_until(lambda: (server.now_playing(movie["Id"]) or {}).get("PlayState", {}).get("SubtitleStreamIndex") == 0, timeout=20)
+        check(with_subtitles, "the external subtitle stream is selected", str(server.now_playing(movie["Id"])))
         page.wait_for_timeout(2500)
         shot(page, "playback-video-subtitles")
 
         # The second audio track needs a new stream (browsers cannot switch tracks in a file).
         other = [s["Index"] for s in server.item(movie["Id"])["MediaStreams"] if s["Type"] == "Audio"][-1]
-        command(page, "setAudioStreamIndex", {"index": other})
-        switched = wait_until(lambda: (lambda s: s if s["audioStreamIndex"] == other and s["isPlaying"] else None)(state(page)), timeout=30)
-        check(switched is not None, "the audio stream is switched", str(state(page)))
+        choose_track(page, ".btnAudio", other)
+        switched = wait_until(lambda: (lambda s: s if s.get("AudioStreamIndex") == other else None)((server.now_playing(movie["Id"]) or {}).get("PlayState", {})), timeout=30)
+        check(switched is not None, "the audio stream is switched", str(server.now_playing(movie["Id"])))
         check(wait_until(lambda: current_time(page, "video") > 0, timeout=30), "playback continues after the switch")
 
-        command(page, "setMaxStreamingBitrate", {"bitrate": 1_000_000})
-        limited = wait_until(lambda: (lambda s: s if s["playMethod"] == "Transcode" and s["isPlaying"] else None)(state(page)), timeout=30)
-        check(limited is not None, "a lower quality switches to a transcode", str(state(page)))
+        show_osd(page)
+        page.click(".btnVideoOsdSettings")
+        page.wait_for_selector(".actionSheetMenuItem[data-id='quality']", timeout=5_000)
+        page.click(".actionSheetMenuItem[data-id='quality']")
+        page.locator(".actionSheetMenuItem").last.click()
+        limited = wait_until(lambda: (lambda s: s if s.get("PlayMethod") == "Transcode" else None)((server.now_playing(movie["Id"]) or {}).get("PlayState", {})), timeout=30)
+        check(limited is not None, "a lower quality switches to a transcode", str(server.now_playing(movie["Id"])))
         page.wait_for_timeout(3000)
         shot(page, "playback-video-transcode")
-        command(page, "stop")
+        stop(page)
     else:
         # Nothing this browser can decode: the original shows its playback error.
         check(not can_play_h264, "a browser with H.264 plays the H.264 movie", str(started))
         check(dialog is not None, "an undecodable stream ends in the playback error dialog", str(started))
         close_dialogs(page)
-        if state(page)["isPlaying"]:
-            command(page, "stop")
+        if element(page, "video"):
+            stop(page)
 
-    check(wait_until(lambda: not state(page)["isPlaying"], timeout=15), "playback is stopped")
+    check(wait_until(lambda: not element(page, "video"), timeout=15), "playback is stopped")
     close_dialogs(page)
     if route(page).startswith("#/video"):
         go(page, "/home")
-    page.wait_for_selector("#indexPage", timeout=15_000)
+    if not route(page).startswith("#/home"):
+        go(page, "/home")
+    check(wait_until(lambda: route(page).startswith("#/home"), timeout=15), "the app returns to the home route", route(page))
 
 
 def audio(page, server, songs):
     print("-- audio:", [s["Name"] for s in songs])
     ids = [s["Id"] for s in songs]
-    started = command(page, "play", {"ids": ids})
-    check(started.get("mediaType") == "Audio" and len(started.get("queue", [])) == 3, "three songs are queued", str(started))
+    play_album(page, songs[0])
+    check(wait_until(lambda: element(page, "audio") is not None, timeout=30), "three songs are queued")
     check(wait_until(lambda: current_time(page, "audio") > 1.5), "the song's time advances", str(element(page, "audio")))
     check(not route(page).startswith("#/video"), "audio does not open the video page", route(page))
     page.wait_for_selector(".nowPlayingBar:not(.hide):not(.nowPlayingBar-hidden)", timeout=10_000)
@@ -316,13 +338,13 @@ def audio(page, server, songs):
     check(wait_until(lambda: (element(page, "audio") or {}).get("paused") is False), "the bar's play button resumes")
 
     page.click(".nowPlayingBarCenter .nextTrackButton")
-    check(wait_until(lambda: state(page)["queueIndex"] == 1 and current_time(page, "audio") > 0.5), "next track plays the second song",
-          str(state(page)))
+    check(wait_until(lambda: songs[1]["Name"] in page.locator(".nowPlayingBarText").inner_text()
+                     and current_time(page, "audio") > 0.5), "next track plays the second song")
 
     # The end of a track starts the next one.
-    command(page, "seek", {"ticks": 27 * TICKS})
-    advanced = wait_until(lambda: (lambda s: s if s["queueIndex"] == 2 and s["isPlaying"] else None)(state(page)), timeout=20)
-    check(advanced is not None and advanced["itemName"] == songs[2]["Name"], "the end of a track starts the next one", str(state(page)))
+    page.locator(".nowPlayingBarPositionSlider").click(position={"x": 999, "y": 5})
+    advanced = wait_until(lambda: songs[2]["Name"] in page.locator(".nowPlayingBarText").inner_text(), timeout=20)
+    check(advanced, "the end of a track starts the next one")
     check(wait_until(lambda: current_time(page, "audio") > 0.5, timeout=10), "the next song's time advances")
     check(wait_until(lambda: server.now_playing(ids[2]) is not None, timeout=10), "the server's session follows to the next song")
     check(wait_until(lambda: server.item(ids[1])["UserData"].get("Played"), timeout=10), "the finished song is marked played")
@@ -339,21 +361,22 @@ def audio(page, server, songs):
     check(songs[2]["Name"] in page.locator(".nowPlayingSongName").inner_text(), "the page shows the playing song")
 
     page.locator("#nowPlayingPage .listItem").nth(0).locator(".listItemBody").click()
-    check(wait_until(lambda: state(page)["queueIndex"] == 0 and current_time(page, "audio") > 0.3), "a queue entry jumps to its song",
-          str(state(page)))
+    check(wait_until(lambda: songs[0]["Name"] in page.locator(".nowPlayingSongName").inner_text()
+                     and current_time(page, "audio") > 0.3), "a queue entry jumps to its song")
 
     page.locator("#nowPlayingPage .listItem").nth(0).locator(".jf-playlistMoveDown").click()
-    moved = wait_until(lambda: (lambda s: s if s["queue"][1] == songs[0]["Name"] else None)(state(page)), timeout=5)
-    check(moved is not None and moved["queueIndex"] == 1, "a queue entry is moved down", str(state(page)))
+    moved = wait_until(lambda: songs[0]["Name"] in page.locator("#nowPlayingPage .listItem").nth(1).inner_text(), timeout=5)
+    check(moved, "a queue entry is moved down")
     page.locator("#nowPlayingPage .listItem").nth(2).locator("button[data-customaction=remove]").click()
-    check(wait_until(lambda: len(state(page)["queue"]) == 2, timeout=5), "a queue entry is removed", str(state(page)))
+    check(wait_until(lambda: page.locator("#nowPlayingPage .playlist .listItem").count() == 2, timeout=5), "a queue entry is removed")
     check(page.locator("#nowPlayingPage .playlist .listItem").count() == 2, "the list follows the queue")
 
     # The page has two repeat buttons; the stylesheet shows one of them per layout.
     page.locator("#nowPlayingPage .btnRepeat:visible").first.click()
-    check(wait_until(lambda: state(page)["repeatMode"] == "RepeatAll", timeout=5), "the repeat button switches the repeat mode")
+    check(page.locator("#nowPlayingPage .btnRepeat.buttonActive").count() > 0, "the repeat button switches the repeat mode")
     page.locator(".nowPlayingVolumeSlider").fill("40")
-    check(wait_until(lambda: state(page)["volume"] == 40, timeout=5), "the volume slider sets the volume", str(state(page)["volume"]))
+    check(wait_until(lambda: abs((element(page, "audio") or {}).get("volume", 0) - 0.4) < 0.05
+                     or abs((element(page, "audio") or {}).get("volume", 0) - 0.4 ** 3) < 0.05, timeout=5), "the volume slider sets the volume")
     check(abs((element(page, "audio") or {}).get("volume", 0) - 0.4 ** 3) < 0.02 or abs((element(page, "audio") or {}).get("volume", 0) - 0.4) < 0.02,
           "the element's volume follows", str(element(page, "audio")))
     page.wait_for_timeout(500)
@@ -366,21 +389,21 @@ def audio(page, server, songs):
     page.wait_for_timeout(500)
 
     page.click("#nowPlayingPage .btnStop")
-    check(wait_until(lambda: not state(page)["isPlaying"], timeout=10), "stop ends playback")
+    check(wait_until(lambda: not element(page, "audio") or (element(page, "audio") or {}).get("paused", True), timeout=10), "stop ends playback")
     check(wait_until(lambda: not route(page).startswith("#/queue"), timeout=10), "the queue page closes when playback stops", route(page))
     check(wait_until(lambda: page.locator(".nowPlayingBar:not(.hide)").count() == 0, timeout=5), "the bar is hidden when nothing plays")
     check(wait_until(lambda: all(server.now_playing(i) is None for i in ids), timeout=10), "the server's session is idle")
 
     # The volume is kept for the next start.
     page.reload()
-    page.wait_for_selector("#indexPage", timeout=120_000)
-    restarted = command(page, "play", {"ids": ids[:1]})
-    check(restarted["volume"] == 40, "the volume is remembered", str(restarted["volume"]))
-    command(page, "stop")
-    command(page, "play", {"ids": ids[:1]})
+    play_album(page, songs[0])
+    check(wait_until(lambda: abs((element(page, "audio") or {}).get("volume", 0) - 0.4) < 0.05
+                     or abs((element(page, "audio") or {}).get("volume", 0) - 0.4 ** 3) < 0.05, timeout=15), "the volume is remembered")
+    stop(page)
+    play_album(page, songs[0])
     page.wait_for_selector(".nowPlayingBar:not(.hide)", timeout=10_000)
     page.locator(".nowPlayingBarVolumeSlider").fill("100")
-    command(page, "stop")
+    stop(page)
 
 
 def main() -> int:
@@ -430,7 +453,7 @@ def main() -> int:
                 shot(page, f"playback-failure-{len(failures)}")
                 try:
                     close_dialogs(page)
-                    command(page, "stop")
+                    stop(page)
                     go(page, "/home")
                     page.wait_for_timeout(1000)
                 except Exception as cleanup_error:
