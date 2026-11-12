@@ -31,13 +31,14 @@ public static class SearchQueries
     ];
 
     /// <summary>The cards every row starts from (<c>SearchResultsRow</c>); the row's own options override them.</summary>
-    /// <remarks>PORT-TODO(library): <c>scalable</c> and <c>allowBottomPadding: false</c> have no counterpart in <see cref="CardOptions"/>.</remarks>
     public static readonly CardOptions RowCards = new()
     {
         Shape = CardShape.AutoOverflow,
         ShowTitle = true,
         OverlayText = false,
-        CenterText = true
+        CenterText = true,
+        Scalable = true,
+        AllowBottomPadding = false
     };
 
     /// <summary><c>LIVETV_CARD_OPTIONS</c>.</summary>

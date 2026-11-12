@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 
 using Jellyfin.Sdk.Generated.Models;
+using Microsoft.Kiota.Abstractions.Serialization;
 
 namespace Jellyfin.Web.Services;
 
@@ -120,11 +121,17 @@ public sealed class DetailsText(Globalize globalize, AppRouter router, DateTimeT
     /// <summary>The links to the item on other sites; empty when it has none.</summary>
     public string GetExternalLinksHtml(BaseItemDto item)
     {
-        // PORT-TODO(details): the original puts the item's own website (HomePageUrl) first; the
-        // server API model of this client has no such property.
-        var links = (item.ExternalUrls ?? [])
+        var links = new List<string>();
+        var homePageUrl = GetHomePageUrl(item);
+        if (IsWebAddress(homePageUrl))
+        {
+            links.Add("<a class=\"button-link emby-button\" href=\"" + Encode(homePageUrl) + "\" target=\"_blank\" rel=\"noopener noreferrer\">"
+                + Encode(globalize["ButtonWebsite"]) + "</a>");
+        }
+
+        links.AddRange((item.ExternalUrls ?? [])
             .Where(link => IsWebAddress(link.Url))
-            .Select(link => "<a class=\"button-link emby-button\" href=\"" + Encode(link.Url) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + Encode(link.Name) + "</a>");
+            .Select(link => "<a class=\"button-link emby-button\" href=\"" + Encode(link.Url) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + Encode(link.Name) + "</a>"));
         return string.Join(", ", links);
     }
 
@@ -186,6 +193,24 @@ public sealed class DetailsText(Globalize globalize, AppRouter router, DateTimeT
 
     private static bool IsWebAddress(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+
+    private static string? GetHomePageUrl(BaseItemDto item)
+    {
+        // HomePageUrl is present in newer SDKs. Keep this source compatible with older generated
+        // SDKs, where the server still sends it as an additional field.
+        var property = item.GetType().GetProperty("HomePageUrl");
+        if (property?.GetValue(item) is string value)
+        {
+            return value;
+        }
+
+        if (item is IAdditionalDataHolder additionalHolder)
+        {
+            return additionalHolder.AdditionalData.FirstOrDefault(entry => string.Equals(entry.Key, "HomePageUrl", StringComparison.OrdinalIgnoreCase)).Value?.ToString();
+        }
+
+        return null;
+    }
 
     private string ItemLink(Guid? id, string? serverId, BaseItemDto_Type type, string? text)
     {

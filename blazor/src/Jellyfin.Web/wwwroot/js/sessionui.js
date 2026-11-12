@@ -35,6 +35,11 @@ export async function renderDisclaimer(markdown) {
     return container.innerHTML;
 }
 
+export async function renderMarkdown(markdown) {
+    const { markdown: renderer, purify } = await loadMarkdown();
+    return purify.sanitize(renderer.render(markdown || ''));
+}
+
 /** Clicks an element; a file input is emptied first so that picking the same file again is noticed. */
 export function click(element) {
     if (element?.type === 'file') {

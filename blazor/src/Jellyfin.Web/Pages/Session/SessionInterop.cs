@@ -11,6 +11,7 @@ public interface ISessionInterop
     /// allowed) sanitised by DOMPurify, links opening in a new tab. Returns safe HTML.
     /// </summary>
     ValueTask<string> RenderDisclaimerAsync(string markdown);
+    ValueTask<string> RenderMarkdownAsync(string markdown);
 
     /// <summary>Clicks an element, e.g. a hidden file input to open the file picker.</summary>
     ValueTask ClickAsync(ElementReference element);
@@ -25,6 +26,12 @@ public sealed class SessionInterop(IJSRuntime js) : ISessionInterop
     {
         var module = await ModuleAsync();
         return module is null ? string.Empty : await module.InvokeAsync<string>("renderDisclaimer", markdown) ?? string.Empty;
+    }
+
+    public async ValueTask<string> RenderMarkdownAsync(string markdown)
+    {
+        var module = await ModuleAsync();
+        return module is null ? string.Empty : await module.InvokeAsync<string>("renderMarkdown", markdown) ?? string.Empty;
     }
 
     public async ValueTask ClickAsync(ElementReference element)

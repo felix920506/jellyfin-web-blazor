@@ -94,6 +94,10 @@ ItemMediaInfo.ShowAsync(dialogs, item)                  // JsonObject of the ful
 multi-select needs; a page that already holds the full item can pass it to
 `ItemMediaInfo.ShowAsync` or `ItemIdentifier.ShowAsync` directly.
 
+The wizard library step and its library-card menu use these same dialog entry points: library
+creation/editing, image editing and a scan refresh are all opened through the shared dialog host,
+then the wizard reloads its virtual-folder cards when an editor reports a change.
+
 ### 2.3 Action sheet positioning
 
 `ActionSheetOptions` (in `Services/UiServices.cs`) gained the members of the original's options:

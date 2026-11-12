@@ -206,12 +206,10 @@ in the original. The shell's search button (`Components/Shell/ToolbarButtons.raz
 
 ## 8. Known gaps
 
-Marked in the code with `PORT-TODO(library)`:
-
-- `LibraryPage.razor`: no backdrop rotation for `Config.BackdropTypes` (the port has no backdrop service yet).
-- `LibraryViewOptions.cs`: the card option `showDetailsMenu` (Live TV channels) and the list option `smallIcon`
-  have no counterpart in `CardOptions` / `ListViewOptions`.
-- `SearchService.cs`: `scalable` and `allowBottomPadding: false` have no counterpart in `CardOptions`.
+Library pages load matching result items into the shared `Backdrop` service for routes that declare
+`BackdropTypes`; the service is cleared when leaving the route or switching to a non-backdrop view.
+Live TV channels use `ShowDetailsMenu`, songs use `SmallIcon`, and search rows use `Scalable` plus
+`AllowBottomPadding = false`, matching the source option tables.
 
 Deviations and limits:
 

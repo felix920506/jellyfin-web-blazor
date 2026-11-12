@@ -2,6 +2,7 @@ using Jellyfin.Sdk.Generated.Models;
 using Jellyfin.Web.Services;
 using Jellyfin.Web.Tests.Items;
 using Jellyfin.Web.Tests.Support;
+using Microsoft.Kiota.Abstractions.Serialization;
 
 namespace Jellyfin.Web.Tests.Details;
 
@@ -11,6 +12,11 @@ public class DetailsTextTests : DetailsTestContext
     private const string ItemLinkStart = "<a style=\"color:inherit;\" class=\"button-link itemAction emby-button\" href=\"";
 
     private DetailsText Text => Get<DetailsText>();
+
+    private sealed class WebsiteItem : BaseItemDto
+    {
+        public string? HomePageUrl { get; set; }
+    }
 
     public override async Task InitializeAsync()
     {
@@ -171,6 +177,31 @@ public class DetailsTextTests : DetailsTestContext
             + "<a class=\"button-link emby-button\" href=\"http://tmdb.test/movie/1\" target=\"_blank\" rel=\"noopener noreferrer\">TMDb</a>",
             Text.GetExternalLinksHtml(movie));
         Assert.Equal(string.Empty, Text.GetExternalLinksHtml(TestItems.Item(new { Type = "Movie" })));
+    }
+
+    [Fact]
+    public void The_item_website_is_first_and_is_safely_filtered()
+    {
+        var source = TestItems.Item(new
+        {
+            Type = "Movie",
+            ExternalUrls = new[] { new { Name = "IMDb", Url = "https://imdb.test/title/1" } }
+        });
+        var movie = new WebsiteItem
+        {
+            Type = BaseItemDto_Type.Movie,
+            ExternalUrls = source.ExternalUrls,
+            HomePageUrl = "https://studio.test/movie/1?a=1&b=2"
+        };
+
+        var html = Text.GetExternalLinksHtml(movie);
+
+        Assert.Contains("https://studio.test/movie/1?a=1&amp;b=2", html, StringComparison.Ordinal);
+        Assert.Contains(">Website</a>, <a", html, StringComparison.Ordinal);
+        Assert.True(html.IndexOf(">Website</a>", StringComparison.Ordinal) < html.IndexOf(">IMDb</a>", StringComparison.Ordinal));
+
+        var unsafeMovie = new WebsiteItem { Type = BaseItemDto_Type.Movie, HomePageUrl = "javascript:alert(1)" };
+        Assert.DoesNotContain("javascript", Text.GetExternalLinksHtml(unsafeMovie), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -9,7 +9,8 @@
 @inject ItemUserData UserData
 @inject ServerEvents Events
 @inject IPlaybackManager Playback
-@inject IItemsInterop Interop
+    @inject IItemsInterop Interop
+@inject RefreshProgressStore RefreshProgress
 
 <div is="emby-itemscontainer" @ref="_element" class="itemsContainer @Class" data-monitor="@Monitor" data-parentid="@ParentId" @attributes="Attributes">
     <CascadingValue Value="_context" IsFixed="false">
@@ -138,6 +139,7 @@
         UserData.Changed += OnUserDataChanged;
         Playback.StateChanged += OnPlaybackStateChanged;
         _subscription = Events.Subscribe(ServerMessages, OnServerMessage);
+        RefreshProgress.Changed += OnRefreshProgress;
         _wasPlaying = Playback.IsPlaying;
         _playingMediaType = Playback.CurrentItem?.MediaTypeName();
         _wasPaused = IsPaused;
@@ -287,6 +289,7 @@
         UserData.Changed -= OnUserDataChanged;
         Playback.StateChanged -= OnPlaybackStateChanged;
         _subscription?.Dispose();
+        RefreshProgress.Changed -= OnRefreshProgress;
         CancelPendingRefresh();
         return ValueTask.CompletedTask;
     }
@@ -300,6 +303,8 @@
             pending.Dispose();
         }
     }
+
+    private void OnRefreshProgress(string itemId) => _ = InvokeAsync(StateHasChanged);
 
     private bool Monitors(string what) => _monitor.Contains(what);
 

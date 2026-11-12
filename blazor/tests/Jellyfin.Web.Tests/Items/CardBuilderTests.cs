@@ -409,6 +409,44 @@ public class CardBuilderTests : ItemsTestContext
     }
 
     [Fact]
+    public void Scalable_cards_and_bottom_padding_follow_the_options()
+    {
+        var card = Card(TestItems.Movie(1, "The Movie"), new CardOptions
+        {
+            Shape = CardShape.Backdrop,
+            ShowTitle = true,
+            Scalable = true,
+            AllowBottomPadding = false
+        });
+
+        Assert.Contains("scalableCard backdropCard-scalable", card.CssClass, StringComparison.Ordinal);
+        Assert.Contains("cardBox-nobottompadding", card.BoxClass, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_mobile_card_layout_can_show_its_details_menu()
+    {
+        Get<AppHost>().SetLayout("mobile");
+
+        var withMenu = Card(TestItems.Movie(1, "The Movie"), new CardOptions
+        {
+            Shape = CardShape.Square,
+            ShowTitle = true,
+            CardLayout = true,
+            ShowDetailsMenu = true
+        });
+        var withoutMenu = Card(TestItems.Movie(1, "The Movie"), new CardOptions
+        {
+            Shape = CardShape.Square,
+            ShowTitle = true,
+            CardLayout = true
+        });
+
+        Assert.True(withMenu.OuterFooter!.MoreButton);
+        Assert.False(withoutMenu.OuterFooter!.MoreButton);
+    }
+
+    [Fact]
     public void A_card_without_image_shows_an_icon_or_the_name_on_a_coloured_background()
     {
         var folder = Card(new { Id = TestItems.Id(1), Name = "Stuff", Type = "Folder", IsFolder = true }, new CardOptions { Shape = CardShape.Backdrop });
@@ -427,6 +465,29 @@ public class CardBuilderTests : ItemsTestContext
         Assert.Equal("theaters", withDefault.DefaultIcon);
         Assert.Equal("movie", library.DefaultIcon);
         Assert.Contains("emby-itemrefreshindicator", library.IndicatorsHtml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Library_refresh_progress_is_taken_from_the_websocket_store()
+    {
+        var library = TestItems.Item(new
+        {
+            Id = TestItems.Id(3),
+            Name = "Films",
+            Type = "CollectionFolder",
+            CollectionType = "movies",
+            IsFolder = true
+        });
+        var options = new CardOptions { Shape = CardShape.Backdrop };
+
+        var idle = Card(library, options);
+        ServerMessage("RefreshProgress", new { ItemId = TestItems.Id(3), Progress = 42.5, Status = "Active" });
+        var active = Card(library, options);
+
+        Assert.Contains("data-progress=\"0\"", idle.IndicatorsHtml, StringComparison.Ordinal);
+        Assert.Contains("class=\"progressring\"", active.IndicatorsHtml, StringComparison.Ordinal);
+        Assert.Contains("data-progress=\"42.5\"", active.IndicatorsHtml, StringComparison.Ordinal);
+        Assert.Contains("data-status=\"Active\"", active.IndicatorsHtml, StringComparison.Ordinal);
     }
 
     [Fact]

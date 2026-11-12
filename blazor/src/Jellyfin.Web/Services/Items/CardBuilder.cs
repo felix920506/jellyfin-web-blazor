@@ -97,7 +97,8 @@ public sealed class CardBuilder(
     AppRouter router,
     AppHost host,
     IPlaybackManager playback,
-    DateTimeText dateTime)
+    DateTimeText dateTime,
+    RefreshProgressStore refreshProgress)
 {
     private static readonly object IndexDateOptions = new { weekday = "long", month = "long", day = "numeric" };
     private static readonly object AirDateOptions = new { weekday = "short", month = "short", day = "numeric" };
@@ -380,9 +381,11 @@ public sealed class CardBuilder(
 
             if (type == "CollectionFolder" || item.CollectionTypeName() is not null)
             {
-                // PORT-TODO(items): library scan progress (emby-itemrefreshindicator, RefreshProgress
-                // websocket messages) is not ported; the hidden placeholder keeps the markup.
-                indicatorsHtml += "<div is=\"emby-itemrefreshindicator\" class=\"hide\" data-progress=\"0\"></div>";
+                var refresh = refreshProgress.Get(item.IdText());
+                var progress = refresh.Progress;
+                var status = refresh.Status;
+                var visible = progress != 0 || (!string.IsNullOrEmpty(status) && status != "Idle");
+                indicatorsHtml += $"<div is=\"emby-itemrefreshindicator\" class=\"progressring{(visible ? string.Empty : " hide")}\" dir=\"ltr\" data-progress=\"{progress.ToString(CultureInfo.InvariantCulture)}\" data-status=\"{System.Net.WebUtility.HtmlEncode(status ?? "undefined")}\"></div>";
             }
         }
 
@@ -394,6 +397,15 @@ public sealed class CardBuilder(
         }
 
         var cssClass = "card " + shape + "Card";
+        if (options.Scalable == true)
+        {
+            cssClass += " scalableCard " + shape + "Card-scalable";
+        }
+
+        if (options.AllowBottomPadding == false)
+        {
+            boxClass += " cardBox-nobottompadding";
+        }
         if (!string.IsNullOrEmpty(options.CardCssClass))
         {
             cssClass += " " + options.CardCssClass;
@@ -633,7 +645,8 @@ public sealed class CardBuilder(
 
         var showTitle = options.ShowTitle.IsAuto || options.ShowTitle.IsTruthy || type is "PhotoAlbum" or "Folder";
         var showOtherText = isOuterFooter ? !overlayText : overlayText;
-        var moreButton = isOuterFooter && options.CardLayout && mobile && options.CardFooterAside != "none";
+        var moreButton = isOuterFooter && options.CardLayout && mobile && options.CardFooterAside != "none"
+                         && options.ShowDetailsMenu;
         var cssClass = options.CenterText ? "cardText cardTextCentered" : "cardText";
 
         // Each entry is one line; an empty entry is a line without text (it only reserves space).
