@@ -11,12 +11,21 @@
 @inject IDashboardInterop Interop
 
 <div class="jf-layout jf-dashboard-layout">
-    <MudAppBar Dense="true" Elevation="0" Fixed="true" Gutters="false" Class="jf-appbar jf-dashboard-appbar" ToolBarClass="jf-toolbar dashboard-appBar">
-        <DashboardToolbar DrawerAvailable="!IsMediumScreen" DrawerOpen="DrawerOpen" OnDrawerButtonClick="ToggleDrawer" />
+    <MudAppBar Dense="true" Elevation="0" Fixed="true" Gutters="false" Class="@("jf-appbar jf-dashboard-appbar" + (IsDrawerAvailable ? null : " jf-dashboard-appbar-full"))" ToolBarClass="jf-toolbar dashboard-appBar">
+        <DashboardToolbar DrawerAvailable="!IsMediumScreen && IsDrawerAvailable" DrawerOpen="DrawerOpen" OnDrawerButtonClick="ToggleDrawer">
+            @if (IsMetadataManager)
+            {
+                <ServerButton />
+            }
+        </DashboardToolbar>
     </MudAppBar>
     <div class="jf-appbar-offset"></div>
 
-    @if (IsMediumScreen)
+    @if (!IsDrawerAvailable)
+    {
+        @* The metadata manager has its own sidebar instead of the drawer. *@
+    }
+    else if (IsMediumScreen)
     {
         <aside class="jf-dashboard-drawer">
             <DashboardDrawerContent />
@@ -46,7 +55,12 @@
 
     private bool IsMediumScreen => Browser.ViewportWidth >= Viewport.Md;
 
-    private bool DrawerOpen => _drawerActive && !IsMediumScreen;
+    // As in the original, the metadata manager is shown in the dashboard's frame without its drawer.
+    private bool IsMetadataManager => Location.Path.StartsWith("/metadata", StringComparison.OrdinalIgnoreCase);
+
+    private bool IsDrawerAvailable => !IsMetadataManager;
+
+    private bool DrawerOpen => _drawerActive && !IsMediumScreen && IsDrawerAvailable;
 
     protected override void OnInitialized()
     {

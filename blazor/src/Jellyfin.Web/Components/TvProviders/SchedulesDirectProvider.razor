@@ -1,0 +1,291 @@
+@* The Schedules Direct guide provider form: sign in, then choose the lineup.
+   Port of components/tvproviders/schedulesdirect.js and schedulesdirect.template.html. *@
+@namespace Jellyfin.Web.Components
+@using System.Text.Json.Nodes
+@inject LiveTvAdminApi LiveTv
+@inject AppDialogs Dialogs
+@inject AppRouter Router
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="verticalSection">
+    <div class="sectionTitleContainer flex align-items-center">
+        <h1 class="sectionTitle">Schedules Direct</h1>
+    </div>
+    <p class="createAccountHelp">@((MarkupString)Globalize.Translate("MessageCreateAccountAt", AccountLink))</p>
+</div>
+
+<div style="margin:1.5em 0 1em;" class="flex align-items-center">
+    <h2 style="@StepStyle" class="flex align-items-center justify-content-center">1</h2>
+    <h3 style="margin:0 0 0 .5em;">@Globalize["GuideProviderLogin"]</h3>
+</div>
+
+<form class="formLogin" @onsubmit="SubmitLoginAsync" @onsubmit:preventDefault="true">
+    @* As in the original: these hidden fields keep the browser from offering saved credentials. *@
+    <div style="height:0; overflow: hidden;"><input type="text" name="fakeusernameremembered" tabindex="-1" /><input type="password" name="fakepasswordremembered" tabindex="-1" /></div>
+    <div>
+        <br />
+        <EmbyInput Class="txtUser" Label="@Globalize["LabelUsername"]" Required="true" @bind-Value="_username" />
+        <EmbyInput Class="txtPass" Type="password" Label="@Globalize["LabelPassword"]" Required="true" @bind-Value="_password" />
+        <div>
+            <EmbyButton Type="submit" Class="raised button-submit block"><span>@Globalize["Save"]</span></EmbyButton>
+        </div>
+    </div>
+</form>
+<br />
+<div class="listingsSection@(_signedIn ? null : " hide")">
+    <div style="display: flex; align-items: center;margin:1.5em 0 1em;">
+        <h2 style="@StepStyle" class="flex align-items-center justify-content-center">2</h2>
+        <h3 class="guideProviderSelectListings">@Globalize["GuideProviderSelectListings"]</h3>
+    </div>
+    <form class="formListings" @onsubmit="SubmitListingsAsync" @onsubmit:preventDefault="true">
+        <div>
+            @* Rendered again whenever the options change, so that the selection is applied to the new options. *@
+            <EmbySelect @key="_countries" Id="selectCountry" Label="@Globalize["LabelCountry"]" Required="true" data-mini="true" @bind-Value="_country">
+                @foreach (var country in _countries)
+                {
+                    <option value="@country.Value">@country.Name</option>
+                }
+            </EmbySelect>
+            <EmbyInput Class="txtZipCode" Label="@Globalize["LabelZipCode"]" Required="true" Autocomplete="@null" @bind-Value="_zipCode" OnCommit="RefreshListingsAsync" />
+            <EmbySelect @key="_lineups" Id="selectListing" Label="@Globalize["LabelLineup"]" Required="true" data-mini="true" @bind-Value="_lineup">
+                @foreach (var lineup in _lineups)
+                {
+                    <option value="@lineup.Text("Id")">@lineup.Text("Name")</option>
+                }
+            </EmbySelect>
+            <TvProviderTuners @ref="_tuners" Tuners="_tunerHosts" Provider="_provider" RowLabelClass="checkboxContainer listItemCheckboxContainer" />
+            <br />
+            <div>
+                <EmbyButton Type="submit" Class="@("raised button-submit block btnSubmitListingsContainer btnSubmitListings" + (ShowSubmitButton ? null : " hide"))">
+                    <span>@Globalize["Save"]</span>
+                </EmbyButton>
+                <EmbyButton Class="@("raised button-cancel block btnCancel" + (ShowCancelButton ? null : " hide"))" OnClick="@(() => Router.Back())">
+                    <span>@Globalize["ButtonCancel"]</span>
+                </EmbyButton>
+            </div>
+        </div>
+    </form>
+</div>
+
+@code {
+    private const string StepStyle = "background-color:rgba(82,181,75,.8);color:#fff;margin: 0;border-radius:100em;height:1.7em;width:1.7em;";
+
+    private const string AccountLink =
+        "<a class=\"button-link emby-button\" href=\"http://www.schedulesdirect.org\" target=\"_blank\" rel=\"noopener noreferrer\">http://www.schedulesdirect.org</a>";
+
+    private TvProviderTuners? _tuners;
+    private IReadOnlyList<JsonNode?> _tunerHosts = [];
+    private IReadOnlyList<Country> _countries = [];
+    private IReadOnlyList<JsonNode?> _lineups = [];
+    private JsonObject? _provider;
+    private string? _providerId;
+    private string? _listingsId;
+    private string? _username;
+    private string? _password;
+    private string? _zipCode;
+    private string? _country;
+    private string? _lineup;
+    private bool _signedIn;
+    private bool _loaded;
+    private string? _loadedFor;
+
+    /// <summary>The id of the edited provider; a new provider without it (it gets one when signing in).</summary>
+    [Parameter]
+    public string? ProviderId { get; set; }
+
+    /// <summary>Shows the "settings saved" toast after saving the lineup (the original's <c>showConfirmation</c>, off unless asked for).</summary>
+    [Parameter]
+    public bool ShowConfirmation { get; set; }
+
+    [Parameter]
+    public bool ShowCancelButton { get; set; } = true;
+
+    [Parameter]
+    public bool ShowSubmitButton { get; set; } = true;
+
+    /// <summary>Raised once the lineup has been saved.</summary>
+    [Parameter]
+    public EventCallback OnSubmitted { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded && _loadedFor == ProviderId)
+        {
+            return;
+        }
+
+        _loaded = true;
+        _loadedFor = ProviderId;
+        _providerId = ProviderId;
+        await ReloadAsync();
+    }
+
+    /// <summary>The countries of the server's answer, regions flattened (without the pseudo region), by name.</summary>
+    internal static IReadOnlyList<Country> CountriesOf(JsonObject regions)
+    {
+        var countries = new List<Country>();
+        foreach (var (region, list) in regions)
+        {
+            if (region == "ZZZ" || list is not JsonArray entries)
+            {
+                continue;
+            }
+
+            foreach (var entry in entries)
+            {
+                countries.Add(new Country(entry.Text("fullName") ?? string.Empty, entry.Text("shortName") ?? string.Empty));
+            }
+        }
+
+        // A stable sort by code units, as the original's comparison of the names.
+        return [.. countries.Order(Comparer<Country>.Create((a, b) => string.CompareOrdinal(a.Name, b.Name)))];
+    }
+
+    private async Task ReloadAsync()
+    {
+        Loading.Show();
+        JsonObject info;
+        try
+        {
+            var configuration = await LiveTv.GetConfigurationAsync();
+            info = LiveTvAdmin.FindProvider(configuration, _providerId) ?? new JsonObject();
+            _tunerHosts = configuration.List("TunerHosts");
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            AppLog.Warn("[SchedulesDirect] unable to load the provider: " + ex.Message);
+            Loading.Hide();
+            return;
+        }
+
+        _listingsId = info.Text("ListingsId");
+        _lineup = _listingsId ?? string.Empty;
+        _username = info.Text("Username") ?? string.Empty;
+        _password = string.Empty;
+        _zipCode = info.Text("ZipCode") ?? string.Empty;
+        _signedIn = !string.IsNullOrEmpty(info.Text("Username")) && !string.IsNullOrEmpty(info.Text("Password"));
+        _provider = info;
+        Loading.Hide();
+        StateHasChanged();
+
+        try
+        {
+            _countries = CountriesOf(await LiveTv.GetCountriesAsync());
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            await Dialogs.AlertAsync(Globalize["ErrorGettingTvLineups"]);
+            return;
+        }
+
+        _country = info.Text("Country") is { } country && _countries.Any(c => c.Value == country) ? country : string.Empty;
+        await RefreshListingsAsync(_zipCode);
+    }
+
+    private async Task SubmitLoginAsync()
+    {
+        Loading.Show();
+        var info = new JsonObject
+        {
+            ["Type"] = "SchedulesDirect",
+            ["Username"] = _username ?? string.Empty,
+            ["EnableAllTuners"] = true,
+            ["Password"] = _password ?? string.Empty,
+        };
+        if (!string.IsNullOrEmpty(_providerId))
+        {
+            info["Id"] = _providerId;
+        }
+
+        JsonObject? result;
+        try
+        {
+            result = await LiveTv.SaveProviderAsync(info, validateLogin: true);
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            // The original leaves the loading indicator on here; it is taken away.
+            Loading.Hide();
+            await Dialogs.AlertAsync(Globalize["ErrorSavingTvProvider"]);
+            return;
+        }
+
+        Loading.Hide();
+        Toasts.Show(Globalize["SettingsSaved"]);
+        _providerId = result.Text("Id");
+        await ReloadAsync();
+    }
+
+    private async Task RefreshListingsAsync(string? location)
+    {
+        if (string.IsNullOrEmpty(location))
+        {
+            _lineups = [];
+            _lineup = string.Empty;
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            _lineups = [.. await LiveTv.GetLineupsAsync(_providerId, location, _country)];
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            // Not awaited before the rest, as in the original, where the alert does not hold up the clean-up.
+            var alert = Dialogs.AlertAsync(Globalize["ErrorGettingTvLineups"]);
+            _lineups = [];
+            _lineup = string.Empty;
+            Loading.Hide();
+            StateHasChanged();
+            await alert;
+            return;
+        }
+
+        // The saved lineup when there is one (nothing is selected when it is not among the options), else the first option.
+        _lineup = !string.IsNullOrEmpty(_listingsId)
+            ? (_lineups.Any(lineup => lineup.Text("Id") == _listingsId) ? _listingsId : string.Empty)
+            : _lineups.Count > 0 ? _lineups[0].Text("Id") ?? string.Empty : string.Empty;
+        Loading.Hide();
+    }
+
+    private async Task SubmitListingsAsync()
+    {
+        if (string.IsNullOrEmpty(_lineup))
+        {
+            await Dialogs.AlertAsync(Globalize["ErrorPleaseSelectLineup"]);
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            var info = LiveTvAdmin.FindProvider(await LiveTv.GetConfigurationAsync(), _providerId)?.DeepClone().AsObject() ?? new JsonObject();
+            info["ZipCode"] = _zipCode ?? string.Empty;
+            info["Country"] = _country ?? string.Empty;
+            info["ListingsId"] = _lineup;
+            info["EnableAllTuners"] = _tuners?.EnableAllTuners ?? false;
+            info["EnabledTuners"] = _tuners?.EnabledTuners() ?? new JsonArray();
+            await LiveTv.SaveProviderAsync(info, validateListings: true);
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            Loading.Hide();
+            await Dialogs.AlertAsync(Globalize["ErrorAddingListingsToSchedulesDirect"]);
+            return;
+        }
+
+        Loading.Hide();
+        if (ShowConfirmation)
+        {
+            Toasts.Show(Globalize["SettingsSaved"]);
+        }
+
+        await OnSubmitted.InvokeAsync();
+    }
+
+    /// <summary>A country of the Schedules Direct list.</summary>
+    internal sealed record Country(string Name, string Value);
+}

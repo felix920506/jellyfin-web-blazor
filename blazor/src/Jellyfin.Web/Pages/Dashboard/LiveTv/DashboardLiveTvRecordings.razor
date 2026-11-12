@@ -1,0 +1,189 @@
+@* The DVR settings. Port of apps/dashboard/routes/livetv/recordings.tsx. *@
+@attribute [Route("/dashboard/livetv/recordings")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject LiveTvAdminApi LiveTv
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+<Page Id="liveTvSettingsPage" Title="@Globalize["HeaderDVR"]" Class="mainAnimatedPage type-interior">
+    @if (_configuration is null && !_failed)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_configuration is null)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["LiveTVPageLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form jf-dashboard-livetv-recordings" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    <MudText Typo="Typo.h1">@Globalize["HeaderDVR"]</MudText>
+
+                    @if (_saved && !_saving)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <MudSelect T="string" Value="@(_configuration.Text("GuideDays") is { Length: > 0 } days && days != "0" ? days : string.Empty)"
+                               ValueChanged="@(value => Set("GuideDays", value))" Variant="Variant.Filled" ShrinkLabel="true"
+                               Label="@Globalize["LabelNumberOfGuideDays"]" HelperText="@Globalize["LabelNumberOfGuideDaysHelp"]"
+                               InputId="jf-dashboard-livetv-guidedays" Class="jf-dashboard-livetv-guidedays">
+                        <MudSelectItem T="string" Value="@string.Empty">@Globalize["Auto"]</MudSelectItem>
+                        @for (var day = 1; day <= 14; day++)
+                        {
+                            var text = day.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                            <MudSelectItem T="string" Value="@text">@text</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <MudTextField T="string" Value="@_configuration.Text("RecordingPath")" ValueChanged="@(value => Set("RecordingPath", value))"
+                                  Variant="Variant.Filled" Label="@Globalize["LabelRecordingPath"]" HelperText="@Globalize["LabelRecordingPathHelp"]"
+                                  InputId="jf-dashboard-livetv-recordingpath"
+                                  Adornment="Adornment.End" AdornmentIcon="@MdIcon.Of("search")" OnAdornmentClick="@(() => PickAsync("RecordingPath"))" />
+
+                    <MudTextField T="string" Value="@_configuration.Text("MovieRecordingPath")" ValueChanged="@(value => Set("MovieRecordingPath", value))"
+                                  Variant="Variant.Filled" Label="@Globalize["LabelMovieRecordingPath"]" InputId="jf-dashboard-livetv-movierecordingpath"
+                                  Adornment="Adornment.End" AdornmentIcon="@MdIcon.Of("search")" OnAdornmentClick="@(() => PickAsync("MovieRecordingPath"))" />
+
+                    <MudTextField T="string" Value="@_configuration.Text("SeriesRecordingPath")" ValueChanged="@(value => Set("SeriesRecordingPath", value))"
+                                  Variant="Variant.Filled" Label="@Globalize["LabelSeriesRecordingPath"]" InputId="jf-dashboard-livetv-seriesrecordingpath"
+                                  Adornment="Adornment.End" AdornmentIcon="@MdIcon.Of("search")" OnAdornmentClick="@(() => PickAsync("SeriesRecordingPath"))" />
+
+                    <MudText Typo="Typo.h2">@Globalize["HeaderDefaultRecordingSettings"]</MudText>
+
+                    <MudTextField T="string" Value="@_prePaddingMinutes" ValueChanged="SetPrePadding" Variant="Variant.Filled"
+                                  Label="@Globalize["LabelStartWhenPossible"]" InputId="jf-dashboard-livetv-prepadding"
+                                  Adornment="Adornment.End" AdornmentText="@Globalize["MinutesBefore"]" />
+
+                    <MudTextField T="string" Value="@_postPaddingMinutes" ValueChanged="SetPostPadding" Variant="Variant.Filled"
+                                  Label="@Globalize["LabelStopWhenPossible"]" InputId="jf-dashboard-livetv-postpadding"
+                                  Adornment="Adornment.End" AdornmentText="@Globalize["MinutesAfter"]" />
+
+                    <MudText Typo="Typo.h2">@Globalize["HeaderRecordingPostProcessing"]</MudText>
+
+                    <MudTextField T="string" Value="@_configuration.Text("RecordingPostProcessor")" ValueChanged="@(value => Set("RecordingPostProcessor", value))"
+                                  Variant="Variant.Filled" Label="@Globalize["LabelPostProcessor"]" InputId="jf-dashboard-livetv-postprocessor"
+                                  Adornment="Adornment.End" AdornmentIcon="@MdIcon.Of("search")" OnAdornmentClick="@(() => PickAsync("RecordingPostProcessor"))" />
+
+                    <MudTextField T="string" Value="@_configuration.Text("RecordingPostProcessorArguments")"
+                                  ValueChanged="@(value => Set("RecordingPostProcessorArguments", value))" Variant="Variant.Filled"
+                                  Label="@Globalize["LabelPostProcessorArguments"]" HelperText="@Globalize["LabelPostProcessorArgumentsHelp"]"
+                                  InputId="jf-dashboard-livetv-postprocessorarguments" />
+
+                    <MudText Typo="Typo.h2">@Globalize["HeaderRecordingMetadataSaving"]</MudText>
+
+                    <div class="jf-dashboard-field jf-dashboard-livetv-check">
+                        <MudCheckBox T="bool" Value="@_configuration.Flag("SaveRecordingNFO")" ValueChanged="@(value => SetFlag("SaveRecordingNFO", value))"
+                                     Color="Color.Primary" Label="@Globalize["SaveRecordingNFO"]" Class="jf-dashboard-livetv-savenfo" />
+                        <div class="jf-dashboard-field-help">@Globalize["SaveRecordingNFOHelp"]</div>
+                    </div>
+
+                    <div class="jf-dashboard-field jf-dashboard-livetv-check">
+                        <MudCheckBox T="bool" Value="@_configuration.Flag("SaveRecordingImages")" ValueChanged="@(value => SetFlag("SaveRecordingImages", value))"
+                                     Color="Color.Primary" Label="@Globalize["SaveRecordingImages"]" Class="jf-dashboard-livetv-saveimages" />
+                        <div class="jf-dashboard-field-help">@Globalize["SaveRecordingImagesHelp"]</div>
+                    </div>
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private JsonObject? _configuration;
+    private string _prePaddingMinutes = string.Empty;
+    private string _postPaddingMinutes = string.Empty;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _configuration = await LiveTv.GetConfigurationAsync();
+            _prePaddingMinutes = LiveTvAdmin.PaddingMinutes(_configuration, "PrePaddingSeconds");
+            _postPaddingMinutes = LiveTvAdmin.PaddingMinutes(_configuration, "PostPaddingSeconds");
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            AppLog.Warn("[LiveTvRecordings] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+    }
+
+    // As the original, a changed field is stored as the text that was typed.
+    private void Set(string name, string? value)
+    {
+        if (_configuration is not null)
+        {
+            _configuration[name] = value ?? string.Empty;
+        }
+    }
+
+    private void SetFlag(string name, bool value)
+    {
+        if (_configuration is not null)
+        {
+            _configuration[name] = value;
+        }
+    }
+
+    private void SetPrePadding(string? minutes)
+    {
+        _prePaddingMinutes = minutes ?? string.Empty;
+        if (_configuration is not null)
+        {
+            _configuration["PrePaddingSeconds"] = LiveTvAdmin.PaddingSeconds(minutes);
+        }
+    }
+
+    private void SetPostPadding(string? minutes)
+    {
+        _postPaddingMinutes = minutes ?? string.Empty;
+        if (_configuration is not null)
+        {
+            _configuration["PostPaddingSeconds"] = LiveTvAdmin.PaddingSeconds(minutes);
+        }
+    }
+
+    private async Task PickAsync(string name)
+    {
+        var path = await DirectoryBrowser.ShowAsync(Dialogs, validateWriteable: true);
+        if (!string.IsNullOrEmpty(path))
+        {
+            Set(name, path);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_configuration is null)
+        {
+            return;
+        }
+
+        _saving = true;
+        _saved = false;
+        try
+        {
+            await LiveTv.SaveConfigurationAsync(_configuration);
+            _saved = true;
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            AppLog.Warn("[LiveTvRecordings] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

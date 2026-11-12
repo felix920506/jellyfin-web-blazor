@@ -1,0 +1,379 @@
+@* The library tree of the metadata manager. Port of scripts/editorsidebar.js, which drives jstree
+   (plugin "wholerow", theme "default", variant "large"); this component renders the markup jstree
+   builds, so its theme (vendored by scripts/prepare-assets.sh and loaded here, as the original
+   imports it on demand) and the overrides of styles/metadataeditor.scss apply as they are. *@
+@namespace Jellyfin.Web.Components
+@using System.Text.Json.Nodes
+@inject ItemDialogApi Api
+@inject Globalize Globalize
+
+<link rel="stylesheet" href="generated/lib/jstree/dist/themes/default/style.min.css" />
+<div class="libraryTree jstree jstree-default jstree-default-large@(Globalize.IsRtl ? " jstree-rtl" : null)" role="tree">
+    @if (_roots is null)
+    {
+        <ul class="jstree-container-ul jstree-children" role="group">
+            <li class="jstree-initial-node jstree-loading jstree-leaf jstree-last" role="none">
+                <i class="jstree-icon jstree-ocl"></i>
+                <a class="jstree-anchor" role="treeitem"><i class="jstree-icon jstree-themeicon-hidden"></i>Loading ...</a>
+            </li>
+        </ul>
+    }
+    else
+    {
+        @NodeList(_roots, 1)
+    }
+</div>
+
+@code {
+    private List<MetadataTreeNode>? _roots;
+    private HashSet<string> _openItems = new(StringComparer.Ordinal);
+    private string? _selectedId;
+    private MetadataTreeNode? _selected;
+    private MetadataTreeNode? _hovered;
+    private bool _scrollToSelected;
+
+    /// <summary>
+    /// The item to show selected once the tree has loaded, with its ancestors opened (the page's
+    /// <c>?id=</c>). Only its value at the first render counts, as in the original.
+    /// </summary>
+    [Parameter]
+    public string? InitialItemId { get; set; }
+
+    /// <summary>Raised when the user selects a node (<c>select_node.jstree</c>), the fixed nodes included.</summary>
+    [Parameter]
+    public EventCallback<MetadataTreeNode> OnNodeSelected { get; set; }
+
+    /// <summary>The selected node; null for none.</summary>
+    public MetadataTreeNode? Selected => _selected;
+
+    /// <summary>
+    /// Shows changed metadata of an item in its nodes: the members of <paramref name="changes"/>
+    /// (name, index number, lock) replace those the node was built from.
+    /// </summary>
+    public void UpdateItem(string id, JsonObject changes)
+    {
+        foreach (var node in Find(id))
+        {
+            if (node.Source is not { } source)
+            {
+                continue;
+            }
+
+            foreach (var (name, value) in changes)
+            {
+                source[name] = value?.DeepClone();
+            }
+
+            node.Text = MetadataTreeNode.Label(source);
+            node.Locked = source.Flag("LockData");
+        }
+
+        StateHasChanged();
+    }
+
+    /// <summary>Takes a deleted item out of the tree and selects the node of <paramref name="selectId"/> if it is there.</summary>
+    public void RemoveItem(string id, string? selectId)
+    {
+        foreach (var node in Find(id))
+        {
+            node.Parent?.Children?.Remove(node);
+        }
+
+        _selected = selectId is null ? null : Find(selectId).FirstOrDefault();
+        StateHasChanged();
+    }
+
+    // Port of the "pagebeforeshow" handler: the ancestors of the item to select are the nodes to open.
+    protected override async Task OnInitializedAsync()
+    {
+        _selectedId = string.IsNullOrEmpty(InitialItemId) ? null : InitialItemId;
+        if (_selectedId is not null)
+        {
+            try
+            {
+                var ancestors = await Api.GetArrayAsync($"Items/{_selectedId}/Ancestors", ("userId", Api.UserId));
+                _openItems = [.. ancestors.Select(ancestor => ancestor.Text("Id")).OfType<string>()];
+            }
+            catch (Exception ex) when (ItemDialogApi.IsFailure(ex))
+            {
+                // The original shows no tree at all then; here it is shown closed.
+                AppLog.Warn("[MetadataTree] unable to load the ancestors: " + ex.Message);
+            }
+        }
+
+        await LoadRootAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Port of scrollToNode(): the node selected at the start is brought into view.
+        if (_scrollToSelected && _selected is { } node)
+        {
+            _scrollToSelected = false;
+            try
+            {
+                await node.Anchor.FocusAsync();
+            }
+            catch (Exception ex) when (ex is JSException or InvalidOperationException)
+            {
+                AppLog.Warn("[MetadataTree] unable to show the selected node: " + ex.Message);
+            }
+        }
+    }
+
+    // Port of loadChildrenOfRootNode(): the media folders, and Live TV when there are channels.
+    private async Task LoadRootAsync()
+    {
+        var channels = 0d;
+        try
+        {
+            channels = (await Api.GetObjectAsync("LiveTv/Channels", ("limit", 0))).Number("TotalRecordCount") ?? 0;
+        }
+        catch (Exception ex) when (ItemDialogApi.IsFailure(ex))
+        {
+            AppLog.Warn("[MetadataTree] unable to count the channels: " + ex.Message);
+        }
+
+        var mediaFolders = new MetadataTreeNode
+        {
+            Id = MetadataTreeNode.MediaFoldersId,
+            ItemType = "mediafolders",
+            Text = Globalize["HeaderMediaFolders"],
+            IsFolder = true,
+            Opened = true,
+            LoadedFromServer = true
+        };
+        _roots = [mediaFolders];
+        if (channels != 0)
+        {
+            _roots.Add(new MetadataTreeNode
+            {
+                Id = MetadataTreeNode.LiveTvId,
+                ItemType = "livetv",
+                Text = Globalize["LiveTV"],
+                IsFolder = true
+            });
+        }
+
+        await LoadChildrenAsync(mediaFolders);
+    }
+
+    // Port of loadNode() with the "load_node" handler: the children that are to be open are loaded in turn.
+    private async Task LoadChildrenAsync(MetadataTreeNode node)
+    {
+        node.Loading = true;
+        StateHasChanged();
+        List<MetadataTreeNode> children;
+        try
+        {
+            children = await FetchChildrenAsync(node);
+        }
+        catch (Exception ex) when (ItemDialogApi.IsFailure(ex))
+        {
+            // The original keeps "Loading..." for good; closing the node lets the user try again.
+            AppLog.Warn("[MetadataTree] unable to load the children of " + node.Id + ": " + ex.Message);
+            node.Loading = false;
+            node.LoadedFromServer = false;
+            node.Opened = false;
+            StateHasChanged();
+            return;
+        }
+
+        foreach (var child in children)
+        {
+            child.Parent = node;
+        }
+
+        node.Children = children;
+        node.Loading = false;
+
+        // Only the items of a folder are compared with the selected id, not the media folders or channels.
+        if (node.IsItem && _selected is null && _selectedId is not null
+            && children.FirstOrDefault(child => child.Id == _selectedId) is { } selected)
+        {
+            _selected = selected;
+            _scrollToSelected = true;
+        }
+
+        StateHasChanged();
+        await Task.WhenAll(children.Where(child => child.Opened).Select(LoadChildrenAsync));
+    }
+
+    private async Task<List<MetadataTreeNode>> FetchChildrenAsync(MetadataTreeNode node)
+    {
+        JsonObject? result;
+        if (node.Id == MetadataTreeNode.LiveTvId && !node.IsItem)
+        {
+            result = await Api.GetObjectAsync("LiveTv/Channels", ("ServiceName", node.Id), ("AddCurrentProgram", false));
+        }
+        else if (node.Id == MetadataTreeNode.MediaFoldersId && !node.IsItem)
+        {
+            result = await Api.GetObjectAsync("Library/MediaFolders");
+        }
+        else
+        {
+            // The original leaves SortBy out for nodes with the "itemtype" Season or Series, which no item node has.
+            result = await Api.GetObjectAsync(
+                $"Users/{Api.UserId}/Items",
+                ("ParentId", node.Id),
+                ("Fields", "Settings"),
+                ("IsVirtualUnaired", false),
+                ("IsMissing", false),
+                ("EnableTotalRecordCount", false),
+                ("EnableImages", false),
+                ("EnableUserData", false),
+                ("SortBy", "SortName"));
+        }
+
+        return [.. result.List("Items").Select(item => MetadataTreeNode.FromItem(item, _openItems.Contains(item.Text("Id") ?? string.Empty)))];
+    }
+
+    private IEnumerable<MetadataTreeNode> Find(string id)
+    {
+        var found = new List<MetadataTreeNode>();
+        void Visit(IEnumerable<MetadataTreeNode>? nodes)
+        {
+            foreach (var node in nodes ?? [])
+            {
+                if (node.Id == id && node.IsItem)
+                {
+                    found.Add(node);
+                }
+
+                Visit(node.Children);
+            }
+        }
+
+        Visit(_roots);
+        return found;
+    }
+
+    // jstree's activate_node(): a click on the row or the label selects the node.
+    private async Task SelectAsync(MetadataTreeNode node)
+    {
+        _selected = node;
+        await OnNodeSelected.InvokeAsync(node);
+    }
+
+    // jstree's toggle_node() with the "open_node" handler: a node's children are requested when it is first opened.
+    private async Task ToggleAsync(MetadataTreeNode node)
+    {
+        if (node.IsLeaf)
+        {
+            return;
+        }
+
+        if (node.Opened)
+        {
+            node.Opened = false;
+            return;
+        }
+
+        node.Opened = true;
+        if (!node.LoadedFromServer)
+        {
+            node.LoadedFromServer = true;
+            await LoadChildrenAsync(node);
+        }
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs args, MetadataTreeNode node)
+    {
+        switch (args.Key)
+        {
+            case "Enter":
+                await SelectAsync(node);
+                break;
+            case "ArrowRight" when !node.Opened:
+            case "ArrowLeft" when node.Opened:
+                await ToggleAsync(node);
+                break;
+        }
+    }
+
+    private void Hover(MetadataTreeNode node) => _hovered = node;
+
+    private void Unhover(MetadataTreeNode node)
+    {
+        if (ReferenceEquals(_hovered, node))
+        {
+            _hovered = null;
+        }
+    }
+
+    private static string NodeClass(MetadataTreeNode node, bool last) =>
+        "jstree-node "
+        + (node.IsLeaf ? "jstree-leaf" : node.Opened ? "jstree-open" : "jstree-closed")
+        + (last ? " jstree-last" : null)
+        + (node.Loading ? " jstree-loading" : null);
+
+    private string RowClass(MetadataTreeNode node) =>
+        "jstree-wholerow"
+        + (ReferenceEquals(_selected, node) ? " jstree-wholerow-clicked" : null)
+        + (ReferenceEquals(_hovered, node) ? " jstree-wholerow-hovered" : null);
+
+    private string AnchorClass(MetadataTreeNode node) =>
+        "jstree-anchor"
+        + (ReferenceEquals(_selected, node) ? " jstree-clicked" : null)
+        + (ReferenceEquals(_hovered, node) ? " jstree-hovered" : null);
+
+    private RenderFragment NodeList(List<MetadataTreeNode> nodes, int level) => __builder =>
+    {
+        <ul role="group" class="@(level == 1 ? "jstree-container-ul jstree-children jstree-wholerow-ul jstree-no-dots" : "jstree-children")">
+            @for (var i = 0; i < nodes.Count; i++)
+            {
+                var node = nodes[i];
+                <li @key="node" role="none" id="@node.Id" class="@NodeClass(node, i == nodes.Count - 1)" itemtype="@node.ItemType"
+                    serveritemtype="@node.ServerItemType" collectiontype="@node.CollectionType">
+                    <div unselectable="on" role="presentation" class="@RowClass(node)" @onclick="() => SelectAsync(node)"
+                         @ondblclick="() => ToggleAsync(node)">&nbsp;</div>
+                    <i class="jstree-icon jstree-ocl" role="presentation" @onclick="() => ToggleAsync(node)"></i>
+                    <a @ref="node.Anchor" id="@(node.Id + "_anchor")" class="@AnchorClass(node)" role="treeitem" tabindex="0"
+                       aria-selected="@(ReferenceEquals(_selected, node) ? "true" : "false")" aria-level="@level"
+                       aria-expanded="@(node.IsLeaf ? null : node.Opened ? "true" : "false")"
+                       @onclick="() => SelectAsync(node)" @ondblclick="() => ToggleAsync(node)" @onkeydown="args => OnKeyDownAsync(args, node)">
+                      >
+                        <i class="jstree-icon jstree-themeicon jstree-themeicon-hidden" role="presentation"></i>
+                        @if (node.IsItem)
+                        {
+                            <div class="editorNode">
+                                @if (node.Icon is { } icon)
+                                {
+                                    <Icon Name="@icon" Class="metadataSidebarIcon" />
+                                }
+                                @if (node.Locked)
+                                {
+                                    <Icon Name="lock" Class="metadataSidebarIcon" />
+                                }
+                                @node.Text
+                            </div>
+                        }
+                        else
+                        {
+                            @node.Text
+                        }
+                    </a>
+                    @if (node.Opened && !node.IsLeaf)
+                    {
+                        if (node.Children is { } children)
+                        {
+                            @NodeList(children, level + 1)
+                        }
+                        else
+                        {
+                            <ul role="group" class="jstree-children">
+                                <li role="none" class="jstree-node jstree-leaf jstree-last">
+                                    <div unselectable="on" role="presentation" class="jstree-wholerow">&nbsp;</div>
+                                    <i class="jstree-icon jstree-ocl" role="presentation"></i>
+                                    <a class="jstree-anchor" role="treeitem">
+                                        <i class="jstree-icon jstree-themeicon jstree-themeicon-hidden" role="presentation"></i>Loading...
+                                    </a>
+                                </li>
+                            </ul>
+                        }
+                    }
+                </li>
+            }
+        </ul>
+    };
+}

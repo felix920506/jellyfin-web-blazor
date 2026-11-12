@@ -1,0 +1,73 @@
+@* A tuner device of the Live TV status page, with its menu (edit, delete).
+   Port of apps/dashboard/features/livetv/components/TunerDeviceCard.tsx and components/BaseCard.tsx. *@
+@namespace Jellyfin.Web.Components
+@using System.Text.Json.Nodes
+@inject LiveTvAdminApi LiveTv
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+<MudCard Class="jf-dashboard-livetv-card" data-tunerid="@Id">
+    <a class="mud-ripple jf-dashboard-livetv-card-action" href="@EditUrl">
+        <div class="jf-dashboard-livetv-card-media @SessionUi.DefaultBackgroundClass(Title)">
+            <MudIcon Icon="@MdIcon.Of("dvr")" Class="jf-dashboard-livetv-card-icon" />
+        </div>
+    </a>
+    <div class="jf-dashboard-livetv-card-content">
+        <div class="jf-dashboard-livetv-card-texts">
+            <MudText Class="jf-dashboard-livetv-card-title">@Title</MudText>
+            @if (Tuner.Text("Url") is { Length: > 0 } url)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary jf-dashboard-livetv-card-text">@url</MudText>
+            }
+        </div>
+        <div>
+            <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
+                <ActivatorContent Context="menu">
+                    <MudIconButton Icon="@MdIcon.Of("more_vert")" Class="jf-dashboard-livetv-card-menu" aria-label="@Globalize["ButtonMore"]"
+                                   OnClick="@(e => menu.ToggleAsync(e))" />
+                </ActivatorContent>
+                <ChildContent>
+                    <MudMenuItem Href="@EditUrl" Icon="@MdIcon.Of("edit")" Label="@Globalize["Edit"]" Class="jf-dashboard-livetv-card-edit" />
+                    <MudMenuItem Icon="@MdIcon.Of("delete")" Label="@Globalize["Delete"]" Class="jf-dashboard-livetv-card-delete" OnClick="DeleteAsync" />
+                </ChildContent>
+            </MudMenu>
+        </div>
+    </div>
+</MudCard>
+
+@code {
+    /// <summary>The tuner as the Live TV options hold it.</summary>
+    [Parameter, EditorRequired]
+    public JsonObject Tuner { get; set; } = default!;
+
+    /// <summary>Raised after the tuner was removed.</summary>
+    [Parameter]
+    public EventCallback OnDeleted { get; set; }
+
+    private string? Id => Tuner.Text("Id");
+
+    private string Title => Tuner.Text("FriendlyName") is { Length: > 0 } name ? name : LiveTvAdmin.TunerName(Tuner.Text("Type"));
+
+    private string EditUrl => "#" + LiveTvAdmin.TunerRoute(Id);
+
+    private async Task DeleteAsync()
+    {
+        var confirmed = await Dialogs.MuiConfirmAsync(
+            Globalize["HeaderDeleteDevice"], Globalize["MessageConfirmDeleteTunerDevice"], Globalize["Delete"], destructive: true);
+        if (!confirmed || Id is not { Length: > 0 } id)
+        {
+            return;
+        }
+
+        try
+        {
+            await LiveTv.DeleteTunerAsync(id);
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            AppLog.Warn("[LiveTv] unable to delete the tuner: " + ex.Message);
+        }
+
+        await OnDeleted.InvokeAsync();
+    }
+}

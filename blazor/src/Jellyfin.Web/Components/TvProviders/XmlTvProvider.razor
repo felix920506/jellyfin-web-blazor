@@ -1,0 +1,185 @@
+@* The XMLTV guide provider form. Port of components/tvproviders/xmltv.js and xmltv.template.html. *@
+@namespace Jellyfin.Web.Components
+@using System.Text.Json.Nodes
+@inject LiveTvAdminApi LiveTv
+@inject AppDialogs Dialogs
+@inject AppRouter Router
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="verticalSection">
+    <div class="sectionTitleContainer flex align-items-center">
+        <h1 class="sectionTitle">Xml TV</h1>
+    </div>
+</div>
+
+<form class="xmltvForm" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+    <div>
+        <div class="inputContainer">
+            <div style="display: flex; align-items: center;">
+                <div style="flex-grow:1;">
+                    <label class="inputLabel @(_pathFocused ? "inputLabelFocused" : "inputLabelUnfocused")" for="@_pathId">@Globalize["LabelFileOrUrl"]</label>
+                    <input @ref="_pathInput" id="@_pathId" class="emby-input txtPath" type="text" value="@_path" required autocomplete="off"
+                           @oninput="args => _path = args.Value?.ToString()"
+                           @onfocus="() => _pathFocused = true" @onblur="() => _pathFocused = false" />
+                </div>
+                <IconButton Icon="search" id="btnSelectPath" Class="emby-input-iconbutton" OnClick="SelectPathAsync" />
+            </div>
+            <div class="fieldDescription">@Globalize["XmlTvPathHelp"]</div>
+        </div>
+        <EmbyInput Class="txtMovies" Label="@Globalize["LabelMovieCategories"]" Description="@Globalize["XmlTvMovieCategoriesHelp"]" @bind-Value="_movies" />
+        <EmbyInput Class="txtMoviePrefix" Label="@Globalize["LabelMoviePrefix"]" Description="@Globalize["LabelMoviePrefixHelp"]" @bind-Value="_moviePrefix" />
+        <EmbyInput Class="txtKids" Label="@Globalize["LabelKidsCategories"]" Description="@Globalize["XmlTvKidsCategoriesHelp"]" @bind-Value="_kids" />
+        @* The original has an empty description above the real one here. *@
+        <EmbyInput Class="txtNews" Label="@Globalize["LabelNewsCategories"]" Description="" @bind-Value="_news">
+            <div class="fieldDescription">@Globalize["XmlTvNewsCategoriesHelp"]</div>
+        </EmbyInput>
+        <EmbyInput Class="txtSports" Label="@Globalize["LabelSportsCategories"]" Description="@Globalize["XmlTvSportsCategoriesHelp"]" @bind-Value="_sports" />
+        <EmbyInput Class="txtUserAgent" ContainerClass="fldUserAgent" Label="@Globalize["LabelUserAgent"]" Description="@Globalize["UserAgentHelp"]" @bind-Value="_userAgent" />
+    </div>
+    <TvProviderTuners @ref="_tuners" Tuners="_tunerHosts" Provider="_provider" />
+    <div>
+        <EmbyButton Type="submit" Class="@("raised button-submit block btnSubmitListings" + (ShowSubmitButton ? null : " hide"))">
+            <span>@Globalize["Save"]</span>
+        </EmbyButton>
+        <EmbyButton Class="@("raised button-cancel block btnCancel" + (ShowCancelButton ? null : " hide"))" OnClick="@(() => Router.Back())">
+            <span>@Globalize["ButtonCancel"]</span>
+        </EmbyButton>
+    </div>
+</form>
+
+@code {
+    private readonly string _pathId = ElementIds.Next("txtPath");
+    private ElementReference _pathInput;
+    private TvProviderTuners? _tuners;
+    private IReadOnlyList<JsonNode?> _tunerHosts = [];
+    private JsonObject? _provider;
+    private string? _path;
+    private string? _movies;
+    private string? _moviePrefix;
+    private string? _kids;
+    private string? _news;
+    private string? _sports;
+    private string? _userAgent;
+    private bool _pathFocused;
+    private bool _loaded;
+    private string? _loadedFor;
+
+    /// <summary>The id of the edited provider; a new provider without it.</summary>
+    [Parameter]
+    public string? ProviderId { get; set; }
+
+    /// <summary>Shows the "settings saved" toast after saving (the original's <c>showConfirmation</c>).</summary>
+    [Parameter]
+    public bool ShowConfirmation { get; set; } = true;
+
+    [Parameter]
+    public bool ShowCancelButton { get; set; } = true;
+
+    [Parameter]
+    public bool ShowSubmitButton { get; set; } = true;
+
+    /// <summary>Raised once the provider has been saved.</summary>
+    [Parameter]
+    public EventCallback OnSubmitted { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded && _loadedFor == ProviderId)
+        {
+            return;
+        }
+
+        _loaded = true;
+        _loadedFor = ProviderId;
+        await ReloadAsync();
+    }
+
+    private static string Join(JsonNode? info, string name) => string.Join('|', info.Strings(name));
+
+    private static JsonArray Categories(string? value)
+    {
+        var categories = new JsonArray();
+        if (!string.IsNullOrEmpty(value))
+        {
+            foreach (var category in value.Split('|'))
+            {
+                categories.Add(category);
+            }
+        }
+
+        return categories;
+    }
+
+    private async Task ReloadAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var configuration = await LiveTv.GetConfigurationAsync();
+            var info = LiveTvAdmin.FindProvider(configuration, ProviderId) ?? await LiveTv.GetDefaultProviderAsync();
+            _path = info.Text("Path");
+            _kids = Join(info, "KidsCategories");
+            _news = Join(info, "NewsCategories");
+            _sports = Join(info, "SportsCategories");
+            _movies = Join(info, "MovieCategories");
+            _moviePrefix = info.Text("MoviePrefix");
+            _userAgent = info.Text("UserAgent");
+            _provider = info;
+            _tunerHosts = configuration.List("TunerHosts");
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            AppLog.Warn("[XmlTvProvider] unable to load the provider: " + ex.Message);
+        }
+
+        Loading.Hide();
+    }
+
+    private async Task SelectPathAsync()
+    {
+        var path = await DirectoryBrowser.ShowAsync(Dialogs, includeFiles: true);
+        if (!string.IsNullOrEmpty(path))
+        {
+            _path = path;
+            StateHasChanged();
+            await _pathInput.FocusAsync();
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        Loading.Show();
+        try
+        {
+            var info = LiveTvAdmin.FindProvider(await LiveTv.GetConfigurationAsync(), ProviderId)?.DeepClone().AsObject() ?? new JsonObject();
+            var allTuners = _tuners?.EnableAllTuners ?? false;
+            info["Type"] = "xmltv";
+            info["Path"] = _path ?? string.Empty;
+            info["MoviePrefix"] = string.IsNullOrEmpty(_moviePrefix) ? null : _moviePrefix;
+            info["UserAgent"] = string.IsNullOrEmpty(_userAgent) ? null : _userAgent;
+            info["MovieCategories"] = Categories(_movies);
+            info["KidsCategories"] = Categories(_kids);
+            info["NewsCategories"] = Categories(_news);
+            info["SportsCategories"] = Categories(_sports);
+            info["EnableAllTuners"] = allTuners;
+            info["EnabledTuners"] = _tuners?.EnabledTuners() ?? new JsonArray();
+            await LiveTv.SaveProviderAsync(info, validateListings: true);
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            Loading.Hide();
+            await Dialogs.AlertAsync(Globalize["ErrorAddingXmlTvFile"]);
+            return;
+        }
+
+        Loading.Hide();
+        if (ShowConfirmation)
+        {
+            Toasts.Show(Globalize["SettingsSaved"]);
+        }
+
+        await OnSubmitted.InvokeAsync();
+    }
+}

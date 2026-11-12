@@ -1,0 +1,74 @@
+@* Looks for tuners on the network and lets the user pick one. Port of components/tunerPicker.js. *@
+@namespace Jellyfin.Web.Components
+@using System.Text.Json.Nodes
+@inject LiveTvAdminApi LiveTv
+@inject LoadingService Loading
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["HeaderLiveTvTunerSetup"]</h3>
+</div>
+<div class="formDialogContent scrollY">
+    <div class="dialogContentInner dialog-content-centered">
+        <div class="loadingContent @(_devices is null ? null : "hide")">
+            <h1>@Globalize["DetectingDevices"]...</h1>
+            <p>@Globalize["MessagePleaseWait"]</p>
+        </div>
+        <h1 style="margin-bottom:.25em;" class="devicesHeader @(_devices is { Count: > 0 } ? null : "hide")">@Globalize["HeaderNewDevices"]</h1>
+        <div class="itemsContainer results vertical-wrap">
+            @if (_devices is { Count: 0 })
+            {
+                <p><br />@Globalize["NoNewDevicesFound"]</p>
+            }
+            @foreach (var device in _devices ?? [])
+            {
+                var found = device;
+                <button type="button" class="card scalableCard backdropCard backdropCard-scalable" data-id="@found.Text("DeviceId")" style="min-width:33.3333%;"
+                        @onclick="() => Dialog.Close(found)">
+                    <div class="cardBox visualCardBox">
+                        <div class="cardScalable visualCardBox-cardScalable">
+                            <div class="cardPadder-backdrop"></div>
+                            <div class="cardContent searchImage">
+                                <div class="cardImageContainer coveredImage"><span class="cardImageIcon material-icons dvr" aria-hidden="true"></span></div>
+                            </div>
+                        </div>
+                        <div class="cardFooter visualCardBox-cardFooter">
+                            <div class="cardText cardTextCentered">@LiveTvAdmin.PickerTunerName(found.Text("Type"))</div>
+                            <div class="cardText cardTextCentered cardText-secondary">@found.Text("FriendlyName")</div>
+                            <div class="cardText cardText-secondary cardTextCentered">@(found.Text("Url") is { Length: > 0 } url ? url : " ")</div>
+                        </div>
+                    </div>
+                </button>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<JsonObject>? _devices;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>Opens the picker; returns the chosen device, or null when it was closed without one.</summary>
+    public static async Task<JsonObject?> ShowAsync(AppDialogs dialogs) =>
+        await dialogs.ShowAsync<DashboardLiveTvTunerPicker>(options: new AppDialogOptions { Size = "small", Class = "formDialog" }) as JsonObject;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Loading.Show();
+        try
+        {
+            _devices = (await LiveTv.DiscoverTunersAsync()).OfType<JsonObject>().ToList();
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            // The original keeps "Detecting devices..." on screen when the search fails; say that nothing was found.
+            AppLog.Warn("[TunerPicker] unable to look for tuners: " + ex.Message);
+            _devices = [];
+        }
+
+        Loading.Hide();
+    }
+}

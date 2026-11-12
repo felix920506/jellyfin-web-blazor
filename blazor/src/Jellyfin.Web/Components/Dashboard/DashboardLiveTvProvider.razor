@@ -1,0 +1,73 @@
+@* A guide provider of the Live TV status page, with its menu (map channels, delete).
+   Port of apps/dashboard/features/livetv/components/Provider.tsx. *@
+@namespace Jellyfin.Web.Components
+@using System.Text.Json.Nodes
+@inject LiveTvAdminApi LiveTv
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+<div class="jf-dashboard-task jf-dashboard-livetv-provider" data-providerid="@Id">
+    <a class="mud-list-item mud-list-item-gutters mud-list-item-clickable mud-ripple jf-dashboard-task-link" href="@EditUrl">
+        <div class="mud-list-item-avatar">
+            <MudAvatar Color="Color.Primary" Class="jf-dashboard-livetv-provider-avatar">
+                <MudIcon Icon="@MdIcon.Of("dvr")" />
+            </MudAvatar>
+        </div>
+        <div class="mud-list-item-text">
+            <h3 class="mud-typography mud-typography-h3 jf-dashboard-livetv-provider-name">@LiveTvAdmin.ProviderName(Provider.Text("Type"))</h3>
+            <p class="mud-typography mud-typography-body1 mud-text-secondary jf-dashboard-livetv-provider-source">@Source</p>
+        </div>
+    </a>
+    <div class="jf-dashboard-task-action">
+        <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
+            <ActivatorContent Context="menu">
+                <MudIconButton Icon="@MdIcon.Of("more_vert")" Class="jf-dashboard-livetv-provider-menu" aria-label="@Globalize["ButtonMore"]"
+                               OnClick="@(e => menu.ToggleAsync(e))" />
+            </ActivatorContent>
+            <ChildContent>
+                <MudMenuItem Icon="@MdIcon.Of("location_searching")" Label="@Globalize["MapChannels"]" Class="jf-dashboard-livetv-provider-map" OnClick="MapChannelsAsync" />
+                <MudMenuItem Icon="@MdIcon.Of("delete")" Label="@Globalize["Delete"]" Class="jf-dashboard-livetv-provider-delete" OnClick="DeleteAsync" />
+            </ChildContent>
+        </MudMenu>
+    </div>
+</div>
+
+@code {
+    /// <summary>The provider as the Live TV options hold it.</summary>
+    [Parameter, EditorRequired]
+    public JsonObject Provider { get; set; } = default!;
+
+    /// <summary>Raised after the provider was removed.</summary>
+    [Parameter]
+    public EventCallback OnDeleted { get; set; }
+
+    private string? Id => Provider.Text("Id");
+
+    private string? Source => Provider.Text("Path") is { Length: > 0 } path ? path : Provider.Text("ListingsId");
+
+    // A provider of a type without a form has no page to open (the original links nowhere useful).
+    private string? EditUrl => LiveTvAdmin.ProviderRoute(Provider.Text("Type"), Id) is { } route ? "#" + route : null;
+
+    private Task MapChannelsAsync() => DashboardLiveTvChannelMapper.ShowAsync(Dialogs, Id);
+
+    private async Task DeleteAsync()
+    {
+        var confirmed = await Dialogs.MuiConfirmAsync(
+            Globalize["HeaderDeleteProvider"], Globalize["MessageConfirmDeleteGuideProvider"], Globalize["Delete"], destructive: true);
+        if (!confirmed || Id is not { Length: > 0 } id)
+        {
+            return;
+        }
+
+        try
+        {
+            await LiveTv.DeleteProviderAsync(id);
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            AppLog.Warn("[LiveTv] unable to delete the guide provider: " + ex.Message);
+        }
+
+        await OnDeleted.InvokeAsync();
+    }
+}

@@ -23,6 +23,8 @@
     </MudTooltip>
 }
 
+@ChildContent
+
 <div class="jf-dashboard-title">@Shell.Title</div>
 
 <div class="jf-toolbar-end">
@@ -48,6 +50,10 @@
 
     [Parameter]
     public EventCallback OnDrawerButtonClick { get; set; }
+
+    /// <summary>What the layout puts in front of the title (the children of the original toolbar).</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
 
     protected override void OnInitialized()
     {

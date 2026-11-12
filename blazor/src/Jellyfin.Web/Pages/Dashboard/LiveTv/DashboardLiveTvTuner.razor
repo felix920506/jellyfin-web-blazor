@@ -1,0 +1,185 @@
+@* Adds or edits a tuner device. Port of apps/dashboard/controllers/livetvtuner.html and livetvtuner.js. *@
+@attribute [Route("/dashboard/livetv/tuner")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject LiveTvAdminApi LiveTv
+@inject AppDialogs Dialogs
+@inject AppRouter Router
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<Page Id="liveTvTunerPage" Class="type-interior liveTvSettingsPage">
+    <div>
+        <div class="content-primary">
+            <form @onsubmit="SaveAsync" @onsubmit:preventDefault="true" @onsubmit:stopPropagation="true">
+                <div class="verticalSection">
+                    <DashboardSectionTitle Title="@Globalize["HeaderLiveTvTunerSetup"]" />
+                </div>
+
+                @if (_types is not null)
+                {
+                    <EmbySelect Class="selectType" Label="@Globalize["LabelTunerType"]" Required="true" Disabled="@(!string.IsNullOrEmpty(Id))"
+                                Value="@_form.Type" ValueChanged="@(type => _form.Type = type ?? string.Empty)">
+                        @foreach (var type in _types)
+                        {
+                            <option value="@type.Text("Id")">@type.Text("Name")</option>
+                        }
+                        <option value="@LiveTvTunerForm.OtherType">@Globalize["TabOther"]</option>
+                    </EmbySelect>
+                }
+
+                <EmbyButton Class="@("raised button-cancel block btnDetect" + Hide(!string.IsNullOrEmpty(Id)))" style="margin-bottom:3em;" OnClick="DetectAsync">
+                    <span>@Globalize["HeaderDetectMyDevices"]</span>
+                </EmbyButton>
+
+                <EmbyInput Class="txtFriendlyName" ContainerClass="fldFriendlyName hide" Label="@Globalize["LabelFriendlyName"]" @bind-Value="_form.FriendlyName" />
+
+                <div class="inputContainer fldPath@(Hide(!_form.ShowsPath))">
+                    <div style="display: flex; align-items: center;">
+                        <div style="flex-grow: 1;">
+                            <label class="inputLabel @(_pathFocused ? "inputLabelFocused" : "inputLabelUnfocused")" for="txtDevicePath">@Globalize[_form.PathLabel]</label>
+                            <input id="txtDevicePath" class="emby-input txtDevicePath" type="text" value="@_form.Url" required="@_form.SupportsSelectablePath" autocomplete="off"
+                                   @oninput="args => _form.Url = args.Value?.ToString()"
+                                   @onfocus="() => _pathFocused = true" @onblur="() => _pathFocused = false" />
+                        </div>
+                        <IconButton Icon="search" Class="@("btnSelectPath emby-input-iconbutton" + Hide(!_form.SupportsSelectablePath))" OnClick="SelectPathAsync" />
+                    </div>
+                </div>
+
+                <EmbyInput Class="txtUserAgent" ContainerClass="@("fldUserAgent" + Hide(!_form.SupportsUserAgent))" Label="@Globalize["LabelUserAgent"]"
+                           Description="@Globalize["UserAgentHelp"]" @bind-Value="_form.UserAgent" />
+
+                <EmbyInput Type="number" Class="txtTunerCount" ContainerClass="@("fldTunerCount" + Hide(!_form.SupportsTunerCount))"
+                           Label="@Globalize["LabelSimultaneousConnectionLimit"]" Description="@Globalize["SimultaneousConnectionLimitHelp"]"
+                           Required="@_form.SupportsTunerCount" pattern="[0-9]*" min="0" step="1" @bind-Value="_form.TunerCount" />
+
+                <EmbyInput Type="number" Class="txtFallbackMaxStreamingBitrate" ContainerClass="@("fldFallbackMaxStreamingBitrate" + Hide(!_form.SupportsFallbackBitrate))"
+                           Label="@Globalize["LabelFallbackMaxStreamingBitrate"]" Description="@Globalize["FallbackMaxStreamingBitrateHelp"]"
+                           Required="true" pattern="[0-9]*" min="1" step="1" @bind-Value="_form.FallbackMaxStreamingBitrate" />
+
+                <div class="checkboxContainer checkboxContainer-withDescription fldFavorites@(Hide(!_form.SupportsFavorites))">
+                    <EmbyCheckbox Class="chkFavorite" Label="@Globalize["LabelImportOnlyFavoriteChannels"]" @bind-Value="_form.ImportFavoritesOnly" />
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["ImportFavoriteChannelsHelp"]</div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription fldTranscode@(Hide(!_form.SupportsTranscoding))">
+                    <EmbyCheckbox Class="chkTranscode" Label="@Globalize["LabelAllowHWTranscoding"]" @bind-Value="_form.AllowHWTranscoding" />
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["AllowHWTranscodingHelp"]</div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription fldFmp4Container@(Hide(!_form.SupportsFmp4Container))">
+                    <EmbyCheckbox Class="chkFmp4Container" Label="@Globalize["LabelAllowFmp4TranscodingContainer"]" @bind-Value="_form.AllowFmp4TranscodingContainer" />
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["AllowFmp4TranscodingContainerHelp"]</div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription fldStreamSharing@(Hide(!_form.SupportsStreamSharing))">
+                    <EmbyCheckbox Class="chkStreamSharing" Label="@Globalize["LabelAllowStreamSharing"]" @bind-Value="_form.AllowStreamSharing" />
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["AllowStreamSharingHelp"]</div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription fldStreamLoop@(Hide(!_form.SupportsStreamLooping))">
+                    <EmbyCheckbox Class="chkStreamLoop" Label="@Globalize["EnableStreamLooping"]" @bind-Value="_form.EnableStreamLooping" />
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["EnableStreamLoopingHelp"]</div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription fldIgnoreDts@(Hide(!_form.SupportsIgnoreDts))">
+                    <EmbyCheckbox Class="chkIgnoreDts" Label="@Globalize["IgnoreDts"]" @bind-Value="_form.IgnoreDts" />
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["IgnoreDtsHelp"]</div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription fldReadInputAtNativeFramerate@(Hide(!_form.SupportsReadInputAtNativeFramerate))">
+                    <EmbyCheckbox Class="chkReadInputAtNativeFramerate" Label="@Globalize["ReadInputAtNativeFramerate"]" @bind-Value="_form.ReadAtNativeFramerate" />
+                    <div class="fieldDescription checkboxFieldDescription">@Globalize["ReadInputAtNativeFramerateHelp"]</div>
+                </div>
+
+                <p class="drmMessage@(Hide(!_form.MayIncludeUnsupportedDrmChannels))">@Globalize["DrmChannelsNotImported"]</p>
+                <br />
+                <input type="hidden" class="fldDeviceId" value="@_form.DeviceId" />
+                <div>
+                    <EmbyButton Type="submit" Class="@("raised button-submit block" + Hide(!_form.SupportsSubmit))">
+                        <span>@Globalize["Save"]</span>
+                    </EmbyButton>
+                    <EmbyButton Class="raised button-cancel block btnCancel" OnClick="@(() => Router.Back())">
+                        <span>@Globalize["ButtonCancel"]</span>
+                    </EmbyButton>
+                </div>
+            </form>
+        </div>
+    </div>
+</Page>
+
+@code {
+    private LiveTvTunerForm _form = new();
+    private List<JsonNode?>? _types;
+    private string? _shownId;
+    private bool _shown;
+    private bool _pathFocused;
+
+    /// <summary>The id of the edited tuner (<c>?id=</c>); a new tuner without it.</summary>
+    [Parameter]
+    public string? Id { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_shown && _shownId == Id)
+        {
+            return;
+        }
+
+        _shown = true;
+        _shownId = Id;
+        _form = new LiveTvTunerForm();
+        try
+        {
+            _types = [.. await LiveTv.GetTunerTypesAsync()];
+            if (!string.IsNullOrEmpty(Id))
+            {
+                _form.Fill(LiveTvAdmin.FindTuner(await LiveTv.GetConfigurationAsync(), Id));
+            }
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            AppLog.Warn("[LiveTvTuner] unable to load the tuner form: " + ex.Message);
+            _types ??= [];
+        }
+    }
+
+    private static string? Hide(bool hidden) => hidden ? " hide" : null;
+
+    private async Task DetectAsync()
+    {
+        if (await DashboardLiveTvTunerPicker.ShowAsync(Dialogs) is { } device)
+        {
+            _form.Fill(device);
+        }
+    }
+
+    private async Task SelectPathAsync()
+    {
+        var path = await DirectoryBrowser.ShowAsync(Dialogs, includeFiles: true);
+        if (!string.IsNullOrEmpty(path))
+        {
+            _form.Url = path;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        Loading.Show();
+        try
+        {
+            await LiveTv.SaveTunerAsync(_form.ToInfo(Id));
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            Loading.Hide();
+            await Dialogs.AlertAsync(Globalize["ErrorSavingTvProvider"]);
+            return;
+        }
+
+        Loading.Hide();
+        Toasts.Show(Globalize["SettingsSaved"]);
+        Router.Navigate(LiveTvAdmin.IndexRoute);
+    }
+}

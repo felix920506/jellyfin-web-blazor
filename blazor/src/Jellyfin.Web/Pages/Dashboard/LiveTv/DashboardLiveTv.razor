@@ -1,0 +1,150 @@
+@* Live TV status: the tuner devices and the guide providers. Port of apps/dashboard/routes/livetv/index.tsx. *@
+@attribute [Route("/dashboard/livetv")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Text.Json
+@implements IDisposable
+@inject JellyfinApi Api
+@inject LiveTvAdminApi LiveTv
+@inject ServerEvents Events
+@inject Globalize Globalize
+
+<Page Id="liveTvStatusPage" Title="@Globalize["LiveTV"]" Class="mainAnimatedPage type-interior">
+    @if (_configuration is null && !_failed)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["HeaderError"]</MudAlert>
+            }
+            else
+            {
+                <div class="jf-dashboard-form jf-dashboard-livetv">
+                    <MudText Typo="Typo.h2">@Globalize["HeaderTunerDevices"]</MudText>
+
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@MdIcon.Of("add")" Href="@("#" + LiveTvAdmin.TunerRoute())"
+                               Class="jf-dashboard-livetv-start jf-dashboard-livetv-add-tuner">@Globalize["ButtonAddTunerDevice"]</MudButton>
+
+                    <div class="jf-dashboard-livetv-tuners">
+                        @foreach (var tuner in _configuration.List("TunerHosts").OfType<JsonObject>())
+                        {
+                            <DashboardLiveTvTunerCard @key="@tuner.Text("Id")" Tuner="tuner" OnDeleted="ReloadAsync" />
+                        }
+                    </div>
+
+                    <MudText Typo="Typo.h2">@Globalize["HeaderGuideProviders"]</MudText>
+
+                    <div class="jf-dashboard-livetv-start jf-dashboard-stack">
+                        <div class="jf-dashboard-livetv-guide-buttons">
+                            <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" Class="jf-dashboard-livetv-provider-menu">
+                                <ActivatorContent Context="menu">
+                                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@MdIcon.Of("add")"
+                                               Class="jf-dashboard-livetv-add-provider" OnClick="@(e => menu.ToggleAsync(e))">@Globalize["ButtonAddProvider"]</MudButton>
+                                </ActivatorContent>
+                                <ChildContent>
+                                    <MudMenuItem Href="@("#" + LiveTvAdmin.ProviderRoute("schedulesdirect"))" Label="Schedules Direct" Class="jf-dashboard-livetv-add-schedulesdirect" />
+                                    <MudMenuItem Href="@("#" + LiveTvAdmin.ProviderRoute("xmltv"))" Label="XMLTV" Class="jf-dashboard-livetv-add-xmltv" />
+                                </ChildContent>
+                            </MudMenu>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="IsRefreshing"
+                                       StartIcon="@(IsRefreshing ? null : MdIcon.Of("refresh"))" Class="jf-dashboard-livetv-refresh" OnClick="RefreshGuideAsync">
+                                @if (IsRefreshing)
+                                {
+                                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="jf-dashboard-livetv-refreshing" />
+                                }
+                                @Globalize["ButtonRefreshGuideData"]
+                            </MudButton>
+                        </div>
+
+                        @if (IsRefreshing && RefreshGuideTask is { } task)
+                        {
+                            <DashboardTaskProgress Info="task" />
+                        }
+                    </div>
+
+                    @if (_configuration.List("ListingProviders").Count > 0)
+                    {
+                        <div class="mud-list mud-list-padding jf-dashboard-list jf-dashboard-livetv-providers">
+                            @foreach (var provider in _configuration.List("ListingProviders").OfType<JsonObject>())
+                            {
+                                <DashboardLiveTvProvider @key="@provider.Text("Id")" Provider="provider" OnDeleted="ReloadAsync" />
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private JsonObject? _configuration;
+    private List<TaskInfo>? _tasks;
+    private LiveFeed? _feed;
+    private bool _failed;
+
+    private TaskInfo? RefreshGuideTask => _tasks?.FirstOrDefault(task => task.Key == "RefreshGuide");
+
+    private bool IsRefreshing => RefreshGuideTask?.State == TaskInfo_State.Running;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _feed = new LiveFeed(Events, "ScheduledTasksInfo", "1000,1000", OnTasksMessage);
+        try
+        {
+            var tasks = Api.Client.ScheduledTasks.GetAsync(request => request.QueryParameters.IsHidden = false);
+            var configuration = await LiveTv.GetConfigurationAsync();
+            // An update that arrived while the request ran is newer than its answer.
+            _tasks ??= await tasks ?? [];
+            _configuration = configuration;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LiveTv] unable to load the Live TV status: " + ex.Message);
+            _failed = true;
+        }
+    }
+
+    public void Dispose() => _feed?.Dispose();
+
+    private void OnTasksMessage(JsonElement data) => _ = InvokeAsync(() =>
+    {
+        // The feed carries every task, also the hidden ones the page does not look at.
+        _tasks = KiotaJson.ParseList(data, TaskInfo.CreateFromDiscriminatorValue).Where(task => task.IsHidden != true).ToList();
+        StateHasChanged();
+    });
+
+    // After a tuner or provider was removed (the original invalidates its configuration query).
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            _configuration = await LiveTv.GetConfigurationAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LiveTv] unable to reload the Live TV status: " + ex.Message);
+        }
+    }
+
+    private async Task RefreshGuideAsync()
+    {
+        if (RefreshGuideTask?.Id is not { Length: > 0 } id)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.ScheduledTasks.Running[id].PostAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LiveTv] unable to start the guide refresh: " + ex.Message);
+        }
+    }
+}

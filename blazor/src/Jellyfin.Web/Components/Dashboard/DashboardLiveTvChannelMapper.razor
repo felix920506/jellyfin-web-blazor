@@ -1,0 +1,126 @@
+@* Maps the channels of the tuners to the channels of a guide provider.
+   Port of components/channelMapper/channelMapper.js. *@
+@namespace Jellyfin.Web.Components
+@using System.Text.Json.Nodes
+@inject LiveTvAdminApi LiveTv
+@inject AppDialogs Dialogs
+@inject LoadingService Loading
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["MapChannels"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY">
+    <div class="dialogContentInner dialog-content-centered">
+        <form style="margin:auto;" @onsubmit:preventDefault="true">
+            <h1>@Globalize["Channels"]</h1>
+            <div class="channels paperList">
+                @foreach (var channel in _channels)
+                {
+                    var row = channel;
+                    <div @key="row" class="listItem">
+                        <span class="material-icons listItemIcon dvr" aria-hidden="true"></span>
+                        <div class="listItemBody two-line">
+                            <h3 class="listItemBodyText">@row.Name</h3>
+                            <div class="secondary listItemBodyText">@row.Secondary</div>
+                        </div>
+                        <button type="button" class="btnMap autoSize paper-icon-button-light" data-id="@row.Id" data-providerid="@row.ProviderChannelId"
+                                @onclick="() => MapAsync(row)">
+                            <span class="material-icons mode_edit" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                }
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private readonly List<Channel> _channels = [];
+    private List<ActionSheetItem> _providerChannels = [];
+    private string? _providerName;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The guide provider whose channels are mapped.</summary>
+    [Parameter]
+    public string? ProviderId { get; set; }
+
+    /// <summary>Opens the channel mapper of a guide provider; completes when it is closed.</summary>
+    public static Task ShowAsync(AppDialogs dialogs, string? providerId) =>
+        dialogs.ShowAsync<DashboardLiveTvChannelMapper>(
+            new Dictionary<string, object?> { [nameof(ProviderId)] = providerId },
+            new AppDialogOptions { Size = "small", Class = "formDialog ui-body-a background-theme-a" });
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var options = await LiveTv.GetChannelMappingOptionsAsync(ProviderId);
+            _providerName = options.Text("ProviderName");
+            _providerChannels = options.List("ProviderChannels")
+                .Select(channel => new ActionSheetItem { Id = channel.Text("Id") ?? string.Empty, Name = channel.Text("Name") ?? string.Empty })
+                .OrderBy(channel => channel.Name, StringComparer.CurrentCulture)
+                .ToList();
+            foreach (var channel in options.List("TunerChannels"))
+            {
+                _channels.Add(new Channel
+                {
+                    Id = channel.Text("Id"),
+                    Name = channel.Text("Name"),
+                    ProviderChannelId = channel.Text("ProviderChannelId"),
+                    Secondary = channel.Text("ProviderChannelName") is { Length: > 0 } ? SecondaryName(channel) : string.Empty,
+                });
+            }
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            // The original leaves the list empty as well.
+            AppLog.Warn("[ChannelMapper] unable to load the channels: " + ex.Message);
+        }
+    }
+
+    private string SecondaryName(JsonNode? mapping) => $"{mapping.Text("ProviderChannelName") ?? string.Empty} - {_providerName}";
+
+    private async Task MapAsync(Channel channel)
+    {
+        var chosen = await Dialogs.ActionSheetAsync(new ActionSheetOptions
+        {
+            PositionTo = ActionSheetAnchor.LastClicked,
+            Items = _providerChannels
+                .Select(item => item with { Selected = string.Equals(item.Id, channel.ProviderChannelId, StringComparison.OrdinalIgnoreCase) })
+                .ToList(),
+        });
+        if (chosen is null)
+        {
+            return;
+        }
+
+        Loading.Show();
+        try
+        {
+            var mapping = await LiveTv.SetChannelMappingAsync(ProviderId, channel.Id, chosen);
+            channel.ProviderChannelId = mapping.Text("ProviderChannelId");
+            channel.Secondary = SecondaryName(mapping);
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            AppLog.Warn("[ChannelMapper] unable to map the channel: " + ex.Message);
+        }
+
+        Loading.Hide();
+    }
+
+    private sealed class Channel
+    {
+        public string? Id { get; init; }
+
+        public string? Name { get; init; }
+
+        public string? ProviderChannelId { get; set; }
+
+        public string Secondary { get; set; } = string.Empty;
+    }
+}
