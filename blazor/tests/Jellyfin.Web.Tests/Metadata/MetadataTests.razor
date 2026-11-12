@@ -1,0 +1,44 @@
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Metadata
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@inherits DashboardTestContext
+
+@code {
+    private const string MovieId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    [Fact]
+    public void Metadata_manager_loads_media_folders_and_keeps_the_selected_item_in_the_URL()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/LiveTv/Channels", new { TotalRecordCount = 0, Items = Array.Empty<object>() });
+        App.Server.OnGet("/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Ancestors", Array.Empty<object>());
+        App.Server.OnGet("/Library/MediaFolders", new
+        {
+            Items = new[] { new { Id = MovieId, Name = "Movies", Type = "CollectionFolder", IsFolder = true, CollectionType = "movies" } },
+        });
+
+        var cut = RenderAt<MetadataManager>($"/metadata?id={MovieId}", page => page.Add(p => p.Id, MovieId));
+
+        cut.Eventually(() => Assert.Contains("Movies", cut.Markup));
+        Assert.NotNull(cut.Find("#editItemMetadataPage"));
+        Assert.NotNull(cut.Find(".libraryTree"));
+        Assert.Single(App.Server.RequestsTo("/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Ancestors"));
+    }
+
+    [Fact]
+    public void Tree_labels_channel_and_index_numbers_like_the_legacy_tree()
+    {
+        var channel = MetadataTreeNode.FromItem(new System.Text.Json.Nodes.JsonObject
+        {
+            ["Id"] = "channel",
+            ["Name"] = "News",
+            ["Number"] = "8",
+            ["Type"] = "TvChannel",
+        }, opened: false);
+
+        Assert.Equal("8 - News", channel.Text);
+        Assert.Equal("live_tv", channel.Icon);
+    }
+}

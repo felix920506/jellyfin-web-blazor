@@ -12,19 +12,27 @@
 @inject Globalize Globalize
 
 <div class="formDialogHeader">
-    <IconButton Icon="arrow_back" Class="@("btnCancel btnBack autoSize" + (IsDesktop ? " hide" : null))" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <IconButton Icon="arrow_back" Class="@("btnCancel btnBack autoSize" + (IsDesktop ? " hide" : null))" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog?.Cancel()" />
     <h3 class="formDialogHeaderTitle">@Globalize["Edit"]</h3>
     <div class="dialogHeader flex align-items-center justify-content-center">
+        @if (Embedded)
+        {
+            @* Embedded in the metadata manager (embed() in the original): saving from the header, nothing to close. *@
+            <button type="submit" form="@_formId" class="emby-button btnHeaderSave button-accent-flat button-flat" tabindex="-1">
+                <Icon Name="check" />
+                <span>@Globalize["Save"]</span>
+            </button>
+        }
         <button @ref="_btnMore" type="button" class="paper-icon-button-light btnMore autoSize" tabindex="-1" title="@Globalize["ButtonMore"]"
                 aria-label="@Globalize["ButtonMore"]" @onclick="ShowMoreMenuAsync">
             <Icon Name="more_vert" />
         </button>
-        <IconButton Icon="close" Class="@("btnCancel btnClose autoSize" + (IsDesktop ? null : " hide"))" Title="@Globalize["ButtonClose"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+        <IconButton Icon="close" Class="@("btnCancel btnClose autoSize" + (IsDesktop && !Embedded ? null : " hide"))" Title="@Globalize["ButtonClose"]" tabindex="-1" OnClick="() => Dialog?.Cancel()" />
     </div>
 </div>
 
 <div class="formDialogContent smoothScrollY" style="padding-top:2em;">
-    <form class="editItemMetadataForm editMetadataForm dialogContentInner dialog-content-centered" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+    <form id="@(Embedded ? _formId : null)" class="editItemMetadataForm editMetadataForm dialogContentInner dialog-content-centered" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
         <div class="metadataFormFields">
             <div style="padding: 0 0 10px;">
                 <EditorSelect Id="selectContentType" ContainerId="fldContentType" Hidden="@(_contentTypes.Count == 0)" Label="@Globalize["LabelContentType"]" @bind-Value="_contentType">
@@ -251,8 +259,8 @@
                 </div>
             </div>
             <br />
-            <div class="formDialogFooter formDialogFooter-justifyEnd">
-                <button type="button" class="emby-button raised button-cancel block btnCancel formDialogFooterItem" @onclick="() => Dialog.Cancel()">
+            <div class="@(Embedded ? "formDialogFooter-justifyEnd" : "formDialogFooter formDialogFooter-justifyEnd")">
+                <button type="button" class="emby-button raised button-cancel block btnCancel formDialogFooterItem" @onclick="() => Dialog?.Cancel()">
                     <span>@Globalize["ButtonCancel"]</span>
                 </button>
                 <button type="button" class="emby-button raised button-reset block btnReset formDialogFooterItem" @onclick="Reset">
@@ -287,11 +295,31 @@
     private ElementReference _btnMore;
 
     [CascadingParameter]
-    public DialogInstance Dialog { get; set; } = default!;
+    public DialogInstance? Dialog { get; set; }
 
     /// <summary>The id of the item to edit.</summary>
     [Parameter, EditorRequired]
     public string ItemId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Shows the editor inside a page instead of a dialog (<c>metadataEditor.embed()</c>, the metadata
+    /// manager): a save button in the header, no close button, and the editor stays after saving.
+    /// </summary>
+    [Parameter]
+    public bool Embedded { get; set; }
+
+    /// <summary>Raised with the item that was sent to the server once it has been saved.</summary>
+    [Parameter]
+    public EventCallback<JsonObject> OnSaved { get; set; }
+
+    /// <summary>
+    /// Raised with the parent's id after the embedded editor's item was deleted; the host then shows
+    /// the parent. Without a handler the editor loads the parent itself, as the original does.
+    /// </summary>
+    [Parameter]
+    public EventCallback<string> OnDeleted { get; set; }
+
+    private readonly string _formId = ElementIds.Next("editItemMetadataForm");
 
     private bool IsDesktop => AppHost.Layout == LayoutMode.Desktop;
 
@@ -303,6 +331,16 @@
         dialogs.ShowAsync<MetadataEditor>(new Dictionary<string, object?> { [nameof(ItemId)] = itemId });
 
     protected override Task OnInitializedAsync() => ReloadAsync(ItemId);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // The metadata manager keeps this component mounted while its ?id= changes. Dialog users
+        // receive one item id only, so this is a no-op for the regular ShowAsync API.
+        if (_item is not null && !string.Equals(_item.Text("Id"), ItemId, StringComparison.Ordinal))
+        {
+            await ReloadAsync(ItemId);
+        }
+    }
 
     private async Task ReloadAsync(string itemId)
     {
@@ -501,13 +539,17 @@
         if (result?.Deleted == true)
         {
             var parentId = new[] { "ParentId", "SeasonId", "SeriesId" }.Select(name => item.Text(name)).FirstOrDefault(id => !string.IsNullOrEmpty(id));
-            if (parentId is not null)
+            if (parentId is not null && Embedded && OnDeleted.HasDelegate)
+            {
+                await OnDeleted.InvokeAsync(parentId);
+            }
+            else if (parentId is not null)
             {
                 await ReloadAsync(parentId);
             }
             else
             {
-                Dialog.Cancel();
+                Dialog?.Cancel();
                 Router.GoHome();
             }
         }
@@ -607,7 +649,8 @@
 
             Toasts.Show(Globalize.Translate("MessageItemSaved"));
             Loading.Hide();
-            Dialog.Close(true);
+            Dialog?.Close(true);
+            await OnSaved.InvokeAsync(item);
         }
         catch (Exception exception) when (ItemDialogApi.IsFailure(exception))
         {

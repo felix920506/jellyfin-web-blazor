@@ -1,0 +1,48 @@
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@inherits DashboardTestContext
+
+@code {
+    [Fact]
+    public void The_tree_loads_media_children_lazily_and_adds_live_tv_when_channels_exist()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/LiveTv/Channels", new { TotalRecordCount = 1, Items = new[] { new { Id = "channel-1", Name = "News", Type = "TvChannel" } } });
+        App.Server.OnGet("/Library/MediaFolders", new
+        {
+            Items = new[] { new { Id = "movies", Name = "Movies", Type = "CollectionFolder", IsFolder = true, CollectionType = "movies" } },
+        });
+
+        var cut = Render<MetadataTree>();
+        cut.Eventually(() => Assert.Contains("Movies", cut.Markup));
+        Assert.Contains("Movies", cut.Markup);
+        Assert.Contains("Live", cut.Markup, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/Library/MediaFolders", App.Server.Requests.Select(request => request.Path));
+        Assert.Contains("/LiveTv/Channels", App.Server.Requests.Select(request => request.Path));
+    }
+
+    [Fact]
+    public void Selected_item_ancestors_are_loaded_and_the_item_is_selected()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Items/movie/Ancestors", new[] { new { Id = "movies" } });
+        App.Server.OnGet("/LiveTv/Channels", new { TotalRecordCount = 0, Items = Array.Empty<object>() });
+        App.Server.OnGet("/Library/MediaFolders", new
+        {
+            Items = new[] { new { Id = "movies", Name = "Movies", Type = "CollectionFolder", IsFolder = true, CollectionType = "movies" } },
+        });
+
+        var selected = string.Empty;
+        var cut = Render<MetadataTree>(parameters => parameters
+            .Add(tree => tree.InitialItemId, "movie")
+            .Add(tree => tree.OnNodeSelected, (MetadataTreeNode node) => selected = node.Id));
+        cut.Eventually(() => Assert.Contains("Movies", cut.Markup));
+
+        Assert.Single(App.Server.RequestsTo("/Items/movie/Ancestors"));
+        Assert.DoesNotContain("LiveTV", cut.Markup);
+        Assert.Equal(string.Empty, selected);
+    }
+}

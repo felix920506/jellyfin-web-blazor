@@ -1,0 +1,36 @@
+@* Adds or edits a guide provider; the form is the one of the provider type.
+   Port of apps/dashboard/controllers/livetvguideprovider.html and livetvguideprovider.js. *@
+@attribute [Route("/dashboard/livetv/guide")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject AppRouter Router
+
+<Page Id="liveTvGuideProviderPage" Class="type-interior liveTvSettingsPage">
+    <div>
+        <div class="content-primary">
+            <div class="readOnlyContent providerTemplate" style="margin-top: 2em;">
+                @switch ((Type ?? string.Empty).ToLowerInvariant())
+                {
+                    case "xmltv":
+                        <XmlTvProvider ProviderId="@Id" OnSubmitted="OnSubmitted" />
+                        break;
+                    case "schedulesdirect":
+                        <SchedulesDirectProvider ProviderId="@Id" OnSubmitted="OnSubmitted" />
+                        break;
+                }
+            </div>
+        </div>
+    </div>
+</Page>
+
+@code {
+    /// <summary>The provider type (<c>?type=</c>): <c>xmltv</c> or <c>schedulesdirect</c>.</summary>
+    [Parameter]
+    public string? Type { get; set; }
+
+    /// <summary>The id of the edited provider (<c>?id=</c>); a new provider without it.</summary>
+    [Parameter]
+    public string? Id { get; set; }
+
+    private void OnSubmitted() => Router.Navigate(LiveTvAdmin.IndexRoute);
+}

@@ -1,0 +1,139 @@
+// Live TV administration (Pages/Dashboard/LiveTv, Components/Dashboard/DashboardLiveTv*.razor).
+// What the inline "sx" styles of apps/dashboard/routes/livetv and features/livetv come to; the
+// breakpoints are MUI's, as in _dashboard.scss.
+$jf-dashboard-livetv-sm: 600px;
+$jf-dashboard-livetv-md: 900px;
+$jf-dashboard-livetv-lg: 1200px;
+
+// ---- Status page: routes/livetv/index.tsx ----
+
+.jf-dashboard-livetv-start {
+    align-self: flex-start;
+}
+
+// Grid container spacing 2 with items xs 12, sm 6, md 3, lg 2.4.
+.jf-dashboard-livetv-tuners {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+
+    @media (min-width: $jf-dashboard-livetv-sm) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    @media (min-width: $jf-dashboard-livetv-md) {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    @media (min-width: $jf-dashboard-livetv-lg) {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    &:empty {
+        display: none;
+    }
+}
+
+.jf-dashboard-livetv-guide-buttons {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.jf-dashboard-livetv-refreshing {
+    margin-inline-end: 8px;
+}
+
+.jf-dashboard-livetv-provider-avatar .mud-icon-root {
+    color: #fff;
+}
+
+.jf-dashboard-livetv-provider-name,
+.jf-dashboard-livetv-provider-source {
+    margin: 0;
+}
+
+.jf-dashboard-livetv-provider-name {
+    font-size: 1rem;
+    font-weight: 400;
+    line-height: 1.5;
+}
+
+.jf-dashboard-livetv-provider-source {
+    overflow-wrap: anywhere;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.43;
+}
+
+// ---- Tuner card: components/BaseCard.tsx ----
+
+.mud-card.jf-dashboard-livetv-card {
+    display: flex;
+    flex-direction: column;
+    height: 240px;
+}
+
+.jf-dashboard-livetv-card-action {
+    display: flex;
+    flex-grow: 1;
+    align-items: stretch;
+    min-height: 0;
+    color: inherit;
+    text-decoration: none;
+}
+
+.jf-dashboard-livetv-card-media {
+    display: flex;
+    flex-grow: 1;
+    align-items: center;
+    justify-content: center;
+}
+
+.mud-icon-root.jf-dashboard-livetv-card-icon {
+    font-size: 70px;
+}
+
+.jf-dashboard-livetv-card-content {
+    display: flex;
+    flex-direction: row;
+    box-sizing: border-box;
+    min-height: 50px;
+    padding: 16px 8px 16px 16px;
+
+    [dir="rtl"] & {
+        padding: 16px 16px 16px 8px;
+    }
+}
+
+.jf-dashboard-livetv-card-texts {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.mud-typography.jf-dashboard-livetv-card-title {
+    margin-bottom: 0.35em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.jf-dashboard-livetv-card-text {
+    line-break: anywhere;
+}
+
+// ---- DVR settings: routes/livetv/recordings.tsx ----
+
+// FormControl with a FormControlLabel and a FormHelperText.
+.jf-dashboard-livetv-check {
+    align-items: flex-start;
+
+    > .mud-input-control,
+    > .mud-checkbox {
+        margin: 0;
+    }
+}

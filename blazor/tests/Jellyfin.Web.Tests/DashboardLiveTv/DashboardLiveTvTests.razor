@@ -1,0 +1,209 @@
+@using System.Net
+@using System.Net.Http.Headers
+@using System.Text
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Pages.Dashboard.LiveTv
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private const string TunerId = "11111111111111111111111111111111";
+
+    private void ScriptConfiguration() => App.Server.OnGet("/System/Configuration/livetv", new
+    {
+        TunerHosts = new[]
+        {
+            new { Id = TunerId, Type = "m3u", FriendlyName = "News feed", Url = "/media/channels.m3u", AllowStreamSharing = true },
+        },
+        ListingProviders = new[]
+        {
+            new { Id = "22222222222222222222222222222222", Type = "xmltv", Path = "/media/guide.xml", EnableAllTuners = true },
+        },
+        GuideDays = "3",
+        PrePaddingSeconds = 120,
+        PostPaddingSeconds = 60,
+    });
+
+    [Fact]
+    public void Tuner_form_serializes_the_legacy_M3U_payload()
+    {
+        var form = new LiveTvTunerForm { Type = "m3u", Url = "/media/list.m3u", TunerCount = "2", FallbackMaxStreamingBitrate = "12.5", AllowStreamSharing = true };
+
+        var info = form.ToInfo(null);
+
+        Assert.Equal("m3u", info.Text("Type"));
+        Assert.Equal("/media/list.m3u", info.Text("Url"));
+        Assert.Equal("2", info.Text("TunerCount"));
+        Assert.Equal(12_500_000, info.Number("FallbackMaxStreamingBitrate"));
+        Assert.True(info.Flag("AllowStreamSharing"));
+        Assert.True(form.SupportsSelectablePath);
+        Assert.True(form.SupportsTunerCount);
+    }
+
+    [Fact]
+    public void Padding_matches_javascript_parseInt_semantics()
+    {
+        Assert.Equal("1.5", LiveTvAdmin.PaddingMinutes(new System.Text.Json.Nodes.JsonObject { ["PrePaddingSeconds"] = 90 }, "PrePaddingSeconds"));
+        Assert.Equal(120L, LiveTvAdmin.PaddingSeconds("2minutes")!.GetValue<long>());
+        Assert.Null(LiveTvAdmin.PaddingSeconds("words"));
+    }
+
+    [Fact]
+    public async Task The_tuner_reset_posts_to_its_server_endpoint()
+    {
+        SignIn(admin: true);
+        App.Server.OnPost($"/LiveTv/Tuners/{TunerId}/Reset");
+        await Get<LiveTvAdminApi>().ResetTunerAsync(TunerId);
+
+        Assert.Single(App.Server.RequestsTo($"/LiveTv/Tuners/{TunerId}/Reset"));
+    }
+
+    [Fact]
+    public async Task DVR_settings_save_the_full_live_tv_configuration()
+    {
+        SignIn(admin: true);
+        ScriptConfiguration();
+        App.Server.OnPost("/System/Configuration/livetv");
+        var cut = Render<DashboardLiveTvRecordings>();
+        cut.Eventually(() => Assert.NotNull(cut.Find("form.jf-dashboard-livetv-recordings")));
+
+        await cut.Find("#jf-dashboard-livetv-prepadding").ChangeAsync(new ChangeEventArgs { Value = "5" });
+        await cut.Find("form.jf-dashboard-livetv-recordings").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(BodiesTo("/System/Configuration/livetv")));
+        var body = Assert.Single(BodiesTo("/System/Configuration/livetv"));
+        Assert.Equal(300, body.GetProperty("PrePaddingSeconds").GetInt64());
+        Assert.Equal("3", body.GetProperty("GuideDays").GetString());
+    }
+
+    [Fact]
+    public async Task Typing_a_tuner_path_updates_the_saved_payload()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/LiveTv/TunerHosts/Types", new[] { new { Id = "m3u", Name = "M3U Tuner" } });
+        App.Server.OnPost("/LiveTv/TunerHosts");
+        var cut = Render<DashboardLiveTvTuner>();
+        cut.Eventually(() => Assert.NotNull(cut.Find(".selectType")));
+
+        await cut.Find(".selectType").ChangeAsync(new ChangeEventArgs { Value = "m3u" });
+        await cut.Find("#txtDevicePath").InputAsync(new ChangeEventArgs { Value = "/media/typed.m3u" });
+        await cut.Find("form").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/LiveTv/TunerHosts")));
+        Assert.Equal("/media/typed.m3u", Assert.Single(App.Server.RequestsTo("/LiveTv/TunerHosts")).JsonBody().Text("Url"));
+    }
+
+    [Fact]
+    public async Task XMLTV_typing_before_defaults_arrive_is_not_overwritten()
+    {
+        SignIn(admin: true);
+        var configurationLoaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        App.Server.OnGet("/System/Configuration/livetv", _ => DelayedJson("{}", configurationLoaded.Task));
+        App.Server.OnGet("/LiveTv/ListingProviders/Default", new { Type = "xmltv", Path = "/media/default.xml" });
+        var cut = Render<XmlTvProvider>();
+        cut.Eventually(() => Assert.NotNull(cut.Find("input.txtPath")));
+
+        await cut.Find("input.txtPath").InputAsync(new ChangeEventArgs { Value = "/media/typed.xml" });
+        configurationLoaded.SetResult();
+
+        cut.Eventually(() => Assert.Equal("/media/typed.xml", cut.Find("input.txtPath").GetAttribute("value")));
+    }
+
+    private static HttpResponseMessage DelayedJson(string json, Task gate)
+    {
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new DelayedJsonContent(json, gate),
+        };
+    }
+
+    private sealed class DelayedJsonContent(string json, Task gate) : HttpContent
+    {
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            await gate;
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(json));
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = -1;
+            return false;
+        }
+    }
+
+    [Fact]
+    public void Tuner_fields_follow_the_original_type_visibility_rules()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/LiveTv/TunerHosts/Types", new[]
+        {
+            new { Id = "m3u", Name = "M3U Tuner" },
+            new { Id = "hdhomerun", Name = "HD Homerun" },
+        });
+
+        var cut = Render<DashboardLiveTvTuner>();
+        cut.Eventually(() => Assert.NotNull(cut.Find(".selectType")));
+
+        Assert.True(cut.Find(".fldPath").ClassList.Contains("hide"));
+        cut.Find(".selectType").Change("m3u");
+        cut.Eventually(() => Assert.False(cut.Find(".fldPath").ClassList.Contains("hide")));
+        Assert.False(cut.Find(".fldFmp4Container").ClassList.Contains("hide"));
+        Assert.True(cut.Find(".fldFavorites").ClassList.Contains("hide"));
+
+        cut.Find(".selectType").Change("hdhomerun");
+        cut.Eventually(() => Assert.False(cut.Find(".fldFavorites").ClassList.Contains("hide")));
+        Assert.True(cut.Find(".fldFmp4Container").ClassList.Contains("hide"));
+        Assert.False(cut.Find(".fldPath").ClassList.Contains("hide"));
+    }
+
+    [Fact]
+    public async Task XMLTV_save_posts_the_path_categories_and_validation_flag()
+    {
+        SignIn(admin: true);
+        ScriptConfiguration();
+        App.Server.OnGet("/LiveTv/ListingProviders/Default", new { Type = "xmltv", MovieCategories = new[] { "movie" }, EnableAllTuners = true });
+        App.Server.OnPost("/LiveTv/ListingProviders");
+        var cut = Render<XmlTvProvider>();
+        cut.Eventually(() => Assert.NotNull(cut.Find("form.xmltvForm")));
+
+        await cut.Find("input.txtPath").InputAsync(new ChangeEventArgs { Value = "/media/guide.xml" });
+        await cut.Find("form.xmltvForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/LiveTv/ListingProviders")));
+        var request = Assert.Single(App.Server.RequestsTo("/LiveTv/ListingProviders"));
+        Assert.Equal("true", request.Query("ValidateListings"));
+        Assert.Equal("xmltv", request.JsonBody().Text("Type"));
+        Assert.Equal("/media/guide.xml", request.JsonBody().Text("Path"));
+        Assert.True(request.JsonBody().Flag("EnableAllTuners"));
+    }
+
+    [Fact]
+    public void Schedules_Direct_country_regions_are_flattened_and_sorted()
+    {
+        var countries = SchedulesDirectProvider.CountriesOf(new System.Text.Json.Nodes.JsonObject
+        {
+            ["US"] = new System.Text.Json.Nodes.JsonArray
+            {
+                new System.Text.Json.Nodes.JsonObject { ["fullName"] = "United States", ["shortName"] = "USA" },
+            },
+            ["ZZZ"] = new System.Text.Json.Nodes.JsonArray
+            {
+                new System.Text.Json.Nodes.JsonObject { ["fullName"] = "Everywhere", ["shortName"] = "ZZZ" },
+            },
+            ["CA"] = new System.Text.Json.Nodes.JsonArray
+            {
+                new System.Text.Json.Nodes.JsonObject { ["fullName"] = "Canada", ["shortName"] = "CAN" },
+            },
+        });
+
+        Assert.Equal(["Canada", "United States"], countries.Select(country => country.Name));
+        Assert.Equal(["CAN", "USA"], countries.Select(country => country.Value));
+    }
+}

@@ -1,0 +1,99 @@
+@* The "enable for all tuners" checkbox with the list of tuners below it, shared by the guide provider forms
+   (refreshTunerDevices in components/tvproviders/xmltv.js and schedulesdirect.js). *@
+@namespace Jellyfin.Web.Components
+@using System.Text.Json.Nodes
+@inject Globalize Globalize
+
+<div>
+    <EmbyCheckbox Class="chkAllTuners" LabelClass="checkboxContainer" Label="@Globalize["OptionEnableForAllTuners"]" @bind-Value="_all" />
+    <div class="selectTunersSection@(_all ? " hide" : null)">
+        <h3 class="checkboxListLabel">@Globalize["HeaderTuners"]</h3>
+        <div class="checkboxList paperList checkboxList-paperList tunerList">
+            @foreach (var tuner in Tuners)
+            {
+                var id = tuner.Text("Id") ?? string.Empty;
+                <div class="listItem" @key="id">
+                    <EmbyCheckbox Class="chkTuner" LabelClass="@RowLabelClass" data-id="@id" Value="@_enabled.Contains(id)"
+                                  ValueChanged="@(enabled => Set(id, enabled))" />
+                    <div class="listItemBody two-line">
+                        <div class="listItemBodyText">@(tuner.Text("FriendlyName") is { Length: > 0 } name ? name : LiveTvAdmin.ProviderFormTunerName(tuner.Text("Type")))</div>
+                        <div class="listItemBodyText secondary">@tuner.Text("Url")</div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly HashSet<string> _enabled = new(StringComparer.Ordinal);
+    private JsonObject? _shownProvider;
+    private IReadOnlyList<JsonNode?>? _shownTuners;
+    private bool _all;
+
+    /// <summary>The server's tuner hosts (<c>TunerHosts</c> of the Live TV configuration).</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<JsonNode?> Tuners { get; set; } = [];
+
+    /// <summary>The provider whose tuner selection is shown; the selection is read again when this object changes.</summary>
+    [Parameter]
+    public JsonObject? Provider { get; set; }
+
+    /// <summary>Classes of the label around each tuner's checkbox.</summary>
+    [Parameter]
+    public string RowLabelClass { get; set; } = "listItemCheckboxContainer";
+
+    /// <summary>Whether "enable for all tuners" is checked.</summary>
+    public bool EnableAllTuners => _all;
+
+    /// <summary>The ids to save as <c>EnabledTuners</c>: none when all tuners are enabled, else the checked ones.</summary>
+    public JsonArray EnabledTuners()
+    {
+        var ids = new JsonArray();
+        if (!_all)
+        {
+            foreach (var tuner in Tuners)
+            {
+                if (tuner.Text("Id") is { } id && _enabled.Contains(id))
+                {
+                    ids.Add(id);
+                }
+            }
+        }
+
+        return ids;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_shownProvider, Provider) && ReferenceEquals(_shownTuners, Tuners))
+        {
+            return;
+        }
+
+        _shownProvider = Provider;
+        _shownTuners = Tuners;
+        _all = Provider.Flag("EnableAllTuners");
+        _enabled.Clear();
+        var enabled = Provider.Strings("EnabledTuners");
+        foreach (var tuner in Tuners)
+        {
+            if (tuner.Text("Id") is { } id && (_all || enabled.Contains(id)))
+            {
+                _enabled.Add(id);
+            }
+        }
+    }
+
+    private void Set(string id, bool enabled)
+    {
+        if (enabled)
+        {
+            _enabled.Add(id);
+        }
+        else
+        {
+            _enabled.Remove(id);
+        }
+    }
+}

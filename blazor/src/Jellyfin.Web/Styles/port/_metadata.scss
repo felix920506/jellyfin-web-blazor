@@ -1,0 +1,14 @@
+// Metadata manager-specific integration of the legacy editor with DashboardLayout.
+.jf-dashboard-appbar-full {
+    [dir="ltr"] & {
+        left: 0;
+    }
+
+    [dir="rtl"] & {
+        right: 0;
+    }
+}
+
+#editItemMetadataPage .editMetadataForm {
+    max-width: 100%;
+}
