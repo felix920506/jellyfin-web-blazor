@@ -1,0 +1,127 @@
+@* The dashboard library card actions and the scheduled-task progress feed. *@
+@using System.Net
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using MudBlazor
+@using Bunit.Rendering
+@inherits DashboardTestContext
+
+@code {
+    private static VirtualFolderInfo Folder(string name = "Movies") => new()
+    {
+        Name = name,
+        ItemId = "11111111-1111-1111-1111-111111111111",
+        Locations = ["/media/movies"],
+        LibraryOptions = new LibraryOptions
+        {
+            PathInfos = [new MediaPathInfo { Path = "/media/movies" }]
+        }
+    };
+
+    private IRenderedComponent<ContainerFragment> RenderCard(VirtualFolderInfo? folder = null)
+    {
+        return Render(@<>
+            <MudPopoverProvider />
+            <DialogHost />
+            <DashboardLibraryCard Folder="@(folder ?? Folder())" />
+        </>);
+    }
+
+    private static void OpenMenu(IRenderedComponent<ContainerFragment> cut)
+    {
+        cut.Find(".jf-dashboard-library-menu button").Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".mud-menu-item")));
+    }
+
+    [Fact]
+    public async Task Rename_posts_the_original_name_new_name_and_refresh_flag()
+    {
+        SignIn(admin: true);
+        App.Server.OnPost("/Library/VirtualFolders/Name");
+        var cut = RenderCard();
+
+        OpenMenu(cut);
+        cut.Find(".jf-dashboard-library-rename").Click();
+        var dialogs = Get< AppDialogs >();
+        var dialog = cut.FindComponent<DialogHost>();
+        dialog.WaitForElement("form");
+        await dialog.Find("#jf-dashboard-dialog-input").InputAsync(new ChangeEventArgs { Value = "Films" });
+        await dialog.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(App.Server.RequestsTo("/Library/VirtualFolders/Name")));
+        var request = App.Server.RequestsTo("/Library/VirtualFolders/Name").Single();
+        Assert.Equal("Movies", request.Query("name"));
+        Assert.Equal("Films", request.Query("newName"));
+        Assert.Equal("true", request.Query("refreshLibrary"));
+    }
+
+    [Fact]
+    public async Task Remove_requires_confirmation_and_posts_the_library_name()
+    {
+        SignIn(admin: true);
+        App.Server.On(HttpMethod.Delete, "/Library/VirtualFolders", _ => new HttpResponseMessage(HttpStatusCode.NoContent));
+        var cut = RenderCard();
+
+        OpenMenu(cut);
+        cut.Find(".jf-dashboard-library-remove").Click();
+        var dialogs = cut.FindComponent<DialogHost>();
+        dialogs.WaitForElement(".jf-dashboard-dialog-form");
+        Assert.Empty(App.Server.RequestsTo("/Library/VirtualFolders"));
+        await dialogs.Find("[data-id=ok]").ClickAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(App.Server.RequestsTo("/Library/VirtualFolders")));
+        var request = App.Server.RequestsTo("/Library/VirtualFolders").Single();
+        Assert.Equal(HttpMethod.Delete, request.Method);
+        Assert.Equal("Movies", request.Query("name"));
+        Assert.Equal("true", request.Query("refreshLibrary"));
+    }
+
+    [Fact]
+    public async Task Scan_opens_refresh_dialog_and_queues_a_scan_request()
+    {
+        SignIn(admin: true);
+        App.Server.On(HttpMethod.Post, "/Items/11111111-1111-1111-1111-111111111111/Refresh", _ => new HttpResponseMessage(HttpStatusCode.NoContent));
+        var cut = RenderCard();
+
+        OpenMenu(cut);
+        cut.Find(".jf-dashboard-library-scan").Click();
+        var dialogs = cut.FindComponent<DialogHost>();
+        dialogs.WaitForElement("#selectMetadataRefreshMode");
+        Assert.Equal("scan", dialogs.Find("#selectMetadataRefreshMode").GetAttribute("value"));
+        await dialogs.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(App.Server.RequestsTo("/Items/11111111-1111-1111-1111-111111111111/Refresh")));
+        var request = App.Server.RequestsTo("/Items/11111111-1111-1111-1111-111111111111/Refresh").Single();
+        Assert.Equal("Default", request.Query("ImageRefreshMode"));
+        Assert.Equal("Default", request.Query("MetadataRefreshMode"));
+        Assert.Equal("false", request.Query("ReplaceAllMetadata"));
+    }
+
+    [Fact]
+    public void Scheduled_task_messages_update_library_scan_progress()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Library/VirtualFolders", new[] { Folder() });
+        App.Server.OnGet("/ScheduledTasks", new[] { new { Id = "task-1", Key = "RefreshLibrary", Name = "Refresh", State = "Idle", IsHidden = false } });
+
+        var cut = RenderAt<DashboardLibraryList>("/dashboard/libraries");
+        cut.WaitForElement(".jf-dashboard-library-card");
+        Assert.Empty(cut.FindAll(".jf-dashboard-task-progress"));
+
+        Push("ScheduledTasksInfo", new[]
+        {
+            new { Id = "task-1", Key = "RefreshLibrary", Name = "Refresh", State = "Running", IsHidden = false, CurrentProgressPercentage = 42.5 }
+        });
+
+        cut.WaitForAssertion(() => Assert.Equal("43%", cut.Find(".jf-dashboard-task-progress-text").TextContent.Trim()));
+        Assert.Contains("jf-dashboard-task-progress-bar", cut.Markup);
+    }
+}

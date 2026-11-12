@@ -32,6 +32,25 @@ to preserve path information and fields the editor does not expose. Transcoding 
 lists and dependent settings live in `TranscodingLogic.cs`; keep these aligned with the original
 `src/apps/dashboard/features/playback/constants/codecs.ts`.
 
+## Field-level fidelity audit
+
+The port was checked against the original route and feature sources, including labels, help text,
+conditional rendering, validation, confirmation text and the request sent on save:
+
+| Area | Checked source and behavior | Result |
+| --- | --- | --- |
+| Libraries list/card | `routes/libraries/index.tsx`, `features/libraries/components/LibraryCard.tsx` | Add, manage, image editing, rename (`name`, `newName`, `refreshLibrary`), scan, destructive remove confirmation and refresh are represented. |
+| Library creator/editor | `mediaLibraryCreator`, `mediaLibraryEditor`, `libraryoptionseditor` | Content type/name requirements, folder add/remove, box-set folder visibility, option merge preservation, invalid item-id alert and refresh flags are represented. |
+| Image options | `imageOptionsEditor.js` | Supported image types, default-vs-library precedence, primary limit, backdrop limit/width visibility and saved `Type/MinWidth/Limit` entries are represented. |
+| Display/metadata/NFO | `routes/libraries/{display,metadata,nfo}.tsx` | Server configuration and named `metadata`/`xbmcmetadata` payloads retain untouched fields; language/country, chapter and NFO fields are covered by component tests. |
+| Transcoding | `routes/playback/transcoding.tsx`, `features/playback/constants/codecs.ts` | Acceleration list, complete codec matrix, dependent devices/codecs, NVENC/QSV/VAAPI/AMF/RKMPP conditions, tone mapping, encoder presets, thread/fallback, throttle and segment deletion fields are present and tested. |
+| Resume/streaming/trickplay | `routes/playback/{resume,streaming,trickplay}.tsx` | Threshold validation, bitrate conversion, trickplay visibility and resolution validation/save behavior are covered. |
+| Networking | `routes/networking/index.tsx` | Ports, HTTPS/certificate, remote access, IPv4/IPv6, discovery, proxy/filter lists, base URL and published URI conversion/payload are represented. The original route has no warning or confirmation dialog; none was invented. |
+
+Exact saved payloads are asserted in `DashboardSettingsPageTests.razor`; codec and option matrices are
+asserted in `DashboardLibraryLogicTests.cs`; card actions and scheduled-task progress are asserted in
+`DashboardLibraryCardTests.razor`.
+
 ## Deviations and remaining verification
 
 - The pages are implemented with MudBlazor, while the reused legacy library editors retain the
@@ -39,11 +58,9 @@ lists and dependent settings live in `TranscodingLogic.cs`; keep these aligned w
 - Ported save failures are logged and do not show a success alert; some original pages likewise do
   not surface an error. Server-side validation behavior has not been comprehensively checked in a
   browser.
-- The inherited WIP has logic/unit tests for named configurations, published URI conversion,
-  transcoding choices and library/image-option semantics. `blazor/e2e/dashboard_libraries.py`
-  visits each route at desktop and phone sizes and saves screenshots, but it does not yet change,
-  save, API-verify or restore settings. Per-page component tests and save/restore browser coverage
-  remain required before considering this workstream fully verified.
+- The pages are component-tested with scripted responses and payload assertions. The private-server
+  browser script additionally performs mutation/API verification/restore; its final run is recorded
+  with the workstream checks.
 - A private Jellyfin instance is required for browser tests that save server/network/library
   settings. Do not run those against the shared test server. Follow the private-instance procedure
   in `docs/blazor-port/ARCHITECTURE.md` and restore/reset the instance immediately afterward.
