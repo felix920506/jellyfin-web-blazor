@@ -256,6 +256,9 @@ public sealed record CardOptions
 
     /// <summary>Fill the card with the image instead of fitting it.</summary>
     public bool CoverImage { get; init; }
+    public bool? Scalable { get; init; }
+    public bool? AllowBottomPadding { get; init; }
+    public bool ShowDetailsMenu { get; init; }
 
     /// <summary>Icon shown when an item type has no icon of its own and there is no image.</summary>
     public string? DefaultCardImageIcon { get; init; }

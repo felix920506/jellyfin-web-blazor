@@ -101,8 +101,9 @@ this port changes:
 - Live TV details controls are ported. The only intentional deviation is that the channel guide
   uses the Blazor list container and groups by the browser's local calendar day; it keeps the
   original classes, labels, fields and request parameters.
-- `PORT-TODO(details)`: the item's own website (`HomePageUrl`) is not in the SDK model, so it is
-  missing from the external links.
+- The item's own website (`HomePageUrl`) is emitted first in the external links. The compatibility
+  lookup reads the typed property when available and otherwise checks the generated model's
+  additional data, since SDK versions differ in whether that field is generated.
 - Shared, not of this page: list-row overviews are plain text (`ListView`), scroller sections
   scroll natively (`Scroller`), the context menu opens centred, people cards carry no
   blurhash. Dialogs reached from the menu belong to the item-dialog workstream.

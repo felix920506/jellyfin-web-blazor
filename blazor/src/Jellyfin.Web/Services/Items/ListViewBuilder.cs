@@ -35,6 +35,7 @@ public sealed record ListViewOptions
     /// <summary>"channel" shows the channel's image instead of the item's.</summary>
     public string? ImageSource { get; init; }
     public bool ImagePlayButton { get; init; }
+    public bool SmallIcon { get; init; }
     public bool DisableIndicators { get; init; }
     public bool ShowIndexNumberLeft { get; init; }
     public bool ShowProgramDateTime { get; init; }
@@ -364,7 +365,7 @@ public sealed class ListViewBuilder(Globalize globalize, CardImages images, Card
         {
             var channel = options.ImageSource == "channel";
             imageUrl = GetImageUrl(item, isLarge ? 500 : 80, channel);
-            imageClass = isLarge ? "listItemImage listItemImage-large" : "listItemImage";
+            imageClass = isLarge ? "listItemImage listItemImage-large" : options.SmallIcon ? "listItemIcon listItemIcon-small" : "listItemImage";
             if (channel)
             {
                 imageClass += " listItemImage-channel";

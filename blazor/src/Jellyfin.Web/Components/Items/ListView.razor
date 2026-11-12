@@ -7,6 +7,8 @@
 @inject ListViewBuilder Builder
 @inject ItemActions Actions
 @inject Globalize Globalize
+@inject ISessionInterop Markdown
+@implements IDisposable
 
 @foreach (var group in _groups)
 {
@@ -47,6 +49,8 @@
     private readonly List<Group> _groups = [];
     private readonly Dictionary<ListItemModel, object> _keys = [];
     private ItemActionContext? _context;
+    private readonly Dictionary<string, string> _overviewHtml = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _overviewCancellation;
 
     // Items are changed in place (user data, timers), so the rows are rebuilt on every render request.
     protected override void OnParametersSet()
@@ -73,6 +77,9 @@
             PlaylistId = Options.PlaylistId,
             Items = () => Items
         };
+        _overviewCancellation?.Cancel();
+        _overviewCancellation = new CancellationTokenSource();
+        _ = RenderOverviewsAsync(_overviewCancellation.Token);
     }
 
     private Task RunAsync(ListItemModel row, string action, string? customAction = null) =>
@@ -85,7 +92,7 @@
                 <div class="listItem-content">@RowContent(row)</div>
                 if (row.Overview is not null)
                 {
-                    <div class="listItem-bottomoverview secondary"><bdi>@row.Overview</bdi></div>
+                    <div class="listItem-bottomoverview secondary"><bdi>@((MarkupString)GetOverviewHtml(row))</bdi></div>
                 }
             }
             else
@@ -161,8 +168,7 @@
                 }
                 @if (row.Overview is not null)
                 {
-                    @* PORT-TODO(items): the original renders the overview as sanitized Markdown; here it is plain text. *@
-                    <div class="secondary listItem-overview listItemBodyText"><bdi>@row.Overview</bdi></div>
+                    <div class="secondary listItem-overview listItemBodyText"><bdi>@((MarkupString)GetOverviewHtml(row))</bdi></div>
                 }
             </div>
             @if (row.SideMediaInfoHtml is not null)
@@ -199,5 +205,37 @@
                     <button is="paper-icon-button-light" type="button" class="@ButtonClass" data-action="@ItemAction.Menu" title="@Globalize["ButtonMore"]" @onclick="() => RunAsync(row, ItemAction.Menu)" @onclick:stopPropagation><span class="material-icons more_vert" aria-hidden="true"></span></button>
                 }
             </div>
-        </text>;
+         </text>;
+
+    public void Dispose() => _overviewCancellation?.Cancel();
+
+    private string GetOverviewHtml(ListItemModel row) =>
+        _overviewHtml.TryGetValue(row.Item.IdText(), out var html) && html.Length > 0
+            ? html
+            : System.Net.WebUtility.HtmlEncode(row.Overview ?? string.Empty);
+
+    private async Task RenderOverviewsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var row in _groups.SelectMany(group => group.Rows))
+        {
+            if (row.Overview is not { Length: > 0 } overview || cancellationToken.IsCancellationRequested)
+            {
+                continue;
+            }
+
+            try
+            {
+                _overviewHtml[row.Item.IdText()] = await Markdown.RenderMarkdownAsync(overview);
+            }
+            catch (Exception exception) when (exception is JSException or JSDisconnectedException or InvalidOperationException or TaskCanceledException)
+            {
+                return;
+            }
+        }
+
+        if (!cancellationToken.IsCancellationRequested)
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
 }

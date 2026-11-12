@@ -128,6 +128,12 @@ the image, the title links and the buttons run `ItemActions` with their `data-ac
 - Layout: `CardCssClass`, `CardClass`, `IndexBy` (`PremiereDate`, `ProductionYear`,
   `CommunityRating`), `SectionTitleTagName`, `Rows`.
 
+Additional parity options are available for callers that need the newer card layouts: `Scalable`,
+`AllowBottomPadding` and `ShowDetailsMenu`. `ListViewOptions.SmallIcon` uses the compact image
+classes used by song and other dense rows. Collection-folder cards subscribe to `RefreshProgress`
+websocket messages and expose the live progress/status through the original refresh-indicator
+markup.
+
 The desktop layout shows the hover menu (play, played, favorite, more); the mobile layout shows
 the overlay buttons asked for by the options. Cards are rebuilt when the layout changes.
 
@@ -361,8 +367,9 @@ to build items from server-style JSON.
 - No TV layout: no `<button>` cards, no focus handling, no TV values in `GetPostersPerRow`.
 - Lazy images are not unloaded again when they leave the viewport.
 - Ctrl / middle click on a card image opens the item in the same tab (the click is intercepted).
-- List view overviews are plain text, not Markdown (`PORT-TODO(items)` in `ListView.razor`).
-- Library cards do not show the scan progress indicator (`PORT-TODO(items)` in `CardBuilder.cs`).
+- List-row overviews are rendered as Markdown through `markdown-it` and DOMPurify. If the browser
+  module is unavailable, the component safely falls back to HTML-encoded text.
+- Collection-folder cards show server refresh progress from the shared `RefreshProgressStore`.
 - `MediaInfoLine` computes "Ends at" when rendered and does not keep it current.
 - `ItemHelper.IsLocalItem` is always false (no downloaded items in the browser).
 - "Stop playback" in the context menu follows `IPlaybackManager.IsPlaying`, not the original's

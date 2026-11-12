@@ -216,6 +216,22 @@ public class ListViewBuilderTests : ItemsTestContext
     }
 
     [Fact]
+    public void Small_icon_uses_the_compact_song_image_class()
+    {
+        var song = TestItems.Item(new
+        {
+            Id = TestItems.Id(1),
+            Name = "Song",
+            Type = "Audio",
+            ImageTags = new { Primary = "tag" }
+        });
+
+        var row = Assert.Single(Builder.Build([song], new ListViewOptions { SmallIcon = true }));
+
+        Assert.Equal("listItemIcon listItemIcon-small itemAction", row.ImageClass);
+    }
+
+    [Fact]
     public void Row_image_falls_back_to_album_series_and_parent()
     {
         SignIn();

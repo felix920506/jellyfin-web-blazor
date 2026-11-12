@@ -3,8 +3,6 @@ namespace Jellyfin.Web.Services;
 /// <summary>
 /// How the items of a library view are drawn: ports of <c>getCardOptions</c> and <c>getListOptions</c> of
 /// <c>ItemsView.tsx</c>.
-/// PORT-TODO(library): the card options <c>showDetailsMenu</c> (Live TV channels) and the list option
-/// <c>smallIcon</c> (songs) have no counterpart in the item components.
 /// </summary>
 public static class LibraryViewOptions
 {
@@ -40,7 +38,7 @@ public static class LibraryViewOptions
             LibraryTab.Artists or LibraryTab.Authors or LibraryTab.Persons =>
                 options with { Lines = 1, ShowYear = false, OverlayPlayButton = true },
             LibraryTab.Channels =>
-                options with { Shape = CardShape.Square, ShowCurrentProgram = true, ShowCurrentProgramTime = true },
+                options with { Shape = CardShape.Square, ShowDetailsMenu = true, ShowCurrentProgram = true, ShowCurrentProgramTime = true },
             LibraryTab.SeriesTimers => options with
             {
                 Shape = CardShape.Backdrop,
@@ -65,6 +63,7 @@ public static class LibraryViewOptions
             ShowParentTitle = true,
             Action = ItemAction.PlayAllFromHere,
             Artist = true,
+            SmallIcon = true,
             AddToListButton = true
         },
         LibraryTab.Albums => new ListViewOptions { SortBy = settings.SortBy.FirstOrDefault(), AddToListButton = true },

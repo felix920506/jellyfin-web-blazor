@@ -7,6 +7,8 @@
 @inject LoadingService Loading
 @inject IBrowser Browser
 @inject Globalize Globalize
+@inject RefreshProgressStore RefreshProgress
+@implements IDisposable
 
 <Page Id="wizardLibraryPage" Class="standalonePage wizardPage mediaLibraryPage">
     <div class="padded-left padded-right padded-top">
@@ -106,13 +108,26 @@
 
     protected override Task OnInitializedAsync() => ReloadLibraryAsync();
 
-    private static RenderFragment RefreshIndicator(VirtualFolderInfo? folder) => builder =>
+    protected override void OnInitialized()
     {
-        // PORT-TODO(session): emby-itemrefreshindicator (a progress ring fed by the RefreshProgress
-        // socket messages) is not ported; the element is rendered without its ring. The wizard has
-        // no session and therefore no socket, and it never starts a scan itself.
-        var progress = folder?.RefreshProgress ?? 0;
-        var status = folder?.RefreshStatus;
+        RefreshProgress.Changed += OnRefreshProgress;
+    }
+
+    public void Dispose() => RefreshProgress.Changed -= OnRefreshProgress;
+
+    private void OnRefreshProgress(string itemId)
+    {
+        if (_cards.Any(card => card.Folder?.ItemId == itemId))
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private RenderFragment RefreshIndicator(VirtualFolderInfo? folder) => builder =>
+    {
+        var live = RefreshProgress.Get(folder?.ItemId);
+        var progress = live.Progress == 0 ? folder?.RefreshProgress ?? 0 : live.Progress;
+        var status = live.Status ?? folder?.RefreshStatus;
         var visible = progress != 0 || (!string.IsNullOrEmpty(status) && status != "Idle");
         builder.OpenElement(0, "div");
         builder.AddAttribute(1, "class", "cardIndicators backdropCardIndicators");
@@ -185,9 +200,15 @@
             return Task.CompletedTask;
         }
 
-        // PORT-TODO(session): clicking a library's image opens components/mediaLibraryEditor
-        // (folders and options of an existing library), which is not ported.
-        return Task.CompletedTask;
+        return EditLibraryAsync(card.Folder);
+    }
+
+    private async Task EditLibraryAsync(VirtualFolderInfo folder)
+    {
+        if (await MediaLibraryEditor.ShowAsync(Dialogs, folder, RefreshAfterChanges))
+        {
+            await ReloadLibraryAsync();
+        }
     }
 
     private async Task ShowCardMenuAsync(VirtualFolderInfo folder)
@@ -213,13 +234,22 @@
                 await DeleteAsync(folder);
                 break;
             case "edit":
-                // PORT-TODO(session): "Manage library" opens components/mediaLibraryEditor, which is not ported.
+                await EditLibraryAsync(folder);
                 break;
             case "editimages":
-                // PORT-TODO(session): "Edit images" opens components/imageeditor, which is not ported.
+                if (folder.ItemId is { Length: > 0 } itemId)
+                {
+                    if (await ImageEditor.ShowAsync(Dialogs, itemId))
+                    {
+                        await ReloadLibraryAsync();
+                    }
+                }
                 break;
             case "refresh":
-                // PORT-TODO(session): "Scan library" opens components/refreshdialog, which is not ported.
+                if (folder.ItemId is { Length: > 0 } refreshId)
+                {
+                    await RefreshDialog.ShowAsync(Dialogs, [refreshId], "scan");
+                }
                 break;
         }
     }

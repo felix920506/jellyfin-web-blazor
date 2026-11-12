@@ -530,7 +530,9 @@ What `libraryMenu` does on `pageshow`:
   - `notifications.js` (desktop notifications): `LibraryChanged`, `PackageInstall*`, `ServerShuttingDown`, `ServerRestarting`, `RestartRequired`.
   - `QueryClientEventHandler`: `UserDataChanged` invalidates `['User',userId,'Items']`.
   - Item containers: `UserDataChanged`, `Timer*`, `SeriesTimer*`, `LibraryChanged`.
-  - `RefreshProgress` (refresh indicators).
+  - `RefreshProgress` (refresh indicators). The Blazor item and wizard library views share the
+    event through `RefreshProgressStore`, keyed by library/item id, so scan progress updates cards
+    without polling.
   - `ScheduledTasksInfo` (taskbutton, dashboard).
   - `Sessions` (dashboard, sessionPlayer with a 100/800 ms periodic interval).
   - Dashboard and playbackManager react to `ServerRestarting`/`ServerShuttingDown`.

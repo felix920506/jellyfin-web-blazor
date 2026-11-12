@@ -10,8 +10,8 @@
 @inject LibraryViewSettingsStore Store
 @inject LibraryData Data
 @inject AppRouter Router
+@inject Backdrop Backdrops
 
-@* PORT-TODO(library): the original rotates backdrops of Config.BackdropTypes here; the port has no backdrop service yet. *@
 <Page Id="@Config.PageId" Class="mainAnimatedPage libraryPage pageWithAbsoluteTabs withTabs" Title="@_title">
     <LibraryToolbar Config="Config" View="_view" OnViewSelected="SelectView" ParentId="@_libraryId" Item="_item" Settings="_settings"
                     SettingsChanged="SetSettings" Result="_result" Pending="_pending" PageSize="_pageSize" OnChanged="RefreshItemsAsync" />
@@ -66,7 +66,11 @@
 
     protected override void OnInitialized() => UserSettings.Changed += OnSettingChanged;
 
-    public void Dispose() => UserSettings.Changed -= OnSettingChanged;
+    public void Dispose()
+    {
+        UserSettings.Changed -= OnSettingChanged;
+        Backdrops.Clear();
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -76,6 +80,11 @@
         _pageSize = UserSettings.LibraryPageSize;
         var index = int.TryParse(Location["tab"], out var tab) ? tab : Config.GetDefaultViewIndex(_libraryId, UserSettings);
         _view = Config.ViewAt(index);
+
+        if (Config.BackdropTypes.Count == 0)
+        {
+            Backdrops.Clear();
+        }
 
         var key = $"{Config.Path}-{_view.View}-{_libraryId}";
         if (key != _key)
@@ -149,6 +158,11 @@
     {
         _result = result;
         _pending = false;
+        if (Config.BackdropTypes.Count > 0)
+        {
+            var items = result.Items.Where(item => item.TypeName() is { } type && Config.BackdropTypes.Contains(type, StringComparer.Ordinal));
+            Backdrops.SetBackdrops(items.ToList());
+        }
     }
 
     private Task RefreshItemsAsync() => _itemsView?.RefreshAsync() ?? Task.CompletedTask;
