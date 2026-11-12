@@ -34,6 +34,9 @@ public sealed class LiveTvAdminApi(ItemDialogApi api)
     /// <summary>Removes a tuner.</summary>
     public Task DeleteTunerAsync(string id) => api.DeleteAsync(api.GetUrl("LiveTv/TunerHosts", ("id", id)));
 
+    /// <summary>Resets a tuner device, causing the server to reinitialize it.</summary>
+    public Task ResetTunerAsync(string id) => api.PostAsync(api.GetUrl($"LiveTv/Tuners/{Uri.EscapeDataString(id)}/Reset"));
+
     /// <summary>The values of a new guide provider.</summary>
     public async Task<JsonObject> GetDefaultProviderAsync() => await api.GetObjectAsync("LiveTv/ListingProviders/Default") ?? new JsonObject();
 

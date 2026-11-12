@@ -1,0 +1,82 @@
+@using System.Net
+@using Jellyfin.Web
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Pages.Dashboard.LiveTv
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private const string TunerId = "11111111111111111111111111111111";
+
+    private void ScriptConfiguration() => App.Server.OnGet("/System/Configuration/livetv", new
+    {
+        TunerHosts = new[]
+        {
+            new { Id = TunerId, Type = "m3u", FriendlyName = "News feed", Url = "/media/channels.m3u", AllowStreamSharing = true },
+        },
+        ListingProviders = new[]
+        {
+            new { Id = "22222222222222222222222222222222", Type = "xmltv", Path = "/media/guide.xml", EnableAllTuners = true },
+        },
+        GuideDays = "3",
+        PrePaddingSeconds = 120,
+        PostPaddingSeconds = 60,
+    });
+
+    [Fact]
+    public void Tuner_form_serializes_the_legacy_M3U_payload()
+    {
+        var form = new LiveTvTunerForm { Type = "m3u", Url = "/media/list.m3u", TunerCount = "2", FallbackMaxStreamingBitrate = "12.5", AllowStreamSharing = true };
+
+        var info = form.ToInfo(null);
+
+        Assert.Equal("m3u", info.Text("Type"));
+        Assert.Equal("/media/list.m3u", info.Text("Url"));
+        Assert.Equal("2", info.Text("TunerCount"));
+        Assert.Equal(12_500_000, info.Number("FallbackMaxStreamingBitrate"));
+        Assert.True(info.Flag("AllowStreamSharing"));
+        Assert.True(form.SupportsSelectablePath);
+        Assert.True(form.SupportsTunerCount);
+    }
+
+    [Fact]
+    public void Padding_matches_javascript_parseInt_semantics()
+    {
+        Assert.Equal("1.5", LiveTvAdmin.PaddingMinutes(new System.Text.Json.Nodes.JsonObject { ["PrePaddingSeconds"] = 90 }, "PrePaddingSeconds"));
+        Assert.Equal(120L, LiveTvAdmin.PaddingSeconds("2minutes")!.GetValue<long>());
+        Assert.Null(LiveTvAdmin.PaddingSeconds("words"));
+    }
+
+    [Fact]
+    public async Task The_tuner_reset_posts_to_its_server_endpoint()
+    {
+        SignIn(admin: true);
+        App.Server.OnPost($"/LiveTv/Tuners/{TunerId}/Reset");
+        await Get<LiveTvAdminApi>().ResetTunerAsync(TunerId);
+
+        Assert.Single(App.Server.RequestsTo($"/LiveTv/Tuners/{TunerId}/Reset"));
+    }
+
+    [Fact]
+    public async Task DVR_settings_save_the_full_live_tv_configuration()
+    {
+        SignIn(admin: true);
+        ScriptConfiguration();
+        App.Server.OnPost("/System/Configuration/livetv");
+        var cut = Render<DashboardLiveTvRecordings>();
+        cut.Eventually(() => Assert.NotNull(cut.Find("form.jf-dashboard-livetv-recordings")));
+
+        await cut.Find("#jf-dashboard-livetv-prepadding").ChangeAsync(new ChangeEventArgs { Value = "5" });
+        await cut.Find("form.jf-dashboard-livetv-recordings").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(BodiesTo("/System/Configuration/livetv")));
+        var body = Assert.Single(BodiesTo("/System/Configuration/livetv"));
+        Assert.Equal(300, body.GetProperty("PrePaddingSeconds").GetInt64());
+        Assert.Equal("3", body.GetProperty("GuideDays").GetString());
+    }
+}

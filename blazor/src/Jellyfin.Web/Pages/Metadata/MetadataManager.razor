@@ -1,0 +1,68 @@
+@* The administrator's library metadata manager. Port of legacy/controllers/edititemmetadata.js
+   and edititemmetadata.html, with MetadataTree replacing editorsidebar.js/jstree. *@
+@attribute [Route("/metadata")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Text.Json.Nodes
+@inject AppRouter Router
+@inject Globalize Globalize
+
+<Page Id="editItemMetadataPage" Title="@Globalize["MetadataManager"]" Class="libraryPage metadataEditorPage noSecondaryNavPage">
+    <div class="editPageSidebar" style="overflow:auto;">
+        <MetadataTree @ref="_tree" InitialItemId="@Id" OnNodeSelected="SelectNodeAsync" />
+    </div>
+    <div>
+        <div class="editPageInnerContent padded-bottom-page">
+            @if (_itemId is { Length: > 0 } itemId)
+            {
+                <MetadataEditor @key="itemId" ItemId="@itemId" Embedded="true" OnSaved="ItemSaved" OnDeleted="ItemDeleted" />
+            }
+        </div>
+    </div>
+</Page>
+
+@code {
+    private MetadataTree? _tree;
+    private string? _itemId;
+
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    /// <summary>The selected item's id, retained in <c>?id=</c> as the legacy page does.</summary>
+    [Parameter]
+    public string? Id { get; set; }
+
+    protected override void OnParametersSet() => _itemId = Id;
+
+    private Task SelectNodeAsync(MetadataTreeNode node)
+    {
+        if (!node.IsItem)
+        {
+            return Task.CompletedTask;
+        }
+
+        Router.Navigate(Location.With(("id", node.Id)).Url);
+        return Task.CompletedTask;
+    }
+
+    private Task ItemSaved(JsonObject item)
+    {
+        if (item.Text("Id") is { Length: > 0 } id)
+        {
+            _tree?.UpdateItem(id, item);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task ItemDeleted(string parentId)
+    {
+        if (_itemId is { Length: > 0 } id)
+        {
+            _tree?.RemoveItem(id, parentId);
+        }
+
+        Router.Navigate(Location.With(("id", parentId)).Url, replace: true);
+        return Task.CompletedTask;
+    }
+}

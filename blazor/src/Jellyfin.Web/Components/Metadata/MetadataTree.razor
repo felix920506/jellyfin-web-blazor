@@ -1,13 +1,11 @@
 @* The library tree of the metadata manager. Port of scripts/editorsidebar.js, which drives jstree
-   (plugin "wholerow", theme "default", variant "large"); this component renders the markup jstree
-   builds, so its theme (vendored by scripts/prepare-assets.sh and loaded here, as the original
-   imports it on demand) and the overrides of styles/metadataeditor.scss apply as they are. *@
+   (plugin "wholerow", theme "default", variant "large"). The component renders equivalent
+   markup directly, avoiding the legacy jQuery/jstree runtime in the WASM application. *@
 @namespace Jellyfin.Web.Components
 @using System.Text.Json.Nodes
 @inject ItemDialogApi Api
 @inject Globalize Globalize
 
-<link rel="stylesheet" href="generated/lib/jstree/dist/themes/default/style.min.css" />
 <div class="libraryTree jstree jstree-default jstree-default-large@(Globalize.IsRtl ? " jstree-rtl" : null)" role="tree">
     @if (_roots is null)
     {
@@ -323,7 +321,7 @@
             @for (var i = 0; i < nodes.Count; i++)
             {
                 var node = nodes[i];
-                <li @key="node" role="none" id="@node.Id" class="@NodeClass(node, i == nodes.Count - 1)" itemtype="@node.ItemType"
+                <li @key="node" role="none" id="@node.Id" class="@NodeClass(node, i == nodes.Count - 1)" data-itemtype="@node.ItemType"
                     serveritemtype="@node.ServerItemType" collectiontype="@node.CollectionType">
                     <div unselectable="on" role="presentation" class="@RowClass(node)" @onclick="() => SelectAsync(node)"
                          @ondblclick="() => ToggleAsync(node)">&nbsp;</div>
@@ -332,7 +330,6 @@
                        aria-selected="@(ReferenceEquals(_selected, node) ? "true" : "false")" aria-level="@level"
                        aria-expanded="@(node.IsLeaf ? null : node.Opened ? "true" : "false")"
                        @onclick="() => SelectAsync(node)" @ondblclick="() => ToggleAsync(node)" @onkeydown="args => OnKeyDownAsync(args, node)">
-                      >
                         <i class="jstree-icon jstree-themeicon jstree-themeicon-hidden" role="presentation"></i>
                         @if (node.IsItem)
                         {

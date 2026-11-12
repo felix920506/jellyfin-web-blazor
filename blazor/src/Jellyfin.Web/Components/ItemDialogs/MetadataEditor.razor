@@ -332,6 +332,16 @@
 
     protected override Task OnInitializedAsync() => ReloadAsync(ItemId);
 
+    protected override async Task OnParametersSetAsync()
+    {
+        // The metadata manager keeps this component mounted while its ?id= changes. Dialog users
+        // receive one item id only, so this is a no-op for the regular ShowAsync API.
+        if (_item is not null && !string.Equals(_item.Text("Id"), ItemId, StringComparison.Ordinal))
+        {
+            await ReloadAsync(ItemId);
+        }
+    }
+
     private async Task ReloadAsync(string itemId)
     {
         Loading.Show();

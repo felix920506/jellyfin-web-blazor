@@ -28,6 +28,7 @@
                 </ActivatorContent>
                 <ChildContent>
                     <MudMenuItem Href="@EditUrl" Icon="@MdIcon.Of("edit")" Label="@Globalize["Edit"]" Class="jf-dashboard-livetv-card-edit" />
+                    <MudMenuItem Icon="@MdIcon.Of("restart_alt")" Label="@Globalize["Reset"]" Class="jf-dashboard-livetv-card-reset" OnClick="ResetAsync" />
                     <MudMenuItem Icon="@MdIcon.Of("delete")" Label="@Globalize["Delete"]" Class="jf-dashboard-livetv-card-delete" OnClick="DeleteAsync" />
                 </ChildContent>
             </MudMenu>
@@ -49,6 +50,23 @@
     private string Title => Tuner.Text("FriendlyName") is { Length: > 0 } name ? name : LiveTvAdmin.TunerName(Tuner.Text("Type"));
 
     private string EditUrl => "#" + LiveTvAdmin.TunerRoute(Id);
+
+    private async Task ResetAsync()
+    {
+        if (Id is not { Length: > 0 } id)
+        {
+            return;
+        }
+
+        try
+        {
+            await LiveTv.ResetTunerAsync(id);
+        }
+        catch (Exception ex) when (LiveTvAdminApi.IsFailure(ex))
+        {
+            AppLog.Warn("[LiveTv] unable to reset the tuner: " + ex.Message);
+        }
+    }
 
     private async Task DeleteAsync()
     {
