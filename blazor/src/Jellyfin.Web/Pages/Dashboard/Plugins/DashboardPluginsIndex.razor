@@ -1,0 +1,81 @@
+@attribute [Route("/dashboard/plugins")]
+@attribute [Access(AccessLevel.Admin)]
+@attribute [KeepOnQueryChange("status", "category", "query")]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject Globalize Globalize
+@inject AppRouter Router
+
+<Page Id="pluginsPage" Title="@Globalize["TabPlugins"]" Class="mainAnimatedPage type-interior">
+    @if (_loading) { <DashboardLoading /> }
+    <div class="content-primary jf-dashboard-plugins">
+        <div class="jf-dashboard-plugin-heading">
+            <MudText Typo="Typo.h1">@Globalize["TabPlugins"]</MudText>
+            <MudButton Href="#/dashboard/plugins/repositories" Variant="Variant.Outlined">@Globalize["ManageRepositories"]</MudButton>
+            <MudTextField T="string" Value="Query" ValueChanged="@(v => Change("query", v))" Immediate="true" Label="@Globalize["Search"]" InputId="jf-dashboard-plugin-search" />
+        </div>
+        @if (_failed) { <MudAlert Severity="Severity.Error">@Globalize["PluginsLoadError"]</MudAlert> }
+        else if (!_loading)
+        {
+            <div class="jf-dashboard-plugin-filters">
+                @foreach (var entry in Statuses)
+                {
+                    <MudChip T="string" Color="@((Status ?? "Installed") == entry.Value ? Color.Primary : Color.Default)" OnClick="@(() => Change("status", entry.Value))" data-status="@entry.Value">@Globalize[entry.Key]</MudChip>
+                }
+                <span aria-hidden="true">|</span>
+                <MudChip T="string" Color="@(string.IsNullOrEmpty(Category) ? Color.Primary : Color.Default)" OnClick="@(() => Change("category", null))" data-category="">@Globalize["All"]</MudChip>
+                @foreach (var entry in DashboardPlugins.Categories)
+                {
+                    <MudChip T="string" Color="@(entry.Category.Equals(Category, StringComparison.OrdinalIgnoreCase) ? Color.Primary : Color.Default)" OnClick="@(() => Change("category", entry.Category.ToLowerInvariant()))" data-category="@entry.Category">@Globalize[entry.Key]</MudChip>
+                }
+            </div>
+            <MudDivider />
+            <div class="jf-dashboard-plugin-grid">
+                @foreach (var plugin in Visible)
+                {
+                    <DashboardPluginCard @key="plugin.Id" Plugin="plugin" />
+                }
+            </div>
+            @if (!Visible.Any())
+            {
+                <div class="jf-dashboard-plugin-empty">
+                    <MudText>@(string.IsNullOrEmpty(Query) ? Globalize["NoSubtitleSearchResultsFound"] : Globalize.Translate("SearchResultsEmpty", Query))</MudText>
+                    @if (!string.IsNullOrEmpty(Category) || (Status ?? "Installed") != "All")
+                    {
+                        <MudButton Class="jf-dashboard-plugin-view-all" OnClick="@(() => Change(string.IsNullOrEmpty(Category) ? "status" : "category", string.IsNullOrEmpty(Category) ? "All" : null))">@Globalize["ViewAllPlugins"]</MudButton>
+                    }
+                </div>
+            }
+        }
+    </div>
+</Page>
+
+@code {
+    private static readonly (string Value, string Key)[] Statuses = [("All", "All"), ("Available", "LabelAvailable"), ("Installed", "LabelInstalled")];
+    private IReadOnlyList<DashboardPlugin> _plugins = [];
+    private bool _loading = true;
+    private bool _failed;
+    [CascadingParameter] public AppLocation Location { get; set; } = AppLocation.Empty;
+    [Parameter] public string? Status { get; set; }
+    [Parameter] public string? Category { get; set; }
+    [Parameter] public string? Query { get; set; }
+    private IEnumerable<DashboardPlugin> Visible => DashboardPlugins.Filter(_plugins, Status ?? "Installed", Category, Query);
+    private void Change(string key, string? value) => Router.Navigate(Location.With((key, value)).Url, replace: true);
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var plugins = Api.Client.Plugins.GetAsync();
+            var packages = Api.Client.Packages.GetAsync();
+            var pages = Api.Client.Web.ConfigurationPages.GetAsync();
+            await Task.WhenAll(plugins, packages, pages);
+            _plugins = DashboardPlugins.Merge(await plugins ?? [], await packages ?? [], await pages ?? []);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Plugins] load failed: " + ex.Message);
+            _failed = true;
+        }
+        finally { _loading = false; }
+    }
+}

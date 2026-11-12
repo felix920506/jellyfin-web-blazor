@@ -1,0 +1,14 @@
+@namespace Jellyfin.Web.Components
+@inject Globalize Globalize
+@inject IDetailsInterop Markdown
+
+<div class="jf-dashboard-plugin-changelog">
+    @if (_html is not null) { @((MarkupString)_html) }
+    else { @(string.IsNullOrEmpty(Text) ? Globalize["LabelNoChangelog"] : Text) }
+</div>
+
+@code {
+    [Parameter] public string? Text { get; set; }
+    private string? _html;
+    protected override async Task OnParametersSetAsync() => _html = string.IsNullOrEmpty(Text) ? null : await Markdown.RenderOverviewAsync(Text);
+}

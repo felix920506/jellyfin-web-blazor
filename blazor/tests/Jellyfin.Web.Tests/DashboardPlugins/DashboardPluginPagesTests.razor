@@ -1,0 +1,122 @@
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard.Plugins
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private const string Id = "11111111111111111111111111111111";
+    private const string OtherId = "22222222222222222222222222222222";
+    private void Script()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Plugins", new[] { new { Id, Name = "Installed plugin", Version = "1.0.0.0", Status = "Active", CanUninstall = true, HasImage = true } });
+        App.Server.OnGet("/Packages", new object[]
+        {
+            new { guid = Id, name = "Installed plugin", category = "Music", versions = new[] { new { version = "1.0.0.0" } } },
+            new { guid = OtherId, name = "Available plugin", category = "Community", imageUrl = "https://example.test/image.png", versions = new[] { new { version = "2.0.0.0" } } },
+        });
+        App.Server.OnGet("/web/ConfigurationPages", Array.Empty<object>());
+    }
+
+    [Fact]
+    public void Installed_plugins_are_default_and_cards_link_to_details()
+    {
+        Script();
+        var cut = Render<DashboardPluginsIndex>();
+        cut.Eventually(() => Assert.Single(cut.FindAll(".jf-dashboard-plugin-card")));
+        var card = cut.Find(".jf-dashboard-plugin-card");
+        Assert.Contains("Installed plugin", card.TextContent, StringComparison.Ordinal);
+        Assert.Contains("Active", card.TextContent, StringComparison.Ordinal);
+        Assert.Equal($"#/dashboard/plugins/{Id}?name=Installed%20plugin", card.GetAttribute("href"));
+        Assert.Contains($"Plugins/{Id}/1.0.0.0/Image", card.QuerySelector("img")!.GetAttribute("src"), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("All", null, null, 2)]
+    [InlineData("Available", null, null, 1)]
+    [InlineData("All", "other", null, 1)]
+    [InlineData("All", "music", "INSTALLED", 1)]
+    [InlineData("All", null, "absent", 0)]
+    public void Query_filters_are_applied(string status, string? category, string? query, int count)
+    {
+        Script();
+        var cut = Render<DashboardPluginsIndex>(p => p.Add(c => c.Status, status).Add(c => c.Category, category).Add(c => c.Query, query));
+        cut.Eventually(() => Assert.Equal(count, cut.FindAll(".jf-dashboard-plugin-card").Count));
+        if (count == 0) cut.Eventually(() => Assert.Contains(Get<Globalize>().Translate("SearchResultsEmpty", "absent"), cut.Markup, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("/Plugins")]
+    [InlineData("/Packages")]
+    [InlineData("/web/ConfigurationPages")]
+    public void Every_catalog_source_failure_shows_the_original_error(string path)
+    {
+        Script();
+        App.Server.On(HttpMethod.Get, path, _ => FakeHttp.Status(System.Net.HttpStatusCode.InternalServerError));
+        var cut = Render<DashboardPluginsIndex>();
+        cut.Eventually(() => Assert.Contains(this.T("PluginsLoadError"), cut.Find(".mud-alert").TextContent, StringComparison.Ordinal));
+        Assert.Empty(cut.FindAll(".jf-dashboard-plugin-card"));
+    }
+
+    [Fact]
+    public async Task Filters_and_search_update_url_without_dropping_other_filters()
+    {
+        Script();
+        Get<AppRouter>().Start();
+        var cut = RenderAt<DashboardPluginsIndex>("/dashboard/plugins?category=music&query=abc");
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll("[data-status]")));
+        await cut.Find("[data-status=All]").ClickAsync(new MouseEventArgs());
+        Assert.Equal("All", Get<AppRouter>().Location["status"]);
+        Assert.Equal("music", Get<AppRouter>().Location["category"]);
+        await cut.Find("#jf-dashboard-plugin-search").InputAsync(new ChangeEventArgs { Value = "new search" });
+        Assert.Equal("new search", Get<AppRouter>().Location["query"]);
+    }
+
+    [Fact]
+    public void Catalog_alias_replaces_the_location()
+    {
+        SignIn(admin: true);
+        Get<AppRouter>().Start();
+        Render<DashboardPluginCatalog>();
+        Assert.Equal("/dashboard/plugins", Get<AppRouter>().Location.Path);
+    }
+
+    [Fact]
+    public void Configuration_resolves_resource_but_never_executes_plugin_content()
+    {
+        Script();
+        App.Server.OnGet("/web/ConfigurationPages", new[] { new { Name = "plugin settings", DisplayName = "My Settings", PluginId = Id } });
+        App.Server.On(HttpMethod.Get, "/web/configurationpage", _ => PlainText("<script>dangerous()</script><h1>legacy content</h1>"));
+        var cut = Render<DashboardPluginConfiguration>(p => p.Add(c => c.Name, "plugin settings"));
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll(".jf-dashboard-plugin-configuration-notice")));
+        Assert.Contains("not available in this client", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("My Settings", cut.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("dangerous", cut.Markup, StringComparison.Ordinal);
+        Assert.Equal("plugin settings", Assert.Single(App.Server.RequestsTo("/web/configurationpage")).Query("name"));
+    }
+
+    [Fact]
+    public void Configuration_missing_page_has_no_configuration_notice()
+    {
+        Script();
+        var cut = Render<DashboardPluginConfiguration>(p => p.Add(c => c.Name, "missing"));
+        cut.Eventually(() => Assert.Contains(this.T("MessageNoPluginConfiguration"), cut.Markup, StringComparison.Ordinal));
+        Assert.Empty(App.Server.RequestsTo("/web/configurationpage"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Configuration_list_and_resource_failures_are_visible(bool listFails)
+    {
+        Script();
+        if (listFails) App.Server.On(HttpMethod.Get, "/web/ConfigurationPages", _ => FakeHttp.Status(System.Net.HttpStatusCode.InternalServerError));
+        else App.Server.OnGet("/web/ConfigurationPages", new[] { new { Name = "settings", PluginId = Id } });
+        var cut = Render<DashboardPluginConfiguration>(p => p.Add(c => c.Name, "settings"));
+        cut.Eventually(() => Assert.Contains(this.T("PluginLoadConfigError"), cut.Markup, StringComparison.Ordinal));
+    }
+}

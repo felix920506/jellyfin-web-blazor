@@ -1,0 +1,21 @@
+@namespace Jellyfin.Web.Components
+@inject JellyfinApi Api
+
+<a class="jf-dashboard-plugin-card mud-paper mud-elevation-1" href="@Plugin.Href" data-plugin="@Plugin.Name">
+    <div class="jf-dashboard-plugin-image">
+        @if (Plugin.ImageUrl(Api) is { Length: > 0 } image)
+        {
+            <img src="@image" alt="" loading="lazy" />
+        }
+        else { <MudIcon Icon="@MdIcon.Of("extension")" Class="jf-dashboard-plugin-placeholder" /> }
+    </div>
+    <div class="jf-dashboard-plugin-card-text">
+        <MudText Typo="Typo.h3">@Plugin.Name</MudText>
+        <MudText>@Plugin.Version?.VersionNumber</MudText>
+        @if (Plugin.Status is { } status) { <MudChip T="string" Size="Size.Small">@status</MudChip> }
+    </div>
+</a>
+
+@code {
+    [Parameter, EditorRequired] public DashboardPlugin Plugin { get; set; } = default!;
+}

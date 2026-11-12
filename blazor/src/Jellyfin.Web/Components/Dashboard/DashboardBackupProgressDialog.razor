@@ -1,0 +1,12 @@
+@namespace Jellyfin.Web.Components
+@inject Globalize Globalize
+<div class="jf-dashboard-dialog-form" role="status" aria-live="polite">
+    <h2 class="jf-dashboard-dialog-title">@Globalize[Restore ? "MessageRestoreInProgress" : "MessageBackupInProgress"]</h2>
+    <div class="jf-dashboard-dialog-content">
+        @if (Restore) { <MudText>@Globalize["MessageWaitingForServer"]</MudText> }
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    </div>
+</div>
+@code {
+    [Parameter] public bool Restore { get; set; }
+}

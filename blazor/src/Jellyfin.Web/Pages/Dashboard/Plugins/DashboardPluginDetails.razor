@@ -1,0 +1,166 @@
+@attribute [Route("/dashboard/plugins/{pluginId}")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject DashboardPlugins Plugins
+@inject Globalize Globalize
+@inject AppDialogs Dialogs
+
+<Page Id="addPluginPage" Title="@(_plugin?.Name ?? Name)" Class="mainAnimatedPage type-interior">
+    <div class="content-primary jf-dashboard-plugins">
+        @foreach (var alert in _alerts)
+        {
+            <MudAlert Severity="@alert.Severity" Class="jf-dashboard-plugin-alert" data-message="@alert.Key">@Globalize[alert.Key]</MudAlert>
+        }
+        @if (_loading) { <DashboardLoading /> }
+        else if (_plugin is { } plugin)
+        {
+            <div class="jf-dashboard-plugin-details">
+                <div class="jf-dashboard-plugin-description">
+                    <MudText Typo="Typo.h1">@(Name ?? plugin.Name)</MudText>
+                    <MudText>@plugin.Description</MudText>
+                </div>
+                <div class="jf-dashboard-plugin-details-image jf-dashboard-plugin-image">
+                    @if (plugin.ImageUrl(Api) is { Length: > 0 } image) { <img src="@image" alt="@plugin.Name" /> }
+                    else { <MudIcon Icon="@MdIcon.Of("extension")" Class="jf-dashboard-plugin-placeholder" /> }
+                </div>
+                <div class="jf-dashboard-plugin-revisions">
+                    @if (plugin.Versions.Count > 0)
+                    {
+                        <MudText Typo="Typo.h3">@Globalize["HeaderRevisionHistory"]</MudText>
+                        <MudExpansionPanels MultiExpansion="true">
+                            @foreach (var version in plugin.Versions)
+                            {
+                                <MudExpansionPanel Text="@RevisionTitle(version)" Class="jf-dashboard-plugin-revision">
+                                    <DashboardPluginChangelog Text="@version.Changelog" />
+                                    <MudButton Variant="Variant.Outlined" StartIcon="@MdIcon.Of("download")" Disabled="@(_busy || (plugin.Status is not null && version.Version == plugin.Version?.Version))"
+                                               data-version="@version.Version" OnClick="@(() => InstallAsync(version))">
+                                        @Globalize[plugin.Status is not null && version.Version == plugin.Version?.Version ? "LabelInstalled" : "HeaderInstall"]
+                                    </MudButton>
+                                </MudExpansionPanel>
+                            }
+                        </MudExpansionPanels>
+                    }
+                </div>
+                <div class="jf-dashboard-plugin-sidebar">
+                    @if (plugin.Status is null)
+                    {
+                        <MudAlert Severity="Severity.Info">@Globalize["ServerRestartNeededAfterPluginInstall"]</MudAlert>
+                        <MudButton Class="jf-dashboard-plugin-install" Disabled="@(_busy || plugin.Version is null)" StartIcon="@MdIcon.Of("download")" OnClick="@(() => InstallAsync(plugin.Version))">@Globalize["HeaderInstall"]</MudButton>
+                    }
+                    @if (plugin.Status == PluginInfo_Status.Restart || plugin.Status == PluginInfo_Status.Deleted)
+                    {
+                        <MudAlert Severity="Severity.Info">@Globalize["ServerRestartNeededAfterPluginInstall"]</MudAlert>
+                    }
+                    @if (plugin.CanUninstall)
+                    {
+                        <MudSwitch T="bool" Value="@(_enabledOverride ?? plugin.Status != PluginInfo_Status.Disabled)" ValueChanged="ToggleAsync" Disabled="@(_busy || plugin.Status == PluginInfo_Status.Restart)"
+                                   Color="Color.Primary" Label="@Globalize["LabelEnablePlugin"]" Class="jf-dashboard-plugin-enabled" />
+                    }
+                    @if (plugin.Configuration?.Name is { Length: > 0 } pageName)
+                    {
+                        <MudButton Class="jf-dashboard-plugin-settings" Href="@("#/" + DashboardNav.PluginPageUrl(pageName))" StartIcon="@MdIcon.Of("settings")">@Globalize["Settings"]</MudButton>
+                    }
+                    @if (plugin.CanUninstall)
+                    {
+                        <MudButton Color="Color.Error" Class="jf-dashboard-plugin-uninstall" Disabled="_busy" StartIcon="@MdIcon.Of("delete")" OnClick="UninstallAsync">@Globalize["ButtonUninstall"]</MudButton>
+                    }
+                    <MudSimpleTable Class="jf-dashboard-plugin-info">
+                        <tbody>
+                            <tr><th>@Globalize["LabelStatus"]</th><td>@(plugin.Status?.ToString() ?? Globalize["LabelNotInstalled"])</td></tr>
+                            <tr><th>@Globalize["LabelVersion"]</th><td>@plugin.Version?.Version</td></tr>
+                            <tr><th>@Globalize["LabelDeveloper"]</th><td>@(plugin.Installed?.CanUninstall == false ? "jellyfin" : plugin.Package?.Owner ?? Globalize["Unknown"])</td></tr>
+                            <tr><th>@Globalize["LabelRepository"]</th><td>
+                                @if (plugin.Status is not null && plugin.Installed?.CanUninstall == false) { @Globalize["LabelBundled"] }
+                                else if (plugin.Version?.RepositoryUrl is { Length: > 0 } repositoryUrl)
+                                {
+                                    <MudLink Href="@repositoryUrl" Target="_blank" rel="noopener noreferrer">@(plugin.Version.RepositoryName ?? repositoryUrl)</MudLink>
+                                }
+                                else { @Globalize["Unknown"] }
+                            </td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                </div>
+            </div>
+        }
+    </div>
+</Page>
+
+@code {
+    [Parameter] public string? PluginId { get; set; }
+    [Parameter] public string? Name { get; set; }
+    private DashboardPlugin? _plugin;
+    private bool _loading = true, _busy;
+    private bool? _enabledOverride;
+    private readonly List<(string Key, Severity Severity)> _alerts = [];
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+    private async Task LoadAsync()
+    {
+        if (!Guid.TryParse(PluginId, out var id)) { _alerts.Add(("MessageGetInstalledPluginsError", Severity.Error)); _loading = false; return; }
+        List<PluginInfo> installed = [];
+        List<ConfigurationPageInfo> pages = [];
+        PackageInfo? package = null;
+        var repoFailed = false;
+        await Task.WhenAll(
+            ReadAsync(async () => installed = await Api.Client.Plugins.GetAsync() ?? [], "MessageGetInstalledPluginsError"),
+            ReadAsync(async () => pages = await Api.Client.Web.ConfigurationPages.GetAsync() ?? [], "PluginLoadConfigError"),
+            ReadAsync(async () =>
+            {
+                if (string.IsNullOrEmpty(Name)) return;
+                try
+                {
+                    var packages = await Api.Client.Packages.GetAsync() ?? [];
+                    package = packages.FirstOrDefault(p => p.Guid == id);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException) { AppLog.Warn("[Plugin] catalog unavailable: " + ex.Message); repoFailed = true; }
+            }, null, () => repoFailed = true));
+        _plugin = new DashboardPlugin(id, DashboardPlugins.BestPlugin(installed, id), package, DashboardPlugins.BestPage(pages, id));
+        if (repoFailed && _plugin.CanUninstall) _alerts.Add(("PluginLoadRepoError", Severity.Warning));
+        _loading = false;
+    }
+    private async Task ReadAsync(Func<Task> read, string? error, Action? failed = null)
+    {
+        try { await read(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Plugin] load failed: " + ex.Message);
+            if (error is not null) _alerts.Add((error, Severity.Error));
+            failed?.Invoke();
+        }
+    }
+    private string RevisionTitle(VersionInfo version) => version.Version + (DateTimeOffset.TryParse(version.Timestamp, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date) ? " — " + DashboardFormat.DateTime(Globalize, date) : string.Empty);
+    private async Task InstallAsync(VersionInfo? version)
+    {
+        if (_busy || _plugin is not { } plugin || version is null || string.IsNullOrEmpty(plugin.Name)) return;
+        if (!DashboardPlugins.IsTrusted(version) && !await Dialogs.MuiConfirmAsync(Globalize["HeaderConfirmPluginInstallation"], Globalize["MessagePluginInstallDisclaimer"], Globalize["HeaderInstall"])) return;
+        await ChangeAsync(() => Plugins.InstallAsync(plugin, version), "MessagePluginInstallError", "MessagePluginInstalled");
+    }
+    private Task ToggleAsync(bool enabled)
+    {
+        if (_plugin?.Version?.Version is null || _busy) return Task.CompletedTask;
+        return ChangeAsync(async () => { await Plugins.EnableAsync(_plugin, enabled); _enabledOverride = enabled; }, enabled ? "PluginEnableError" : "PluginDisableError");
+    }
+    private async Task UninstallAsync()
+    {
+        if (_plugin is not { Version.Version: not null } plugin || _busy) return;
+        if (!await Dialogs.MuiConfirmAsync(Globalize["HeaderUninstallPlugin"], Globalize.Translate("UninstallPluginConfirmation", Name ?? plugin.Name), Globalize["ButtonUninstall"], destructive: true)) return;
+        await ChangeAsync(() => Plugins.UninstallAsync(plugin), "PluginUninstallError");
+    }
+    private async Task ChangeAsync(Func<Task> change, string error, string? success = null)
+    {
+        _busy = true;
+        _alerts.RemoveAll(a => a.Key is "PluginDisableError" or "PluginEnableError" or "MessagePluginInstallError" or "MessagePluginInstalled" or "PluginUninstallError");
+        try
+        {
+            await change();
+            if (success is not null) _alerts.Add((success, Severity.Success));
+            // Refresh installed state/configuration pages without discarding repository data.
+            var installed = await Api.Client.Plugins.GetAsync() ?? [];
+            var pages = await Api.Client.Web.ConfigurationPages.GetAsync() ?? [];
+            _plugin = _plugin! with { Installed = DashboardPlugins.BestPlugin(installed, _plugin!.Id), Configuration = DashboardPlugins.BestPage(pages, _plugin.Id) };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { AppLog.Warn("[Plugin] change failed: " + ex.Message); _alerts.Add((error, Severity.Error)); }
+        finally { _busy = false; }
+    }
+}

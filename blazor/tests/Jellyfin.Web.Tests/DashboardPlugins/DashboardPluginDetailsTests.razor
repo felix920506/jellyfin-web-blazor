@@ -1,0 +1,160 @@
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages.Dashboard.Plugins
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private const string Id = "11111111111111111111111111111111";
+    private const string PluginPath = "/Plugins/11111111-1111-1111-1111-111111111111/1.0.0.0";
+    private const string InstallPath = "/Packages/Installed/Test%20plugin";
+    private const string Version = "1.0.0.0";
+    private void Script(string? status = "Active", bool bundled = false, string repository = "https://repo.jellyfin.org/manifest.json")
+    {
+        SignIn(admin: true);
+        Installed(status, bundled);
+        App.Server.OnGet("/Packages", new[] { new { guid = Id, name = "Test plugin", description = "Catalog description", owner = "Developer", versions = new[]
+        {
+            new { version = "2.0.0.0", repositoryUrl = repository, repositoryName = "Test repository", changelog = "New revision", timestamp = "2024-05-15T12:00:00Z" },
+            new { version = Version, repositoryUrl = repository, repositoryName = "Test repository", changelog = "" , timestamp = "2024-01-01T12:00:00Z" },
+        } } });
+        App.Server.OnGet("/web/ConfigurationPages", new[] { new { Name = "TestSettings", DisplayName = "Test settings", PluginId = Id } });
+        JSInterop.SetupModule("./js/details.js").Mode = JSRuntimeMode.Loose;
+    }
+    private void Installed(string? status, bool bundled = false) => App.Server.OnGet("/Plugins", status is null ? Array.Empty<object>() : new object[] { new { Id, Name = "Test plugin", Description = "Installed description", Version, Status = status, CanUninstall = !bundled } });
+    private IRenderedComponent<DashboardPluginDetails> Page()
+    {
+        var cut = Render<DashboardPluginDetails>(p => p.Add(c => c.PluginId, Id).Add(c => c.Name, "Test plugin"));
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll(".jf-dashboard-plugin-info")));
+        return cut;
+    }
+
+    [Fact]
+    public void Details_show_installed_revision_repository_settings_and_history()
+    {
+        Script(); var cut = Page();
+        Assert.Contains("Installed description", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("Developer", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("Test repository", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains(Version, cut.Find(".jf-dashboard-plugin-info").TextContent, StringComparison.Ordinal);
+        Assert.Equal("#/configurationpage?name=TestSettings", cut.Find(".jf-dashboard-plugin-settings").GetAttribute("href"));
+        Assert.Equal(2, cut.FindAll(".jf-dashboard-plugin-revision").Count);
+        Assert.True(cut.Find($"[data-version='{Version}']").HasAttribute("disabled"));
+        Assert.False(cut.Find("[data-version='2.0.0.0']").HasAttribute("disabled"));
+        Assert.Contains(this.T("LabelNoChangelog"), cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Active")]
+    [InlineData("Disabled")]
+    [InlineData("Restart")]
+    [InlineData("Deleted")]
+    [InlineData("Superseded")]
+    [InlineData("Superceded")]
+    [InlineData("Malfunctioned")]
+    [InlineData("NotSupported")]
+    public void All_server_plugin_states_are_rendered(string status)
+    {
+        Script(status); var cut = Page();
+        Assert.Contains(status, cut.Find(".jf-dashboard-plugin-info").TextContent, StringComparison.Ordinal);
+        Assert.Equal(status == "Restart", Box(cut, "jf-dashboard-plugin-enabled").HasAttribute("disabled"));
+        Assert.Equal(status != "Disabled", Box(cut, "jf-dashboard-plugin-enabled").HasAttribute("checked"));
+    }
+
+    [Fact]
+    public void Bundled_plugins_have_no_uninstall_or_toggle_and_no_missing_repo_warning()
+    {
+        Script(bundled: true);
+        App.Server.On(HttpMethod.Get, "/Packages", _ => FakeHttp.Status(System.Net.HttpStatusCode.InternalServerError));
+        var cut = Page();
+        Assert.Empty(cut.FindAll(".jf-dashboard-plugin-uninstall, .jf-dashboard-plugin-enabled"));
+        Assert.Empty(cut.FindAll("[data-message=PluginLoadRepoError]"));
+        Assert.Contains("jellyfin", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains(this.T("LabelBundled"), cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Official_install_and_update_send_exact_revision_parameters(bool update)
+    {
+        Script(update ? "Active" : null);
+        App.Server.OnPost(InstallPath);
+        var cut = Page();
+        Installed("Restart");
+        await cut.Find(update ? "[data-version='2.0.0.0']" : ".jf-dashboard-plugin-install").ClickAsync(new MouseEventArgs());
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll("[data-message=MessagePluginInstalled]")));
+        var request = Assert.Single(App.Server.RequestsTo(InstallPath));
+        Assert.Equal(Id, request.Query("assemblyGuid")?.Replace("-", "", StringComparison.Ordinal));
+        Assert.Equal("2.0.0.0", request.Query("version"));
+        Assert.Equal("https://repo.jellyfin.org/manifest.json", request.Query("repositoryUrl"));
+        Assert.Empty(this.Dialogs().Dialogs);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Unofficial_install_needs_confirmation_and_cancel_is_safe(bool confirm)
+    {
+        Script(null, repository: "https://community.example/manifest.json");
+        App.Server.OnPost(InstallPath);
+        var dialogs = this.RenderDialogs(); var cut = Page();
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-plugin-install"));
+        Assert.Contains(this.T("MessagePluginInstallDisclaimer"), dialogs.Markup, StringComparison.Ordinal);
+        Assert.Empty(App.Server.RequestsTo(InstallPath));
+        if (confirm) { await ConfirmDialogAsync(dialogs); cut.Eventually(() => Assert.Single(App.Server.RequestsTo(InstallPath))); }
+        else { await CancelDialogAsync(dialogs); Assert.Empty(App.Server.RequestsTo(InstallPath)); }
+    }
+
+    [Fact]
+    public async Task Install_failure_is_visible()
+    {
+        Script(null); var cut = Page();
+        await cut.Find(".jf-dashboard-plugin-install").ClickAsync(new MouseEventArgs());
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll("[data-message=MessagePluginInstallError]")));
+        Assert.Empty(cut.FindAll("[data-message=MessagePluginInstalled]"));
+    }
+
+    [Theory]
+    [InlineData("Active", false, "Disable", "PluginDisableError")]
+    [InlineData("Disabled", true, "Enable", "PluginEnableError")]
+    public async Task Enable_disable_call_versioned_endpoint_and_report_failure(string status, bool enabled, string endpoint, string error)
+    {
+        Script(status); var cut = Page();
+        await Box(cut, "jf-dashboard-plugin-enabled").ChangeAsync(new ChangeEventArgs { Value = enabled });
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll($"[data-message={error}]")));
+        Assert.Single(App.Server.RequestsTo($"{PluginPath}/{endpoint}"));
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public async Task Uninstall_confirmation_success_and_failure(bool confirm, bool succeeds)
+    {
+        Script(); if (succeeds) App.Server.OnDelete(PluginPath);
+        var dialogs = this.RenderDialogs(); var cut = Page();
+        await ClickForDialogAsync(dialogs, cut.Find(".jf-dashboard-plugin-uninstall"));
+        Assert.Contains(Get<Globalize>().Translate("UninstallPluginConfirmation", "Test plugin"), dialogs.Find(".jf-dashboard-dialog-text").TextContent, StringComparison.Ordinal);
+        if (!confirm) { await CancelDialogAsync(dialogs); Assert.Empty(App.Server.RequestsTo(PluginPath)); return; }
+        if (succeeds) Installed(null);
+        await ConfirmDialogAsync(dialogs);
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo(PluginPath)));
+        if (succeeds) cut.Eventually(() => Assert.NotEmpty(cut.FindAll(".jf-dashboard-plugin-install")));
+        else cut.Eventually(() => Assert.NotEmpty(cut.FindAll("[data-message=PluginUninstallError]")));
+    }
+
+    [Theory]
+    [InlineData("/Plugins", "MessageGetInstalledPluginsError")]
+    [InlineData("/web/ConfigurationPages", "PluginLoadConfigError")]
+    [InlineData("/Packages", "PluginLoadRepoError")]
+    public void Individual_load_failures_are_visible_without_hiding_the_details(string path, string error)
+    {
+        Script(); App.Server.On(HttpMethod.Get, path, _ => FakeHttp.Status(System.Net.HttpStatusCode.InternalServerError));
+        var cut = Page();
+        cut.Eventually(() => Assert.NotEmpty(cut.FindAll($"[data-message={error}]")));
+    }
+}

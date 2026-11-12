@@ -1,0 +1,113 @@
+@attribute [Route("/dashboard/backups")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@implements IDisposable
+@inject JellyfinApi Api
+@inject Globalize Globalize
+@inject AppDialogs Dialogs
+@inject ServerEvents Events
+
+<Page Id="backupsPage" Title="@Globalize["HeaderBackups"]" Class="mainAnimatedPage type-interior">
+    @if (_loading) { <DashboardLoading /> }
+    else
+    {
+        <div class="content-primary jf-dashboard-plugins">
+            @if (_failed) { <MudAlert Severity="Severity.Error">@Globalize["BackupsPageLoadError"]</MudAlert> }
+            else
+            {
+                <MudText Typo="Typo.h1">@Globalize["HeaderBackups"]</MudText>
+                <MudText>@Globalize["HeaderBackupsHelp"]</MudText>
+                <MudButton Class="jf-dashboard-backup-create" StartIcon="@MdIcon.Of("add")" Disabled="_busy" OnClick="CreateAsync">@Globalize["ButtonCreateBackup"]</MudButton>
+                <MudPaper Class="jf-dashboard-plugin-list readOnlyContent">
+                    @foreach (var backup in _backups)
+                    {
+                        <div class="jf-dashboard-plugin-list-row" data-backup="@backup.Path">
+                            <button type="button" class="jf-dashboard-backup-info mud-ripple jf-dashboard-plugin-list-text" @onclick="@(() => InfoAsync(backup))">
+                                <MudText Typo="Typo.h3">@DashboardFormat.DateTime(Globalize, backup.DateCreated)</MudText>
+                                <MudText>@backup.Path</MudText>
+                            </button>
+                            <MudIconButton Icon="@MdIcon.Of("restore")" Class="jf-dashboard-backup-restore" aria-label="@Globalize["LabelRestore"]" Disabled="_busy" OnClick="@(() => RestoreAsync(backup))" />
+                        </div>
+                    }
+                </MudPaper>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private List<BackupManifestDto> _backups = [];
+    private List<TaskInfo> _tasks = [];
+    private LiveFeed? _feed;
+    private bool _loading = true, _failed, _busy;
+    private readonly CancellationTokenSource _lifetime = new();
+    internal TimeSpan RestoreCheckInterval { get; set; } = TimeSpan.FromSeconds(45);
+    private static readonly AppDialogOptions ProgressOptions = new() { Size = null, Class = "jf-dashboard-dialog", Dismissable = false };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _feed = new LiveFeed(Events, "ScheduledTasksInfo", "0,1500", data =>
+        {
+            var tasks = KiotaJson.ParseList(data, TaskInfo.CreateFromDiscriminatorValue).Where(t => t.IsHidden != true).ToList();
+            _ = InvokeAsync(() => { _tasks = tasks; StateHasChanged(); });
+        });
+        await Task.WhenAll(LoadAsync(), LoadTasksAsync());
+        _loading = false;
+    }
+    private async Task LoadAsync()
+    {
+        try { _backups = (await Api.Client.Backup.GetAsync() ?? []).OrderByDescending(b => b.DateCreated).ToList(); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { AppLog.Warn("[Backups] load failed: " + ex.Message); _failed = true; }
+    }
+    private async Task LoadTasksAsync()
+    {
+        try { _tasks = await Api.Client.ScheduledTasks.GetAsync(r => r.QueryParameters.IsHidden = false) ?? []; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { AppLog.Warn("[Backups] tasks unavailable: " + ex.Message); }
+    }
+    private Task InfoAsync(BackupManifestDto backup) => Dialogs.ShowAsync<DashboardBackupInfoDialog>(new Dictionary<string, object?> { [nameof(DashboardBackupInfoDialog.Backup)] = backup }, DashboardDialogs.Options);
+    private async Task CreateAsync()
+    {
+        if (_busy || await Dialogs.ShowAsync<DashboardBackupOptionsDialog>(options: DashboardDialogs.Options) is not BackupOptionsDto options) return;
+        var running = _tasks.Where(t => t.State != TaskInfo_State.Idle).ToList();
+        if (running.Count > 0 && !await Dialogs.MuiConfirmAsync(Globalize["HeaderBackupWarning"], Globalize["LabelBackupWarning"] + "\n\n" + string.Join('\n', running.Select(t => "- " + t.Name)), Globalize["Create"])) return;
+        _busy = true;
+        var progress = StartProgress();
+        var failed = false;
+        try { await Api.Client.Backup.Create.PostAsync(options); await LoadAsync(); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { AppLog.Warn("[Backups] create failed: " + ex.Message); failed = true; }
+        finally { progress.Close(); _busy = false; }
+        if (failed) await Dialogs.MuiAlertAsync(null, Globalize["UnknownError"]);
+    }
+    private async Task RestoreAsync(BackupManifestDto backup)
+    {
+        if (_busy || string.IsNullOrEmpty(backup.Path) || !await Dialogs.MuiConfirmAsync(Globalize["LabelRestore"], Globalize["MessageRestoreDisclaimer"], Globalize["LabelRestore"])) return;
+        _busy = true;
+        DialogInstance? progress = null;
+        var failed = false;
+        try
+        {
+            await Api.Client.Backup.Restore.PostAsync(new BackupRestoreRequestDto { ArchiveFileName = backup.Path });
+            progress = StartProgress(restore: true);
+            // The restore endpoint starts the server restart. As in the original, wait 45 seconds
+            // between public-info probes, treating connection errors as the server still restarting.
+            while (!_lifetime.IsCancellationRequested)
+            {
+                await Task.Delay(RestoreCheckInterval, _lifetime.Token);
+                if (await Api.GetPublicInfoAsync(cancellationToken: _lifetime.Token) is not null) break;
+            }
+            progress.Close();
+            await LoadAsync();
+            await Dialogs.MuiAlertAsync(Globalize["Success"], Globalize["MessageRestoreSuccess"]);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is not OperationCanceledException) { AppLog.Warn("[Backups] restore failed: " + ex.Message); failed = true; }
+        finally { progress?.Close(); _busy = false; }
+        if (failed) await Dialogs.MuiAlertAsync(null, Globalize["UnknownError"]);
+    }
+    private DialogInstance StartProgress(bool restore = false)
+    {
+        _ = Dialogs.ShowAsync<DashboardBackupProgressDialog>(new Dictionary<string, object?> { [nameof(DashboardBackupProgressDialog.Restore)] = restore }, ProgressOptions);
+        return Dialogs.Dialogs[^1];
+    }
+    public void Dispose() { _feed?.Dispose(); _lifetime.Cancel(); _lifetime.Dispose(); }
+}
