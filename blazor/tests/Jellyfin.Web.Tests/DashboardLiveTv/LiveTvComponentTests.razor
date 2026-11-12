@@ -1,0 +1,20 @@
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Session
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    [Fact]
+    public async Task Channel_mapping_posts_the_selected_channel_ids()
+    {
+        SignIn(admin: true);
+        App.Server.OnPost("/LiveTv/ChannelMappings", new { ProviderChannelId = "new", ProviderChannelName = "News HD" });
+        await Get<LiveTvAdminApi>().SetChannelMappingAsync("provider-1", "tuner-1", "new");
+        var request = Assert.Single(App.Server.RequestsTo("/LiveTv/ChannelMappings"));
+        Assert.Equal("provider-1", request.JsonBody().Text("providerId"));
+        Assert.Equal("tuner-1", request.JsonBody().Text("tunerChannelId"));
+        Assert.Equal("new", request.JsonBody().Text("providerChannelId"));
+    }
+}

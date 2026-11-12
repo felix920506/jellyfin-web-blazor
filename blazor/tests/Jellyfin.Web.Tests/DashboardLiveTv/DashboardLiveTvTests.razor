@@ -79,4 +79,73 @@
         Assert.Equal(300, body.GetProperty("PrePaddingSeconds").GetInt64());
         Assert.Equal("3", body.GetProperty("GuideDays").GetString());
     }
+
+    [Fact]
+    public void Tuner_fields_follow_the_original_type_visibility_rules()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/LiveTv/TunerHosts/Types", new[]
+        {
+            new { Id = "m3u", Name = "M3U Tuner" },
+            new { Id = "hdhomerun", Name = "HD Homerun" },
+        });
+
+        var cut = Render<DashboardLiveTvTuner>();
+        cut.Eventually(() => Assert.NotNull(cut.Find(".selectType")));
+
+        Assert.True(cut.Find(".fldPath").ClassList.Contains("hide"));
+        cut.Find(".selectType").Change("m3u");
+        cut.Eventually(() => Assert.False(cut.Find(".fldPath").ClassList.Contains("hide")));
+        Assert.False(cut.Find(".fldFmp4Container").ClassList.Contains("hide"));
+        Assert.True(cut.Find(".fldFavorites").ClassList.Contains("hide"));
+
+        cut.Find(".selectType").Change("hdhomerun");
+        cut.Eventually(() => Assert.False(cut.Find(".fldFavorites").ClassList.Contains("hide")));
+        Assert.True(cut.Find(".fldFmp4Container").ClassList.Contains("hide"));
+        Assert.False(cut.Find(".fldPath").ClassList.Contains("hide"));
+    }
+
+    [Fact]
+    public async Task XMLTV_save_posts_the_path_categories_and_validation_flag()
+    {
+        SignIn(admin: true);
+        ScriptConfiguration();
+        App.Server.OnGet("/LiveTv/ListingProviders/Default", new { Type = "xmltv", MovieCategories = new[] { "movie" }, EnableAllTuners = true });
+        App.Server.OnPost("/LiveTv/ListingProviders");
+        var cut = Render<XmlTvProvider>();
+        cut.Eventually(() => Assert.NotNull(cut.Find("form.xmltvForm")));
+
+        await cut.Find("input.txtPath").InputAsync(new ChangeEventArgs { Value = "/media/guide.xml" });
+        await cut.Find("form.xmltvForm").SubmitAsync();
+
+        cut.Eventually(() => Assert.Single(App.Server.RequestsTo("/LiveTv/ListingProviders")));
+        var request = Assert.Single(App.Server.RequestsTo("/LiveTv/ListingProviders"));
+        Assert.Equal("true", request.Query("ValidateListings"));
+        Assert.Equal("xmltv", request.JsonBody().Text("Type"));
+        Assert.Equal("/media/guide.xml", request.JsonBody().Text("Path"));
+        Assert.True(request.JsonBody().Flag("EnableAllTuners"));
+    }
+
+    [Fact]
+    public void Schedules_Direct_country_regions_are_flattened_and_sorted()
+    {
+        var countries = SchedulesDirectProvider.CountriesOf(new System.Text.Json.Nodes.JsonObject
+        {
+            ["US"] = new System.Text.Json.Nodes.JsonArray
+            {
+                new System.Text.Json.Nodes.JsonObject { ["fullName"] = "United States", ["shortName"] = "USA" },
+            },
+            ["ZZZ"] = new System.Text.Json.Nodes.JsonArray
+            {
+                new System.Text.Json.Nodes.JsonObject { ["fullName"] = "Everywhere", ["shortName"] = "ZZZ" },
+            },
+            ["CA"] = new System.Text.Json.Nodes.JsonArray
+            {
+                new System.Text.Json.Nodes.JsonObject { ["fullName"] = "Canada", ["shortName"] = "CAN" },
+            },
+        });
+
+        Assert.Equal(["Canada", "United States"], countries.Select(country => country.Name));
+        Assert.Equal(["CAN", "USA"], countries.Select(country => country.Value));
+    }
 }
