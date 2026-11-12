@@ -191,7 +191,7 @@ public sealed class DashboardLibraryLogicTests
     [InlineData(1366, 1.25, 683)]
     [InlineData(1000, 0, 400)]
     public void A_card_image_is_asked_for_at_two_fifths_of_the_screen(double screenWidth, double devicePixelRatio, int expected) =>
-        Assert.Equal(expected, DashboardLibraries.CardImageWidth(screenWidth, devicePixelRatio));
+        Assert.Equal(expected, Jellyfin.Web.Services.DashboardLibraries.CardImageWidth(screenWidth, devicePixelRatio));
 
     [Fact]
     public void The_editor_lists_the_path_infos_or_else_the_locations()
@@ -203,9 +203,9 @@ public sealed class DashboardLibraryLogicTests
         };
         var withLocations = new VirtualFolderInfo { Locations = ["/media/c"], LibraryOptions = new LibraryOptions { PathInfos = [] } };
 
-        Assert.Equal(["/media/a", "/media/b"], DashboardLibraries.PathsOf(withInfos));
-        Assert.Equal(["/media/c"], DashboardLibraries.PathsOf(withLocations));
-        Assert.Empty(DashboardLibraries.PathsOf(new VirtualFolderInfo()));
+        Assert.Equal(["/media/a", "/media/b"], Jellyfin.Web.Services.DashboardLibraries.PathsOf(withInfos));
+        Assert.Equal(["/media/c"], Jellyfin.Web.Services.DashboardLibraries.PathsOf(withLocations));
+        Assert.Empty(Jellyfin.Web.Services.DashboardLibraries.PathsOf(new VirtualFolderInfo()));
     }
 
     [Fact]
@@ -219,23 +219,23 @@ public sealed class DashboardLibraryLogicTests
         };
         var edited = new LibraryOptions { EnableRealtimeMonitor = false, MetadataCountryCode = "AT" };
 
-        var merged = DashboardLibraries.MergeOptions(original, edited);
+        var merged = Jellyfin.Web.Services.DashboardLibraries.MergeOptions(original, edited);
 
         Assert.False(merged.EnableRealtimeMonitor);
         Assert.Equal("AT", merged.MetadataCountryCode);
         Assert.Equal("de", merged.PreferredMetadataLanguage);
         Assert.Equal("/media/a", Assert.Single(merged.PathInfos!).Path);
-        Assert.Same(edited, DashboardLibraries.MergeOptions(null, edited));
+        Assert.Same(edited, Jellyfin.Web.Services.DashboardLibraries.MergeOptions(null, edited));
     }
 
     [Fact]
     public void Only_types_with_more_than_a_primary_image_have_image_settings()
     {
-        Assert.False(DashboardLibraries.HasImageOptions(null));
-        Assert.False(DashboardLibraries.HasImageOptions(new LibraryTypeOptionsDto()));
-        Assert.False(DashboardLibraries.HasImageOptions(new LibraryTypeOptionsDto { SupportedImageTypes = [ImageType.Primary] }));
-        Assert.True(DashboardLibraries.HasImageOptions(new LibraryTypeOptionsDto { SupportedImageTypes = [ImageType.Backdrop] }));
-        Assert.True(DashboardLibraries.HasImageOptions(new LibraryTypeOptionsDto { SupportedImageTypes = [ImageType.Primary, ImageType.Logo] }));
+        Assert.False(Jellyfin.Web.Services.DashboardLibraries.HasImageOptions(null));
+        Assert.False(Jellyfin.Web.Services.DashboardLibraries.HasImageOptions(new LibraryTypeOptionsDto()));
+        Assert.False(Jellyfin.Web.Services.DashboardLibraries.HasImageOptions(new LibraryTypeOptionsDto { SupportedImageTypes = [ImageType.Primary] }));
+        Assert.True(Jellyfin.Web.Services.DashboardLibraries.HasImageOptions(new LibraryTypeOptionsDto { SupportedImageTypes = [ImageType.Backdrop] }));
+        Assert.True(Jellyfin.Web.Services.DashboardLibraries.HasImageOptions(new LibraryTypeOptionsDto { SupportedImageTypes = [ImageType.Primary, ImageType.Logo] }));
     }
 
     [Fact]
@@ -247,10 +247,10 @@ public sealed class DashboardLibraryLogicTests
             DefaultImageOptions = [new ImageOption { Type = ImageOption_Type.Logo, Limit = 1 }, new ImageOption { Type = ImageOption_Type.Backdrop, Limit = 3, MinWidth = 1280 }],
         };
 
-        Assert.Equal(5, DashboardLibraries.ImageConfigOf(options, available, ImageOption_Type.Logo).MinWidth);
-        Assert.Equal(3, DashboardLibraries.ImageConfigOf(options, available, ImageOption_Type.Backdrop).Limit);
-        Assert.Equal(1, DashboardLibraries.ImageConfigOf(options, available, ImageOption_Type.Primary).Limit);
-        Assert.Equal(0, DashboardLibraries.ImageConfigOf(options, null, ImageOption_Type.Thumb).Limit);
+        Assert.Equal(5, Jellyfin.Web.Services.DashboardLibraries.ImageConfigOf(options, available, ImageOption_Type.Logo).MinWidth);
+        Assert.Equal(3, Jellyfin.Web.Services.DashboardLibraries.ImageConfigOf(options, available, ImageOption_Type.Backdrop).Limit);
+        Assert.Equal(1, Jellyfin.Web.Services.DashboardLibraries.ImageConfigOf(options, available, ImageOption_Type.Primary).Limit);
+        Assert.Equal(0, Jellyfin.Web.Services.DashboardLibraries.ImageConfigOf(options, null, ImageOption_Type.Thumb).Limit);
     }
 
     [Fact]
@@ -268,7 +268,7 @@ public sealed class DashboardLibraryLogicTests
             ],
         };
 
-        var state = DashboardLibraries.LoadImageOptions(options, available);
+        var state = Jellyfin.Web.Services.DashboardLibraries.LoadImageOptions(options, available);
 
         Assert.Equal(
             ["Primary", "Art", "Back", "Banner", "Box", "Disc", "Logo", "Menu", "Thumb"],
@@ -280,7 +280,7 @@ public sealed class DashboardLibraryLogicTests
         Assert.Equal("3", state.MaxBackdrops);
         Assert.Equal("1280", state.MinBackdropWidth);
 
-        var none = DashboardLibraries.LoadImageOptions(new TypeOptions(), null);
+        var none = Jellyfin.Web.Services.DashboardLibraries.LoadImageOptions(new TypeOptions(), null);
         Assert.False(none.SupportsBackdrops);
         Assert.DoesNotContain(none.Types, choice => choice.Supported);
         Assert.Equal("0", none.MaxBackdrops);
@@ -290,12 +290,12 @@ public sealed class DashboardLibraryLogicTests
     public void The_image_options_editor_writes_every_type_and_the_backdrops()
     {
         var options = new TypeOptions();
-        var state = DashboardLibraries.LoadImageOptions(options, null);
+        var state = Jellyfin.Web.Services.DashboardLibraries.LoadImageOptions(options, null);
         state.Types.Single(choice => choice.Type == ImageOption_Type.Banner).Checked = true;
         state.MaxBackdrops = "4";
         state.MinBackdropWidth = "abc";
 
-        DashboardLibraries.SaveImageOptions(state, options);
+        Jellyfin.Web.Services.DashboardLibraries.SaveImageOptions(state, options);
 
         Assert.Equal(10, options.ImageOptions!.Count);
         Assert.Equal(
@@ -311,12 +311,12 @@ public sealed class DashboardLibraryLogicTests
     [Fact]
     public void The_trickplay_widths_are_read_as_the_original_reads_them()
     {
-        Assert.Equal([320, 640], DashboardLibraries.ParseWidthResolutions("320,640"));
+        Assert.Equal([320, 640], Jellyfin.Web.Services.DashboardLibraries.ParseWidthResolutions("320,640"));
         // Only the first blank is removed before splitting; the numbers are trimmed like Number() trims.
-        Assert.Equal([320, 640, 800], DashboardLibraries.ParseWidthResolutions("320, 640, 800"));
-        Assert.Equal([320, 0], DashboardLibraries.ParseWidthResolutions("320,"));
-        Assert.Equal([0], DashboardLibraries.ParseWidthResolutions(null));
-        Assert.Equal([320, null], DashboardLibraries.ParseWidthResolutions("320,wide"));
+        Assert.Equal([320, 640, 800], Jellyfin.Web.Services.DashboardLibraries.ParseWidthResolutions("320, 640, 800"));
+        Assert.Equal([320, 0], Jellyfin.Web.Services.DashboardLibraries.ParseWidthResolutions("320,"));
+        Assert.Equal([0], Jellyfin.Web.Services.DashboardLibraries.ParseWidthResolutions(null));
+        Assert.Equal([320, null], Jellyfin.Web.Services.DashboardLibraries.ParseWidthResolutions("320,wide"));
     }
 
     [Theory]
@@ -329,5 +329,5 @@ public sealed class DashboardLibraryLogicTests
     [InlineData("320;640", false)]
     [InlineData("wide", false)]
     public void The_trickplay_widths_are_digits_and_commas(string? text, bool valid) =>
-        Assert.Equal(valid, DashboardLibraries.IsValidWidthResolutions(text));
+        Assert.Equal(valid, Jellyfin.Web.Services.DashboardLibraries.IsValidWidthResolutions(text));
 }
