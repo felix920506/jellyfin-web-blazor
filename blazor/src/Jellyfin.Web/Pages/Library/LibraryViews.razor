@@ -1,0 +1,25 @@
+@namespace Jellyfin.Web.Pages
+@*
+    The library pages of the modern layout (apps/modern/routes/{movies,shows,music,books,boxsets,
+    homevideos,musicvideos,playlists,mixed}): one LibraryPage per route of LibraryRoutes.
+*@
+@attribute [Route("/movies")]
+@attribute [Route("/tv")]
+@attribute [Route("/music")]
+@attribute [Route("/books")]
+@attribute [Route("/boxsets")]
+@attribute [Route("/homevideos")]
+@attribute [Route("/musicvideos")]
+@attribute [Route("/playlists")]
+@attribute [Route("/mixed")]
+@attribute [Access(AccessLevel.User)]
+
+@if (LibraryRoutes.Find(Location.Path) is { } config)
+{
+    <LibraryPage @key="config.Path" Config="config" />
+}
+
+@code {
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = default!;
+}

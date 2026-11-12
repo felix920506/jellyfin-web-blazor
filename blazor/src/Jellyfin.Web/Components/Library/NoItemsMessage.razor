@@ -1,0 +1,14 @@
+@namespace Jellyfin.Web.Components
+@* The empty state of a list (components/common/NoItemsMessage.tsx). *@
+@inject Globalize Globalize
+
+<div class="noItemsMessage centerMessage">
+    <h1>@Globalize["MessageNothingHere"]</h1>
+    <p>@Globalize[Message ?? "MessageNoItemsAvailable"]</p>
+</div>
+
+@code {
+    /// <summary>Translation key of the explanation; "MessageNoItemsAvailable" when null.</summary>
+    [Parameter]
+    public string? Message { get; set; }
+}

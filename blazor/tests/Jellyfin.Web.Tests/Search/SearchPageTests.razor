@@ -1,0 +1,196 @@
+@* The search page: suggestions while the field is empty, result rows for ?query=, typing with its debounce, and searches limited to a library. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages
+@using Jellyfin.Web.Routing
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Items
+@using Jellyfin.Web.Tests.Support
+@inherits ItemsTestContext
+
+@code {
+    private AppLocation _location = AppLocation.Parse("/search");
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        SearchService.Debounce = TimeSpan.FromMilliseconds(30);
+        App.Server.OnGet("/Items", request => new { Items = Items(request) });
+        App.Server.OnGet("/Persons", request => new { Items = Persons(request) });
+        App.Server.OnGet("/Studios", new { Items = Array.Empty<object>() });
+    }
+
+    // Without a search term the request is the one for the suggestions; "nothing" finds nothing.
+    private static object[] Items(RecordedRequest request)
+    {
+        if (request.Query("searchTerm") is not { } term)
+        {
+            return [TestItems.Movie(1, "First"), TestItems.Movie(2, "Second")];
+        }
+
+        return term != "nothing" && request.Query("limit") == "800"
+            ? [new { Id = TestItems.Id(3), Name = "Song", Type = "Audio", ServerId = TestApp.ServerId }, TestItems.Movie(4, "Found " + term)]
+            : [];
+    }
+
+    private static object[] Persons(RecordedRequest request)
+    {
+        if (request.Query("searchTerm") == "nothing")
+        {
+            return [];
+        }
+
+        return request.Query("personTypes") is null
+            ? [new { Id = TestItems.Id(11), Name = "Actor", Type = "Person", ServerId = TestApp.ServerId }]
+            : [new { Id = TestItems.Id(12), Name = "Singer", Type = "MusicArtist", ServerId = TestApp.ServerId }];
+    }
+
+    private IRenderedComponent<ContainerFragment> RenderPage() => Render(
+        @<CascadingValue Value="_location">
+            <SearchPage />
+        </CascadingValue>);
+
+    private static string[] Sections(IRenderedComponent<ContainerFragment> cut) =>
+        cut.FindAll(".searchResults h2.sectionTitle").Select(title => title.TextContent.Trim()).ToArray();
+
+    private RecordedRequest[] Searches => App.Server.Requests.Where(request => request.Query("searchTerm") is not null).ToArray();
+
+    [Fact]
+    public void An_empty_field_shows_suggestions()
+    {
+        SignIn();
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Equal(
+            new[] { "First", "Second" },
+            cut.FindAll(".searchSuggestionsList a.button-link").Select(link => link.TextContent.Trim())));
+        Assert.Equal("page mainAnimatedPage libraryPage allLibraryPage noSecondaryNavPage", cut.Find("#searchPage").ClassName);
+        Assert.Equal("Suggestions", cut.Find(".searchSuggestions h2.sectionTitle").TextContent.Trim());
+        Assert.Equal(
+            Get<AppRouter>().GetRouteUrl(TestItems.Item(TestItems.Movie(1, "First"))),
+            cut.Find(".searchSuggestionsList a.button-link").GetAttribute("href"));
+
+        var input = cut.Find("#searchTextInput");
+        Assert.Equal("emby-input searchfields-txtSearch", input.ClassName);
+        Assert.Equal("Search", input.GetAttribute("placeholder"));
+        Assert.True(string.IsNullOrEmpty(input.GetAttribute("value")));
+        Assert.Empty(cut.FindAll(".searchResults"));
+        Assert.Empty(Searches);
+
+        var request = Assert.Single(App.Server.RequestsTo("/Items"));
+        Assert.Equal("IsFavoriteOrLiked,Random", request.Query("sortBy"));
+        Assert.Null(request.Query("parentId"));
+    }
+
+    [Fact]
+    public void The_query_of_the_address_is_searched_for_at_once()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/search?query=test");
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Movies", "People", "Artists", "Songs" }, Sections(cut)));
+        Assert.Equal("test", cut.Find("#searchTextInput").GetAttribute("value"));
+        Assert.Equal("Found test", cut.Find(".searchResults [data-section='Movies'] .card .cardText-first").TextContent.Trim());
+        Assert.Single(cut.FindAll(".searchResults [data-section='Songs'] .card"));
+        Assert.Empty(cut.FindAll(".searchSuggestions"));
+        Assert.Empty(cut.FindAll(".noItemsMessage"));
+        Assert.Equal(6, Searches.Length);
+        Assert.All(Searches, request => Assert.Equal("test", request.Query("searchTerm")));
+    }
+
+    [Fact]
+    public void Typing_follows_the_field_in_the_address_and_searches_after_a_pause()
+    {
+        SignIn();
+        SearchService.Debounce = TimeSpan.FromMilliseconds(250);
+
+        // The page gets its location from the router, which follows the address.
+        App.Browser.HashChanged += hash => _location = AppLocation.Parse(hash);
+        var cut = RenderPage();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".searchSuggestions")));
+
+        cut.Find("#searchTextInput").Input("t");
+        cut.Find("#searchTextInput").Input("te");
+
+        cut.WaitForAssertion(() => Assert.Equal("/search?query=te", App.Browser.Hash));
+        Assert.Empty(Searches);
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Movies", "People", "Artists", "Songs" }, Sections(cut)));
+
+        // Only the text the pause ended on was searched for.
+        Assert.All(Searches, request => Assert.Equal("te", request.Query("searchTerm")));
+        Assert.Equal("Found te", cut.Find(".searchResults [data-section='Movies'] .card .cardText-first").TextContent.Trim());
+
+        // The result rows may still be rendering, in which case the event is queued behind them.
+        cut.Find("#searchTextInput").Input(string.Empty);
+
+        cut.WaitForAssertion(() => Assert.Equal("/search", App.Browser.Hash));
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".searchSuggestions")));
+        Assert.Empty(cut.FindAll(".searchResults"));
+    }
+
+    [Fact]
+    public void A_search_without_results_says_so()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/search?query=nothing");
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Equal("Sorry! No results found for \"nothing\"", cut.Find(".noItemsMessage").TextContent.Trim()));
+        Assert.Empty(cut.FindAll(".noItemsMessage a"));
+        Assert.Empty(cut.FindAll(".searchResults"));
+    }
+
+    [Fact]
+    public void A_search_in_a_library_stays_in_it_and_offers_to_search_everywhere()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/search?query=nothing&parentId=lib1&collectionType=movies");
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".noItemsMessage")));
+        Assert.Equal("#/search?query=nothing", cut.Find(".noItemsMessage a.emby-button").GetAttribute("href"));
+        Assert.NotEmpty(Searches);
+
+        // People are not looked up per library (usePeopleSearch passes no parentId).
+        Assert.All(
+            Searches.Where(request => !request.Uri.AbsolutePath.EndsWith("/Persons", StringComparison.Ordinal)),
+            request => Assert.Equal("lib1", request.Query("parentId")));
+        Assert.Contains(Searches, request => request.Query("includeItemTypes") == "Movie");
+        Assert.DoesNotContain(Searches, request => request.Query("includeItemTypes")?.Contains("Audio") == true);
+    }
+
+    [Fact]
+    public void The_suggestions_of_a_library_search_come_from_the_library()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/search?parentId=lib1&collectionType=movies");
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".searchSuggestionsList a.button-link")));
+        Assert.Equal("lib1", Assert.Single(App.Server.RequestsTo("/Items")).Query("parentId"));
+    }
+
+    [Fact]
+    public void A_query_changed_in_the_address_is_searched_for()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/search?query=test");
+        var cut = RenderPage();
+        cut.WaitForAssertion(() => Assert.NotEmpty(Sections(cut)));
+
+        _location = AppLocation.Parse("/search?query=other");
+        Rerender(cut);
+
+        cut.WaitForAssertion(() => Assert.Equal(
+            "Found other",
+            cut.Find(".searchResults [data-section='Movies'] .card .cardText-first").TextContent.Trim()));
+        Assert.Equal("other", cut.Find("#searchTextInput").GetAttribute("value"));
+    }
+}

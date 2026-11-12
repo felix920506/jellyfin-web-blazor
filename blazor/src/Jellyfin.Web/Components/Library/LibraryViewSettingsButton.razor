@@ -1,0 +1,75 @@
+@namespace Jellyfin.Web.Components
+@*
+    The view settings menu of a library view (features/libraries/components/library/ViewSettingsButton.tsx):
+    grid or list, and for the grid the image type and the card settings.
+*@
+@inject Globalize Globalize
+
+<MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" Class="jf-library-viewsettings" ListClass="jf-library-viewsettings-list">
+    <ActivatorContent Context="menu">
+        <MudIconButton Icon="@MdIcon.Of(Settings.IsList ? "view_list" : "view_module")" Color="Color.Inherit" Class="jf-library-btn-viewsettings"
+                       title="@Globalize["ViewSettings"]" aria-label="@Globalize["ViewSettings"]" OnClick="@(e => menu.ToggleAsync(e))" />
+    </ActivatorContent>
+    <ChildContent>
+        <MudMenuItem AutoClose="false" Class="@(Settings.IsList ? "jf-library-view-grid" : "jf-library-view-grid jf-menu-selected")" OnClick="() => SetViewModeAsync(LibraryViewSettings.Grid)">
+            <span class="jf-menu-row">
+                <span class="material-icons jf-menu-check @(Settings.IsList ? null : "check")" aria-hidden="true"></span>
+                <span class="jf-menu-text">@Globalize["GridView"]</span>
+                <IconButton Icon="settings" Class="jf-library-view-gridsettings" Title="@Globalize["Settings"]" StopPropagation="true" OnClick="() => _expanded = !_expanded" />
+            </span>
+        </MudMenuItem>
+        <MudCollapse Expanded="_expanded">
+            @if (ImageTypes.Count > 0)
+            {
+                <MudListSubheader>@Globalize["LabelImageType"]</MudListSubheader>
+                @foreach (var imageType in ImageTypes)
+                {
+                    var current = imageType;
+                    <MudMenuItem @key="current" AutoClose="false" Class="@(current == Settings.ImageType ? "jf-menu-selected" : null)" data-imagetype="@current"
+                                 OnClick="() => SettingsChanged.InvokeAsync(Settings with { ImageType = current })">
+                        <span class="jf-menu-row">
+                            <span class="material-icons jf-menu-check @(current == Settings.ImageType ? "check" : null)" aria-hidden="true"></span>
+                            <span class="jf-menu-text">@Globalize[current]</span>
+                        </span>
+                    </MudMenuItem>
+                }
+            }
+            <MudListSubheader>@Globalize["CardSettings"]</MudListSubheader>
+            <div class="jf-library-view-switches">
+                @if (ImageTypes.Count > 0)
+                {
+                    <MudSwitch T="bool" Value="Settings.ShowTitle" ValueChanged="@(value => SettingsChanged.InvokeAsync(Settings with { ShowTitle = value }))"
+                               Label="@Globalize["ShowTitle"]" Color="Color.Primary" Class="jf-library-switch-title" />
+                    <MudSwitch T="bool" Value="Settings.ShowYear" ValueChanged="@(value => SettingsChanged.InvokeAsync(Settings with { ShowYear = value }))"
+                               Label="@Globalize["ShowYear"]" Color="Color.Primary" Class="jf-library-switch-year" />
+                }
+                <MudSwitch T="bool" Value="Settings.CardLayout" ValueChanged="@(value => SettingsChanged.InvokeAsync(Settings with { CardLayout = value }))"
+                           Label="@Globalize["EnableCardLayout"]" Color="Color.Primary" Class="jf-library-switch-cardlayout" />
+            </div>
+        </MudCollapse>
+        <MudDivider />
+        <MudMenuItem AutoClose="false" Class="@(Settings.IsList ? "jf-library-view-list jf-menu-selected" : "jf-library-view-list")" OnClick="() => SetViewModeAsync(LibraryViewSettings.List)">
+            <span class="jf-menu-row">
+                <span class="material-icons jf-menu-check @(Settings.IsList ? "check" : null)" aria-hidden="true"></span>
+                <span class="jf-menu-text">@Globalize["ListView"]</span>
+            </span>
+        </MudMenuItem>
+    </ChildContent>
+</MudMenu>
+
+@code {
+    private bool _expanded;
+
+    [Parameter, EditorRequired]
+    public string ViewType { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public LibraryViewSettings Settings { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<LibraryViewSettings> SettingsChanged { get; set; }
+
+    private IReadOnlyList<string> ImageTypes => LibraryQueryBuilder.ImageTypes(ViewType);
+
+    private Task SetViewModeAsync(string viewMode) => SettingsChanged.InvokeAsync(Settings with { ViewMode = viewMode });
+}

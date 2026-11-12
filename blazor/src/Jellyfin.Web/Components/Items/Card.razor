@@ -7,9 +7,11 @@
 @inject ItemActions Actions
 @inject Globalize Globalize
 @inject UserSettings Settings
+@inject MultiSelectState MultiSelect
+@implements IDisposable
 
 <div @attributes="Model.Attributes" class="@Model.CssClass">
-    <div class="@Model.BoxClass">
+    <div class="@(MultiSelect.IsActive ? Model.BoxClass + " withMultiSelect" : Model.BoxClass)">
         <div class="cardScalable">
             <div class="cardPadder cardPadder-@Model.Shape">
                 @if (Model.PadderIcon is not null)
@@ -87,6 +89,20 @@
         {
             @Footer(outer)
         }
+        @if (MultiSelect.IsActive)
+        {
+            @* Multi-select (components/multiSelect): the panel covers the card, so every click toggles the selection. *@
+            <div class="itemSelectionPanel" @onclick="ToggleSelection" @onclick:stopPropagation>
+                <label class="checkboxContainer">
+                    <input type="checkbox" is="emby-checkbox" data-outlineclass="multiSelectCheckboxOutline" class="chkItemSelect emby-checkbox" data-embycheckbox="true" checked="@MultiSelect.IsSelected(Model.Item)" />
+                    <span class="checkboxLabel"></span>
+                    <span class="checkboxOutline multiSelectCheckboxOutline">
+                        <span class="material-icons checkboxIcon checkboxIcon-checked check" aria-hidden="true"></span>
+                        <span class="material-icons checkboxIcon checkboxIcon-unchecked" aria-hidden="true"></span>
+                    </span>
+                </label>
+            </div>
+        }
     </div>
 </div>
 
@@ -110,6 +126,15 @@
     private string ImageContainerClass => Model.ImageUrl is null
         ? $"{Model.ImageContainerClass} cardContent itemAction"
         : $"{Model.ImageContainerClass} cardContent itemAction lazy";
+
+    private IDisposable? _selection;
+
+    protected override void OnInitialized() =>
+        _selection = MultiSelect.Attach(() => Model?.Item, () => Context ?? CascadedContext, () => _ = InvokeAsync(StateHasChanged));
+
+    public void Dispose() => _selection?.Dispose();
+
+    private void ToggleSelection() => MultiSelect.Toggle(Model.Item, Context ?? CascadedContext);
 
     private Task RunAsync(string action) => Actions.ExecuteAsync(Model.Item, action, Context ?? CascadedContext);
 

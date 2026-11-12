@@ -1,0 +1,32 @@
+@namespace Jellyfin.Web.Components
+@*
+    The alphabet picker of the modern library views (features/libraries/components/library/AlphabetPicker.tsx):
+    a vertical group of toggle buttons fixed to the right edge. Clicking the selected letter clears it.
+    The legacy list page uses AlphaPicker instead.
+*@
+
+<div class="alphaPicker-fixed-right jf-library-alphapicker">
+    <MudPaper Elevation="1" Class="jf-library-alphapicker-paper">
+        @foreach (var letter in Letters)
+        {
+            var current = letter;
+            <button type="button" class="@(current == Value ? "jf-library-alpha jf-library-alpha-selected" : "jf-library-alpha")"
+                    value="@current" aria-pressed="@(current == Value ? "true" : "false")" @onclick="() => SelectAsync(current)">@current</button>
+        }
+    </MudPaper>
+</div>
+
+@code {
+    /// <summary>"#" and the letters A to Z.</summary>
+    public static readonly IReadOnlyList<string> Letters =
+        ["#", .. Enumerable.Range('A', 26).Select(code => ((char)code).ToString())];
+
+    /// <summary>The selected letter, or null.</summary>
+    [Parameter]
+    public string? Value { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    private Task SelectAsync(string letter) => ValueChanged.InvokeAsync(letter == Value ? null : letter);
+}

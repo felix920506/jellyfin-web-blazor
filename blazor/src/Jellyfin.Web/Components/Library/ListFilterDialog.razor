@@ -1,0 +1,176 @@
+@namespace Jellyfin.Web.Components
+@*
+    The filter dialog of the list page (components/filtermenu): the played/favorite filters, the series
+    status, the genres the server offers, the video types and the features. Every change is reported
+    through OnChange; the page saves and applies the last value when the dialog closes, as the original.
+*@
+@inject Globalize Globalize
+@inject LibraryData Data
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["Filters"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY">
+    <div class="dialogContentInner dialog-content-centered">
+        <form style="margin:auto;" onsubmit="return false;">
+            @if (Basic.Any(IsVisible))
+            {
+                <div class="verticalSection verticalSection-extrabottompadding basicFilterSection focuscontainer-x" style="margin-top:2em;">
+                    <div class="checkboxList checkboxList-verticalwrap">
+                        @foreach (var filter in Basic.Where(IsVisible))
+                        {
+                            <EmbyCheckbox @key="filter.Name" LabelClass="viewSetting simpleFilter" Class="@filter.Class" Label="@Globalize[filter.Label]"
+                                          Value="_filters.Get(filter.Name)" ValueChanged="value => Set(_filters.With(filter.Name, value))" data-settingname="@filter.Name" />
+                        }
+                    </div>
+                </div>
+            }
+            @if (IsVisible("SeriesStatus"))
+            {
+                <div class="verticalSection verticalSection-extrabottompadding viewSetting focuscontainer-x" data-settingname="SeriesStatus">
+                    <h2 class="checkboxListLabel">@Globalize["HeaderSeriesStatus"]</h2>
+                    <div class="checkboxList checkboxList-verticalwrap">
+                        @foreach (var status in SeriesStatuses)
+                        {
+                            <EmbyCheckbox @key="status" Class="chkSeriesStatus" Label="@Globalize[status]" data-filter="@status"
+                                          Value="Has(_filters.SeriesStatus, status)" ValueChanged="value => Set(_filters with { SeriesStatus = Toggle(_filters.SeriesStatus, status, value) })" />
+                        }
+                    </div>
+                </div>
+            }
+            @if (_genres.Count > 0)
+            {
+                <div class="verticalSection verticalSection-extrabottompadding genreFilters focuscontainer-x">
+                    <h2 class="checkboxListLabel">@Globalize["Genres"]</h2>
+                    <div class="checkboxList checkboxList-verticalwrap filterOptions">
+                        @foreach (var genre in _genres)
+                        {
+                            <EmbyCheckbox @key="genre.Id" Class="chkGenreFilter" Label="@genre.Name" data-filter="@genre.Id"
+                                          Value="Has(_filters.GenreIds, genre.Id)" ValueChanged="value => Set(_filters with { GenreIds = Toggle(_filters.GenreIds, genre.Id, value) })" />
+                        }
+                    </div>
+                </div>
+            }
+            @if (IsVisible("VideoType"))
+            {
+                <div class="verticalSection verticalSection-extrabottompadding viewSetting focuscontainer-x" data-settingname="VideoType">
+                    <h2 class="checkboxListLabel">@Globalize["HeaderVideoType"]</h2>
+                    <div class="checkboxList checkboxList-verticalwrap">
+                        @foreach (var filter in Resolutions)
+                        {
+                            <EmbyCheckbox @key="filter.Name" Class="@("simpleFilter " + filter.Class)" Label="@filter.Label" data-settingname="@filter.Name"
+                                          Value="_filters.Get(filter.Name)" ValueChanged="value => Set(_filters.With(filter.Name, value))" />
+                        }
+                        @foreach (var type in VideoTypes)
+                        {
+                            <EmbyCheckbox @key="type.Name" Class="chkVideoTypeFilter" Label="@type.Label" data-filter="@type.Name"
+                                          Value="Has(_filters.VideoTypes, type.Name)" ValueChanged="value => Set(_filters with { VideoTypes = Toggle(_filters.VideoTypes, type.Name, value) })" />
+                        }
+                    </div>
+                </div>
+            }
+            @if (Features.Any(IsVisible))
+            {
+                <div class="verticalSection verticalSection-extrabottompadding featureSection focuscontainer-x">
+                    <h2 class="checkboxListLabel">@Globalize["Features"]</h2>
+                    <div class="checkboxList checkboxList-verticalwrap">
+                        @foreach (var filter in Features.Where(IsVisible))
+                        {
+                            <EmbyCheckbox @key="filter.Name" LabelClass="viewSetting simpleFilter" Class="@("chkFeatureFilter " + filter.Class)" Label="@Globalize[filter.Label]"
+                                          Value="_filters.Get(filter.Name)" ValueChanged="value => Set(_filters.With(filter.Name, value))" data-settingname="@filter.Name" />
+                        }
+                    </div>
+                </div>
+            }
+        </form>
+    </div>
+</div>
+
+@code {
+    private static readonly Filter[] Basic =
+    [
+        new("IsUnplayed", "Unplayed", "chkUnplayed"),
+        new("IsPlayed", "Played", "chkPlayed"),
+        new("IsFavorite", "Favorite", "chkFavorite"),
+        new("IsResumable", "ContinueWatching", "chkResumable")
+    ];
+
+    private static readonly string[] SeriesStatuses = ["Continuing", "Ended", "Unreleased"];
+
+    private static readonly Filter[] Resolutions =
+    [
+        new("IsHD", "HD", "chkHDFilter"),
+        new("Is4K", "4K", "chk4KFilter"),
+        new("IsSD", "SD", "chkSDFilter"),
+        new("Is3D", "3D", "chk3DFilter")
+    ];
+
+    private static readonly Filter[] VideoTypes = [new("Bluray", "Blu-ray", string.Empty), new("Dvd", "DVD", string.Empty)];
+
+    private static readonly Filter[] Features =
+    [
+        new("HasSubtitles", "Subtitles", "chkSubtitle"),
+        new("HasTrailer", "Trailers", "chkTrailer"),
+        new("HasSpecialFeature", "Extras", "chkSpecialFeature"),
+        new("HasThemeSong", "ThemeSongs", "chkThemeSong"),
+        new("HasThemeVideo", "ThemeVideos", "chkThemeVideo")
+    ];
+
+    private ListFilters _filters = new();
+    private IReadOnlyList<(string Id, string Name)> _genres = [];
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The page's parameters: the genres are asked for with its flags.</summary>
+    [Parameter, EditorRequired]
+    public ListParameters Parameters { get; set; } = default!;
+
+    /// <summary>Whether the page's query is recursive (<c>queryRecursive</c>).</summary>
+    [Parameter]
+    public bool Recursive { get; set; }
+
+    /// <summary>The saved filters.</summary>
+    [Parameter, EditorRequired]
+    public ListFilters Filters { get; set; } = default!;
+
+    /// <summary>The names of the filters to offer (<c>visibleSettings</c>).</summary>
+    [Parameter]
+    public IReadOnlyList<string> Visible { get; set; } = [];
+
+    /// <summary>Called with the filters after every change.</summary>
+    [Parameter]
+    public Action<ListFilters>? OnChange { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _filters = Filters;
+        _genres = await Data.GetListGenresAsync(Parameters, Recursive);
+    }
+
+    private bool IsVisible(Filter filter) => IsVisible(filter.Name);
+
+    private bool IsVisible(string name) => Visible.Contains(name);
+
+    private void Set(ListFilters filters)
+    {
+        _filters = filters;
+        OnChange?.Invoke(filters);
+    }
+
+    private static bool Has(string? list, string value) => ListFilters.Split(list).Contains(value);
+
+    private static string? Toggle(string? list, string value, bool selected)
+    {
+        var values = ListFilters.Split(list).Where(entry => entry != value).ToList();
+        if (selected)
+        {
+            values.Add(value);
+        }
+
+        return values.Count == 0 ? null : string.Join(',', values);
+    }
+
+    private sealed record Filter(string Name, string Label, string Class);
+}

@@ -1,0 +1,38 @@
+@namespace Jellyfin.Web.Components
+@* The previous/next buttons of a library view (features/libraries/components/library/Pagination.tsx). *@
+@inject Globalize Globalize
+@inject IBrowser Browser
+
+<MudButtonGroup Color="Color.Inherit" Variant="Variant.Text" Class="jf-library-pagination">
+    <MudIconButton Icon="@MdIcon.Of("navigate_before")" Class="jf-library-btn-previous" title="@Globalize["Previous"]" aria-label="@Globalize["Previous"]"
+                   Disabled="@(Disabled || StartIndex == 0)" OnClick="PreviousAsync" />
+    <MudIconButton Icon="@MdIcon.Of("navigate_next")" Class="jf-library-btn-next" title="@Globalize["Next"]" aria-label="@Globalize["Next"]"
+                   Disabled="@(Disabled || StartIndex + PageSize >= Total)" OnClick="NextAsync" />
+</MudButtonGroup>
+
+@code {
+    [Parameter]
+    public int StartIndex { get; set; }
+
+    [Parameter]
+    public EventCallback<int> StartIndexChanged { get; set; }
+
+    [Parameter]
+    public int PageSize { get; set; }
+
+    [Parameter]
+    public int Total { get; set; }
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    private Task PreviousAsync() => GoAsync(Math.Max(0, StartIndex - PageSize));
+
+    private Task NextAsync() => GoAsync(StartIndex + PageSize);
+
+    private async Task GoAsync(int startIndex)
+    {
+        await StartIndexChanged.InvokeAsync(startIndex);
+        Browser.ScrollTo(0, 0);
+    }
+}

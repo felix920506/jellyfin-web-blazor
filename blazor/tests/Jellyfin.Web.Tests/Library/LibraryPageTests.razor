@@ -1,0 +1,575 @@
+@* The library pages: the views behind ?tab=, the toolbar with its menus, paging, the alphabet picker and the play buttons. *@
+@using Bunit.Rendering
+@using Jellyfin.Sdk.Generated.Models
+@using Jellyfin.Web.Components
+@using Jellyfin.Web.Pages
+@using Jellyfin.Web.Routing
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Items
+@using Jellyfin.Web.Tests.Support
+@using Microsoft.Extensions.DependencyInjection
+@using MudBlazor
+@inherits ItemsTestContext
+
+@code {
+    private static readonly string LibraryId = TestItems.Id(1);
+
+    private readonly List<(int Number, string Name)> _movies = [(11, "Alpha"), (12, "Beta"), (13, "Bravo"), (14, "Gamma")];
+    private readonly RecordingHandler _handler = new();
+    private AppLocation _location = AppLocation.Parse("/movies?topParentId=" + LibraryId);
+
+    public override async Task InitializeAsync()
+    {
+        await base.InitializeAsync();
+        var views = new[] { View(1, "Films", "movies"), View(2, "Series", "tvshows") };
+        App.Server.OnGet("/UserViews", _ => new { Items = views, TotalRecordCount = views.Length });
+        App.Server.OnGet("/Items/" + LibraryId, View(1, "Films", "movies"));
+        App.Server.OnGet("/Items", request => Items(request));
+        App.Server.OnGet("/Items/Filters", new { Genres = new[] { "Drama", "Comedy" }, OfficialRatings = new[] { "PG" }, Tags = Array.Empty<string>(), Years = new[] { 2011, 2012 } });
+        App.Server.OnGet("/Items/Filters2", new { AudioLanguages = Array.Empty<object>(), SubtitleLanguages = Array.Empty<object>() });
+        App.Server.OnGet("/Studios", new { Items = Array.Empty<object>(), TotalRecordCount = 0 });
+        App.Server.OnGet("/Persons", new { Items = Array.Empty<object>(), TotalRecordCount = 0 });
+        App.Server.OnGet("/UserItems/Resume", new { Items = new[] { TestItems.Movie(21, "Half seen") }, TotalRecordCount = 1 });
+        App.Server.OnGet("/Items/Latest", new[] { TestItems.Movie(31, "New one"), TestItems.Movie(32, "New two") });
+        App.Server.OnGet("/Movies/Recommendations", new[]
+        {
+            new
+            {
+                Items = new[] { TestItems.Movie(41, "Alike") },
+                RecommendationType = "SimilarToRecentlyPlayed",
+                BaselineItemName = "Alpha",
+                CategoryId = TestItems.Id(40)
+            }
+        });
+    }
+
+    protected override void ConfigureServices(IServiceCollection services) => services.AddSingleton<IItemCommandHandler>(_handler);
+
+    private static object View(int number, string name, string collectionType) => new
+    {
+        Id = TestItems.Id(number),
+        Name = name,
+        ServerId = TestApp.ServerId,
+        Type = "CollectionFolder",
+        CollectionType = collectionType,
+        IsFolder = true,
+        ImageTags = new { Primary = "view" + number }
+    };
+
+    // The movies of the library as the server would page and filter them; collections and playlists are empty.
+    private object Items(RecordedRequest request)
+    {
+        IEnumerable<(int Number, string Name)> movies = _movies;
+        if (request.Query("includeItemTypes") != "Movie")
+        {
+            movies = [];
+        }
+
+        if (request.Query("nameStartsWith") is { Length: > 0 } letter)
+        {
+            movies = movies.Where(movie => movie.Name.StartsWith(letter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (request.Query("nameLessThan") is not null)
+        {
+            movies = [];
+        }
+
+        if (IsTrue(request.Query("isFavorite")) || request.Query("filters") == "IsFavorite")
+        {
+            movies = movies.Take(1);
+        }
+
+        if (request.Query("genres") == "Drama")
+        {
+            movies = movies.Skip(1).Take(2);
+        }
+
+        var all = movies.ToList();
+        var start = int.TryParse(request.Query("startIndex"), out var startIndex) ? startIndex : 0;
+        var limit = int.TryParse(request.Query("limit"), out var size) ? size : all.Count;
+        return new
+        {
+            Items = all.Skip(start).Take(limit).Select(movie => TestItems.Movie(movie.Number, movie.Name)).ToArray(),
+            TotalRecordCount = all.Count
+        };
+    }
+
+    private static bool IsTrue(string? value) => string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+
+    private IRenderedComponent<ContainerFragment> RenderPage() => Render(
+        @<CascadingValue Value="_location">
+            <MudPopoverProvider />
+            <LibraryViews />
+        </CascadingValue>);
+
+    private IRenderedComponent<ContainerFragment> RenderLoaded(int cards = 4)
+    {
+        var cut = RenderPage();
+        cut.WaitForAssertion(() => Assert.Equal(cards, cut.FindAll(".itemsContainer .card").Count));
+        return cut;
+    }
+
+    private static string[] Names(IRenderedComponent<ContainerFragment> cut) =>
+        cut.FindAll(".itemsContainer .card .cardText-first").Select(text => text.TextContent.Trim()).ToArray();
+
+    private static string Count(IRenderedComponent<ContainerFragment> cut) => cut.Find(".jf-library-count").TextContent.Trim();
+
+    private RecordedRequest LastItemsRequest => App.Server.RequestsTo("/Items")[^1];
+
+    // Opens a menu of the toolbar and picks the entry once the popover shows it.
+    private static void Pick(IRenderedComponent<ContainerFragment> cut, string button, string entry)
+    {
+        cut.Find(button).Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(entry)));
+        cut.Find(entry).Click();
+    }
+
+    private void Follow(IRenderedComponent<ContainerFragment> cut)
+    {
+        _location = AppLocation.Parse(App.Browser.Hash);
+        Rerender(cut);
+    }
+
+    [Fact]
+    public void The_movies_page_lists_the_movies_of_the_library()
+    {
+        SignIn();
+
+        var cut = RenderLoaded();
+
+        var page = cut.Find("#moviesPage");
+        Assert.Equal("page mainAnimatedPage libraryPage pageWithAbsoluteTabs withTabs", page.ClassName);
+        cut.WaitForAssertion(() => Assert.Equal("Films", cut.Find("#moviesPage").GetAttribute("data-title")));
+        Assert.Equal(new[] { "Alpha", "Beta", "Bravo", "Gamma" }, Names(cut));
+        Assert.Equal("4", Count(cut));
+        Assert.Equal("Movies", cut.Find(".jf-library-view-label").TextContent.Trim());
+        Assert.Contains("vertical-wrap", cut.Find(".itemsContainer").ClassList);
+        Assert.Empty(cut.FindAll(".noItemsMessage"));
+        Assert.Empty(cut.FindAll(".jf-library-btn-resetfilters"));
+
+        var request = Assert.Single(App.Server.RequestsTo("/Items"));
+        Assert.Equal(LibraryId, request.Query("parentId"));
+        Assert.Equal(TestApp.UserId.ToString("N"), request.Query("userId")?.Replace("-", string.Empty));
+        Assert.Equal("Movie", request.Query("includeItemTypes"));
+        Assert.True(IsTrue(request.Query("recursive")));
+        Assert.Equal("0", request.Query("startIndex"));
+        Assert.Equal("100", request.Query("limit"));
+        Assert.Equal("Ascending", request.Query("sortOrder"));
+        Assert.StartsWith("SortName", request.Query("sortBy"));
+
+        // Everything fits on one page: the pagination stays but leads nowhere.
+        Assert.True(cut.Find(".jf-library-btn-previous").HasAttribute("disabled"));
+        Assert.True(cut.Find(".jf-library-btn-next").HasAttribute("disabled"));
+        Assert.Equal(26 + 1, cut.FindAll("button.jf-library-alpha").Count);
+    }
+
+    [Fact]
+    public void The_tab_of_the_address_picks_the_view_and_the_view_menu_changes_it()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/movies?topParentId=" + LibraryId + "&tab=2");
+
+        var cut = RenderLoaded(cards: 1);
+
+        Assert.Equal("Favorites", cut.Find(".jf-library-view-label").TextContent.Trim());
+        Assert.True(IsTrue(LastItemsRequest.Query("isFavorite")));
+
+        Pick(cut, ".jf-library-view-button", "[data-tab-index='0']");
+
+        var location = AppLocation.Parse(App.Browser.Hash);
+        Assert.Equal("/movies", location.Path);
+        Assert.Equal(LibraryId, location["topParentId"]);
+        Assert.Equal("0", location["tab"]);
+
+        Follow(cut);
+        cut.WaitForAssertion(() => Assert.Equal(4, cut.FindAll(".itemsContainer .card").Count));
+        Assert.Equal("Movies", cut.Find(".jf-library-view-label").TextContent.Trim());
+        Assert.Null(LastItemsRequest.Query("isFavorite"));
+    }
+
+    [Fact]
+    public void The_view_menu_offers_the_views_of_the_library_in_order()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        cut.Find(".jf-library-view-button").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(
+            new[] { "Movies", "Suggestions", "Favorites", "Collections", "Genres", "Studios", "Playlists", "People" },
+            cut.FindAll("[data-tab-index]").Select(entry => entry.TextContent.Trim())));
+        Assert.Contains("jf-menu-selected", cut.Find("[data-tab-index='0']").ClassList);
+        Assert.DoesNotContain("jf-menu-selected", cut.Find("[data-tab-index='1']").ClassList);
+    }
+
+    [Fact]
+    public void A_small_page_size_pages_through_the_list()
+    {
+        SignIn();
+        Get<UserSettings>().LibraryPageSize = 2;
+
+        var cut = RenderLoaded(cards: 2);
+
+        Assert.Equal(new[] { "Alpha", "Beta" }, Names(cut));
+        Assert.Equal("1-2 of 4", Count(cut));
+        Assert.Equal("2", LastItemsRequest.Query("limit"));
+        Assert.True(cut.Find(".jf-library-btn-previous").HasAttribute("disabled"));
+        Assert.False(cut.Find(".jf-library-btn-next").HasAttribute("disabled"));
+
+        cut.Find(".jf-library-btn-next").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Bravo", "Gamma" }, Names(cut)));
+        cut.WaitForAssertion(() => Assert.Equal("3-4 of 4", Count(cut)));
+        Assert.Equal("2", LastItemsRequest.Query("startIndex"));
+        Assert.False(cut.Find(".jf-library-btn-previous").HasAttribute("disabled"));
+        Assert.True(cut.Find(".jf-library-btn-next").HasAttribute("disabled"));
+
+        cut.Find(".jf-library-btn-previous").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Alpha", "Beta" }, Names(cut)));
+        Assert.Equal("0", LastItemsRequest.Query("startIndex"));
+    }
+
+    [Fact]
+    public void Without_a_page_size_everything_is_loaded_and_the_pagination_goes()
+    {
+        SignIn();
+        Get<UserSettings>().LibraryPageSize = 0;
+
+        var cut = RenderLoaded();
+
+        Assert.Null(LastItemsRequest.Query("limit"));
+        Assert.Equal("4", Count(cut));
+        Assert.Empty(cut.FindAll(".jf-library-pagination"));
+    }
+
+    [Fact]
+    public void The_alphabet_picker_filters_by_first_letter_until_the_filters_are_reset()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        cut.Find("button.jf-library-alpha[value='B']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Beta", "Bravo" }, Names(cut)));
+        Assert.Equal("B", LastItemsRequest.Query("nameStartsWith"));
+        Assert.Equal("true", cut.Find("button.jf-library-alpha[value='B']").GetAttribute("aria-pressed"));
+        cut.WaitForAssertion(() => Assert.Equal("2", Count(cut)));
+
+        cut.Find(".jf-library-btn-resetfilters").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(4, cut.FindAll(".itemsContainer .card").Count));
+        Assert.Null(LastItemsRequest.Query("nameStartsWith"));
+        Assert.Empty(cut.FindAll(".jf-library-btn-resetfilters"));
+
+        cut.Find("button.jf-library-alpha[value='#']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("A", LastItemsRequest.Query("nameLessThan")));
+        cut.WaitForAssertion(() => Assert.Contains("No Items are currently available.", cut.Find(".noItemsMessage").TextContent));
+    }
+
+    [Fact]
+    public void The_sort_menu_changes_the_order_and_remembers_it_for_the_library()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        Pick(cut, ".jf-library-btn-sort", "[data-sort='DateCreated,SortName']");
+
+        cut.WaitForAssertion(() => Assert.Equal("DateCreated,SortName", LastItemsRequest.Query("sortBy")));
+        Assert.Equal("Ascending", LastItemsRequest.Query("sortOrder"));
+        cut.WaitForAssertion(() => Assert.Contains("jf-menu-selected", cut.Find("[data-sort='DateCreated,SortName']").ClassList));
+
+        // The menu stays open; the selected entry turns the order around.
+        cut.Find("[data-sort='DateCreated,SortName']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("Descending", LastItemsRequest.Query("sortOrder")));
+        var stored = App.Browser.LocalStorage[LibraryViewSettingsStore.Key(LibraryTab.Movies, LibraryId)];
+        Assert.Contains("DateCreated", stored);
+        Assert.Contains("Descending", stored);
+
+        // Another page of the same library view starts from what was stored.
+        var settings = Get<LibraryViewSettingsStore>().Load(LibraryTab.Movies, LibraryId);
+        Assert.Equal(new[] { "DateCreated", "SortName" }, settings.SortBy);
+        Assert.Equal("Descending", settings.SortOrder);
+    }
+
+    [Fact]
+    public void A_random_order_hides_the_alphabet_picker()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        Pick(cut, ".jf-library-btn-sort", "[data-sort='Random']");
+
+        cut.WaitForAssertion(() => Assert.Equal("Random", LastItemsRequest.Query("sortBy")));
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("button.jf-library-alpha")));
+    }
+
+    [Fact]
+    public void The_view_settings_switch_between_cards_and_a_list()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        Pick(cut, ".jf-library-btn-viewsettings", ".mud-menu-item.jf-library-view-list");
+
+        cut.WaitForAssertion(() => Assert.Equal(4, cut.FindAll(".itemsContainer .listItem").Count));
+        Assert.Contains("vertical-list", cut.Find(".itemsContainer").ClassList);
+        Assert.Empty(cut.FindAll(".itemsContainer .card"));
+        Assert.Equal(LibraryViewSettings.List, Get<LibraryViewSettingsStore>().Load(LibraryTab.Movies, LibraryId).ViewMode);
+    }
+
+    [Fact]
+    public void Stored_view_settings_apply_when_the_page_opens()
+    {
+        SignIn();
+        Get<LibraryViewSettingsStore>().Save(
+            LibraryTab.Movies,
+            LibraryId,
+            LibraryViewSettings.Defaults(LibraryTab.Movies) with { ViewMode = LibraryViewSettings.List, SortOrder = "Descending", Alphabet = "G" });
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".itemsContainer .listItem")));
+        Assert.Equal("Descending", LastItemsRequest.Query("sortOrder"));
+        Assert.Equal("G", LastItemsRequest.Query("nameStartsWith"));
+        Assert.NotEmpty(cut.FindAll(".jf-library-btn-resetfilters"));
+    }
+
+    [Fact]
+    public void The_filter_menu_offers_the_values_of_the_server_and_narrows_the_list()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+        cut.WaitForAssertion(() => Assert.Single(App.Server.RequestsTo("/Studios")));
+        var filters = Assert.Single(App.Server.RequestsTo("/Items/Filters"));
+        Assert.Equal(LibraryId, filters.Query("parentId"));
+        Assert.Equal("Movie", filters.Query("includeItemTypes"));
+
+        cut.Find(".jf-library-btn-filter").Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-filter='Genres:Drama']")));
+        Assert.NotEmpty(cut.FindAll("[data-filter='Status:IsFavorite']"));
+        Assert.NotEmpty(cut.FindAll("[data-filter='OfficialRatings:PG']"));
+        Assert.NotEmpty(cut.FindAll("[data-filter='Years:2011']"));
+        Assert.NotEmpty(cut.FindAll("[data-filter='VideoBasicFilter:IsHD']"));
+
+        cut.Find("input[data-filter='Genres:Drama']").Change(true);
+
+        cut.WaitForAssertion(() => Assert.Equal(new[] { "Beta", "Bravo" }, Names(cut)));
+        Assert.Equal("Drama", LastItemsRequest.Query("genres"));
+        Assert.NotEmpty(cut.FindAll(".jf-library-btn-resetfilters"));
+        var stored = Get<LibraryViewSettingsStore>().Load(LibraryTab.Movies, LibraryId);
+        Assert.Equal(new[] { "Drama" }, stored.Filters?.Genres);
+
+        cut.Find("input[data-filter='Status:IsFavorite']").Change(true);
+
+        cut.WaitForAssertion(() => Assert.Equal("IsFavorite", LastItemsRequest.Query("filters")));
+        Assert.Equal("Drama", LastItemsRequest.Query("genres"));
+
+        cut.Find(".jf-library-btn-resetfilters").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(4, cut.FindAll(".itemsContainer .card").Count));
+        Assert.Null(LastItemsRequest.Query("genres"));
+        Assert.Null(LastItemsRequest.Query("filters"));
+        Assert.Null(Get<LibraryViewSettingsStore>().Load(LibraryTab.Movies, LibraryId).Filters);
+    }
+
+    [Fact]
+    public void Play_all_and_shuffle_hand_the_library_to_the_player()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+        cut.WaitForAssertion(() => Assert.NotNull(cut.FindComponent<LibraryToolbar>().Instance.Item));
+
+        cut.Find(".jf-library-btn-play").Click();
+
+        var play = Assert.Single(Playback.PlayRequests);
+        Assert.Equal(LibraryId, Assert.Single(play.Items!).IdText());
+        Assert.StartsWith("SortName", play.QueryOptions!["SortBy"]);
+        Assert.Equal("Ascending", play.QueryOptions["SortOrder"]);
+
+        cut.Find(".jf-library-btn-shuffle").Click();
+
+        Assert.Equal(new[] { "Play", "Shuffle" }, Playback.Calls);
+    }
+
+    [Fact]
+    public void A_filtered_list_plays_the_items_that_are_shown()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+        cut.WaitForAssertion(() => Assert.NotNull(cut.FindComponent<LibraryToolbar>().Instance.Item));
+        cut.Find("button.jf-library-alpha[value='B']").Click();
+        cut.WaitForAssertion(() => Assert.Equal("2", Count(cut)));
+
+        cut.Find(".jf-library-btn-play").Click();
+
+        var play = Assert.Single(Playback.PlayRequests);
+        Assert.Equal(new[] { "Beta", "Bravo" }, play.Items!.Select(item => item.Name));
+
+        cut.Find(".jf-library-btn-shuffle").Click();
+
+        Assert.Equal(new[] { "Play", "Play" }, Playback.Calls);
+        Assert.Equal("Random", Playback.PlayRequests[1].QueryOptions!["SortBy"]);
+    }
+
+    [Fact]
+    public void The_play_buttons_wait_for_items()
+    {
+        SignIn();
+        _movies.Clear();
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Equal("0", Count(cut)));
+        Assert.True(cut.Find(".jf-library-btn-play").HasAttribute("disabled"));
+        Assert.True(cut.Find(".jf-library-btn-shuffle").HasAttribute("disabled"));
+        Assert.Contains("No Items are currently available.", cut.Find(".noItemsMessage").TextContent);
+    }
+
+    [Fact]
+    public void An_empty_collections_view_explains_collections_and_offers_a_new_one_to_those_who_may()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/movies?topParentId=" + LibraryId + "&tab=3");
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Contains("Collections allow you to enjoy", cut.Find(".noItemsMessage").TextContent));
+        Assert.Equal("BoxSet", LastItemsRequest.Query("includeItemTypes"));
+        Assert.Empty(cut.FindAll(".jf-library-btn-newcollection"));
+        Assert.Empty(cut.FindAll(".jf-library-btn-play"));
+    }
+
+    [Fact]
+    public void New_collection_runs_the_collection_command_without_a_selection_and_reloads()
+    {
+        SignIn(admin: true);
+        _handler.Commands.Add(ItemCommand.AddToCollection);
+        _location = AppLocation.Parse("/movies?topParentId=" + LibraryId + "&tab=3");
+        var cut = RenderPage();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".noItemsMessage")));
+        var requests = App.Server.RequestsTo("/Items").Count;
+
+        cut.Find(".jf-library-btn-newcollection").Click();
+
+        var call = Assert.Single(_handler.Calls);
+        Assert.Equal(ItemCommand.AddToCollection, call.Command);
+        Assert.Equal(TestApp.ServerId, call.Item.ServerId);
+        Assert.NotNull(call.Context.SelectedItems);
+        Assert.Empty(call.Context.SelectedItems!);
+        cut.WaitForAssertion(() => Assert.Equal(requests + 1, App.Server.RequestsTo("/Items").Count));
+    }
+
+    [Fact]
+    public void New_playlist_runs_the_playlist_command_without_a_selection()
+    {
+        SignIn();
+        _handler.Commands.Add(ItemCommand.AddToPlaylist);
+        _location = AppLocation.Parse("/movies?topParentId=" + LibraryId + "&tab=6");
+        var cut = RenderPage();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".noItemsMessage")));
+        Assert.Equal("Playlist", LastItemsRequest.Query("includeItemTypes"));
+
+        cut.Find(".jf-library-btn-newplaylist").Click();
+
+        var call = Assert.Single(_handler.Calls);
+        Assert.Equal(ItemCommand.AddToPlaylist, call.Command);
+        Assert.Empty(call.Context.SelectedItems!);
+    }
+
+    [Fact]
+    public void The_suggestions_view_shows_the_rows_that_have_items_and_no_list_tools()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/movies?topParentId=" + LibraryId + "&tab=1");
+
+        var cut = RenderPage();
+
+        var globalize = Get<Globalize>();
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll(".jf-library-suggestions h2.sectionTitle").Count));
+        var titles = cut.FindAll(".jf-library-suggestions h2.sectionTitle").Select(title => title.TextContent.Trim()).ToArray();
+        Assert.Equal(globalize["HeaderContinueWatching"], titles[0]);
+        Assert.Equal(globalize["HeaderLatestMovies"], titles[1]);
+        Assert.Contains("Alpha", titles[2]);
+        Assert.Equal(4, cut.FindAll(".jf-library-suggestions .card").Count);
+        Assert.Equal(LibraryId, Assert.Single(App.Server.RequestsTo("/Movies/Recommendations")).Query("parentId"));
+        Assert.Equal(LibraryId, Assert.Single(App.Server.RequestsTo("/Items/Latest")).Query("parentId"));
+
+        Assert.Equal("Suggestions", cut.Find(".jf-library-view-label").TextContent.Trim());
+        Assert.Empty(cut.FindAll(".jf-library-count"));
+        Assert.Empty(cut.FindAll(".jf-library-btn-sort"));
+        Assert.Empty(App.Server.RequestsTo("/Items"));
+    }
+
+    [Fact]
+    public void The_people_view_asks_for_the_persons_of_the_library()
+    {
+        SignIn();
+        _location = AppLocation.Parse("/movies?topParentId=" + LibraryId + "&tab=7");
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".noItemsMessage")));
+        var request = App.Server.RequestsTo("/Persons")[^1];
+        Assert.Equal(LibraryId, request.Query("parentId"));
+        Assert.Empty(App.Server.RequestsTo("/Items"));
+    }
+
+    [Fact]
+    public void A_library_change_reported_by_the_server_reloads_the_list()
+    {
+        SignIn();
+        var cut = RenderLoaded();
+
+        _movies.Add((15, "Omega"));
+        // A change in another library leaves the list alone (the refresh would come after ItemsContainer.RefreshDelay).
+        var requests = App.Server.RequestsTo("/Items").Count;
+        ServerMessage("LibraryChanged", new { ItemsAdded = new[] { TestItems.Id(15) }, CollectionFolders = new[] { TestItems.Id(99) } });
+        Thread.Sleep(200);
+        Assert.Equal(requests, App.Server.RequestsTo("/Items").Count);
+
+        ServerMessage("LibraryChanged", new { ItemsAdded = new[] { TestItems.Id(15) }, CollectionFolders = new[] { LibraryId } });
+
+        cut.WaitForAssertion(() => Assert.Equal(5, cut.FindAll(".itemsContainer .card").Count));
+        cut.WaitForAssertion(() => Assert.Equal("5", Count(cut)));
+    }
+
+    [Theory]
+    [InlineData("/tv", "Shows")]
+    [InlineData("/music", "Albums")]
+    [InlineData("/books", "Folders")]
+    [InlineData("/boxsets", "Collections")]
+    [InlineData("/playlists", "Playlists")]
+    [InlineData("/homevideos", "Folders")]
+    [InlineData("/musicvideos", "Folders")]
+    [InlineData("/mixed", "Folders")]
+    public void Every_library_route_renders_its_own_page_and_default_view(string route, string label)
+    {
+        SignIn();
+        _location = AppLocation.Parse(route + "?topParentId=" + TestItems.Id(2));
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Equal(label, cut.Find(".jf-library-view-label").TextContent.Trim()));
+        Assert.Equal(LibraryRoutes.Find(route)!.PageId, cut.Find("[data-role='page']").Id);
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".noItemsMessage")));
+    }
+
+    private sealed class RecordingHandler : IItemCommandHandler
+    {
+        public HashSet<string> Commands { get; } = [];
+
+        public List<(string Command, BaseItemDto Item, ItemActionContext Context)> Calls { get; } = [];
+
+        public bool CanHandle(string command, BaseItemDto item) => Commands.Contains(command);
+
+        public Task<ItemCommandResult> ExecuteAsync(string command, BaseItemDto item, ItemActionContext context)
+        {
+            Calls.Add((command, item, context));
+            return Task.FromResult(ItemCommandResult.None);
+        }
+    }
+}

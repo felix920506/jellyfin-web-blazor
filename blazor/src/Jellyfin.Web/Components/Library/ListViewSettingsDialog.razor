@@ -1,0 +1,68 @@
+@namespace Jellyfin.Web.Components
+@*
+    The view settings dialog of the list page (components/viewSettings): the image type (or list) and
+    whether titles show. Every change is reported through OnChange; the page saves the last value when the
+    dialog closes.
+*@
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
+    <h3 class="formDialogHeaderTitle">@Globalize["Settings"]</h3>
+</div>
+<div class="formDialogContent smoothScrollY" style="padding-top:2em;">
+    <div class="dialogContentInner dialog-content-centered">
+        <form style="margin:auto;" onsubmit="return false;">
+            <div class="verticalSection">
+                @if (Visible.Contains("imageType"))
+                {
+                    <EmbySelect ContainerClass="viewSetting" Class="selectImageType" Label="@Globalize["LabelImageType"]" Value="@_settings.ImageType"
+                                ValueChanged="value => Set(_settings with { ImageType = value ?? _settings.ImageType })" data-settingname="imageType">
+                        @foreach (var (value, label) in ImageTypes)
+                        {
+                            <option value="@value" selected="@(value == _settings.ImageType)">@Globalize[label]</option>
+                        }
+                    </EmbySelect>
+                }
+                @if (Visible.Contains("showTitle") && _settings.ImageType is not ("list" or "banner"))
+                {
+                    <div class="checkboxContainer viewSetting viewSetting-checkboxContainer chkTitleContainer" data-settingname="showTitle">
+                        <EmbyCheckbox Class="chkShowTitle" Label="@Globalize["ShowTitle"]" Value="_settings.ShowTitle" ValueChanged="value => Set(_settings with { ShowTitle = value })" />
+                    </div>
+                }
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private static readonly (string Value, string Label)[] ImageTypes =
+    [
+        ("primary", "Primary"), ("banner", "Banner"), ("disc", "Disc"), ("logo", "Logo"), ("thumb", "Thumb"), ("list", "List")
+    ];
+
+    private ListViewSettings _settings = default!;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The saved view settings.</summary>
+    [Parameter, EditorRequired]
+    public ListViewSettings Settings { get; set; } = default!;
+
+    /// <summary>The names of the settings to offer (<c>visibleSettings</c>).</summary>
+    [Parameter]
+    public IReadOnlyList<string> Visible { get; set; } = [];
+
+    /// <summary>Called with the settings after every change.</summary>
+    [Parameter]
+    public Action<ListViewSettings>? OnChange { get; set; }
+
+    protected override void OnInitialized() => _settings = Settings;
+
+    private void Set(ListViewSettings settings)
+    {
+        _settings = settings;
+        OnChange?.Invoke(settings);
+    }
+}

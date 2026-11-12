@@ -1,0 +1,42 @@
+@namespace Jellyfin.Web.Components
+@*
+    The paging of the legacy pages (libraryBrowser.getQueryPagingHtml): "1-100 of 250" and, when the list
+    has more than one page, the previous/next buttons.
+*@
+@inject Globalize Globalize
+
+<div class="paging">
+    <div class="listPaging">
+        <span style="vertical-align:middle;">@Globalize.Translate("ListPaging", Start, End, Total)</span>
+        @if (ShowControls)
+        {
+            <div style="display:inline-block;">
+                <IconButton Icon="arrow_back" Class="btnPreviousPage autoSize" Disabled="@(StartIndex <= 0)" OnClick="() => MoveAsync(Math.Max(0, StartIndex - Limit))" />
+                <IconButton Icon="arrow_forward" Class="btnNextPage autoSize" Disabled="@(StartIndex + Limit >= Total)" OnClick="() => MoveAsync(StartIndex + Limit)" />
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public int StartIndex { get; set; }
+
+    [Parameter]
+    public EventCallback<int> StartIndexChanged { get; set; }
+
+    /// <summary>The page size; 0 shows everything.</summary>
+    [Parameter]
+    public int Limit { get; set; }
+
+    [Parameter]
+    public int Total { get; set; }
+
+    private int Start => Total > 0 ? StartIndex + 1 : 0;
+
+    private int End => Limit > 0 ? Math.Min(StartIndex + Limit, Total) : Total;
+
+    private bool ShowControls => Limit > 0 && Limit < Total;
+
+    private Task MoveAsync(int startIndex) => StartIndexChanged.InvokeAsync(startIndex);
+}

@@ -5,6 +5,32 @@
 <ShellSlotHost Slot="ShellSlot.Toolbar" />
 
 <MudTooltip Text="@Globalize["Search"]">
-    <MudIconButton Icon="@MdIcon.Of("search")" Color="Color.Inherit" Size="Size.Large" Href="#/search"
+    <MudIconButton Icon="@MdIcon.Of("search")" Color="Color.Inherit" Size="Size.Large" Href="@SearchHref" Disabled="@(Location.Path == "/search")"
                    aria-label="@Globalize["Search"]" />
 </MudTooltip>
+
+@code {
+    [CascadingParameter]
+    public AppLocation Location { get; set; } = AppLocation.Empty;
+
+    // SearchButton.tsx: the search stays within the library the current page shows.
+    private string SearchHref
+    {
+        get
+        {
+            var parentId = Location["parentId"] is { Length: > 0 } parent ? parent : Location["topParentId"];
+            var parameters = new List<string>();
+            if (!string.IsNullOrEmpty(parentId))
+            {
+                parameters.Add("parentId=" + Uri.EscapeDataString(parentId));
+            }
+
+            if (Location["collectionType"] is { Length: > 0 } collectionType)
+            {
+                parameters.Add("collectionType=" + Uri.EscapeDataString(collectionType));
+            }
+
+            return parameters.Count > 0 ? "#/search?" + string.Join('&', parameters) : "#/search";
+        }
+    }
+}

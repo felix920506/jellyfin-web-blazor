@@ -1,0 +1,43 @@
+@namespace Jellyfin.Web.Components
+@*
+    The content of the filter menu of a library view (features/libraries/components/filter/FilterButton.tsx):
+    one accordion per filter group, one checkbox per value. Every change goes back to the first page.
+*@
+@inject Globalize Globalize
+
+<MudExpansionPanels Class="jf-library-filters" Elevation="0" Dense="true" Gutters="false">
+    @foreach (var section in LibraryQueryBuilder.FilterSections(ViewType, Values))
+    {
+        var current = section;
+        <MudExpansionPanel @key="current.Id" id="@current.Id" Text="@Globalize[current.Title]" Class="jf-library-filter-section"
+                           Expanded="@(_expanded == current.Id)" ExpandedChanged="@(expanded => _expanded = expanded ? current.Id : null)">
+            @foreach (var option in current.Options)
+            {
+                var entry = option;
+                <MudCheckBox T="bool" @key="entry.Group + entry.Value" Dense="true" Color="Color.Primary" Class="jf-library-filter-option"
+                             data-filter="@(entry.Group + ":" + entry.Value)" Label="@(entry.Translate ? Globalize[entry.Label] : entry.Label)"
+                             Value="@LibraryQueryBuilder.IsSelected(Settings.Filters, entry)" ValueChanged="@(selected => ToggleAsync(entry, selected))" />
+            }
+        </MudExpansionPanel>
+    }
+</MudExpansionPanels>
+
+@code {
+    private string? _expanded;
+
+    [Parameter, EditorRequired]
+    public string ViewType { get; set; } = string.Empty;
+
+    /// <summary>The filter values offered by the server.</summary>
+    [Parameter]
+    public LibraryFilterValues Values { get; set; } = LibraryFilterValues.Empty;
+
+    [Parameter, EditorRequired]
+    public LibraryViewSettings Settings { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<LibraryViewSettings> SettingsChanged { get; set; }
+
+    private Task ToggleAsync(LibraryFilterOption option, bool selected) => SettingsChanged.InvokeAsync(
+        Settings with { StartIndex = 0, Filters = LibraryQueryBuilder.Toggle(Settings.Filters, option, selected) });
+}

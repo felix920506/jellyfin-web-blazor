@@ -1,0 +1,207 @@
+@namespace Jellyfin.Web.Components
+@*
+    The toolbar of a library page (features/libraries/components/library/LibraryToolbar.tsx): the view
+    switch, the item count, "reset filters", the play / shuffle / queue / new collection / new playlist
+    buttons, the filter, sort and view settings menus and the pagination.
+*@
+@inject Globalize Globalize
+@inject JellyfinApi Api
+@inject IPlaybackManager Playback
+@inject ItemCommandHandlers Handlers
+
+<div class="jf-library-toolbar padded-left padded-right">
+    <LibraryViewMenu Views="Config.Views" Current="View" OnSelect="OnViewSelected" />
+    @if (!LibraryTab.MenuOnly.Contains(View.View) && Content.Component is null)
+    {
+        <div class="jf-library-toolbar-count">
+            <MudChip T="string" Class="jf-library-count">@CountText</MudChip>
+            @if (Settings.HasFilters)
+            {
+                <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@MdIcon.Of("filter_alt_off")" Class="jf-library-btn-resetfilters" OnClick="ResetFiltersAsync">
+                    @Globalize["ResetFilters"]
+                </MudButton>
+            }
+        </div>
+        <div class="jf-library-toolbar-actions">
+            <div class="jf-library-toolbar-play">
+                @if (Content.IsBtnPlayAllEnabled || Content.IsBtnShuffleEnabled || ShowQueue)
+                {
+                    <MudButtonGroup Variant="Variant.Filled" Color="Color.Primary" Class="jf-library-playgroup">
+                        @if (Content.IsBtnPlayAllEnabled)
+                        {
+                            <MudButton Class="jf-library-btn-play" title="@Globalize["HeaderPlayAll"]" Disabled="@(Pending || Total == 0)" OnClick="PlayAllAsync">
+                                <span class="material-icons play_arrow" aria-hidden="true"></span>
+                                <span class="jf-library-btn-text">@Globalize["HeaderPlayAll"]</span>
+                            </MudButton>
+                        }
+                        @if (Content.IsBtnShuffleEnabled)
+                        {
+                            <MudButton Class="jf-library-btn-shuffle" title="@Globalize["Shuffle"]" Disabled="@(Pending || Total <= 1)" OnClick="ShuffleAsync">
+                                <span class="material-icons shuffle" aria-hidden="true"></span>
+                                @if (!Content.IsBtnPlayAllEnabled)
+                                {
+                                    <span class="jf-library-btn-text">@Globalize["Shuffle"]</span>
+                                }
+                            </MudButton>
+                        }
+                        @if (ShowQueue)
+                        {
+                            <MudButton Class="jf-library-btn-queue" title="@Globalize["AddToPlayQueue"]" Disabled="@(Pending || Total == 0)" OnClick="QueueAsync">
+                                <span class="material-icons queue" aria-hidden="true"></span>
+                                @if (!Content.IsBtnPlayAllEnabled && !Content.IsBtnShuffleEnabled)
+                                {
+                                    <span class="jf-library-btn-text">@Globalize["AddToPlayQueue"]</span>
+                                }
+                            </MudButton>
+                        }
+                    </MudButtonGroup>
+                }
+                @if (Content.IsBtnNewCollectionEnabled && CanManageCollections)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="jf-library-btn-newcollection" title="@Globalize["NewCollection"]" OnClick="NewCollectionAsync">
+                        <span class="material-icons add" aria-hidden="true"></span>
+                        <span class="jf-library-btn-text">@Globalize["NewCollection"]</span>
+                    </MudButton>
+                }
+                @if (Content.IsBtnNewPlaylistEnabled)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="jf-library-btn-newplaylist" title="@Globalize["NewPlaylist"]" OnClick="NewPlaylistAsync">
+                        <span class="material-icons playlist_add" aria-hidden="true"></span>
+                        <span class="jf-library-btn-text">@Globalize["NewPlaylist"]</span>
+                    </MudButton>
+                }
+            </div>
+            <div class="jf-library-toolbar-menus">
+                @if (Content.IsBtnFilterEnabled)
+                {
+                    <LibraryFilterButton Content="Content" ParentId="@ParentId" Settings="Settings" SettingsChanged="SettingsChanged" />
+                }
+                @if (Content.IsBtnSortEnabled)
+                {
+                    <LibrarySortButton ViewType="@View.View" Settings="Settings" SettingsChanged="SettingsChanged" />
+                }
+                @if (Content.IsBtnGridListEnabled)
+                {
+                    <LibraryViewSettingsButton ViewType="@View.View" Settings="Settings" SettingsChanged="SettingsChanged" />
+                }
+            </div>
+            @if (Content.IsPaginationEnabled && PageSize > 0)
+            {
+                <LibraryPagination StartIndex="Settings.StartIndex" StartIndexChanged="SetStartIndexAsync" PageSize="PageSize" Total="Total"
+                                   Disabled="@(Pending || !IsPaginationRequired)" />
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public LibraryRouteConfig Config { get; set; } = default!;
+
+    /// <summary>The current view.</summary>
+    [Parameter, EditorRequired]
+    public LibraryViewDefinition View { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<LibraryViewDefinition> OnViewSelected { get; set; }
+
+    /// <summary>The library (?topParentId=).</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    /// <summary>The library item itself, once loaded.</summary>
+    [Parameter]
+    public BaseItemDto? Item { get; set; }
+
+    [Parameter, EditorRequired]
+    public LibraryViewSettings Settings { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<LibraryViewSettings> SettingsChanged { get; set; }
+
+    /// <summary>The page of items shown; null until it is loaded.</summary>
+    [Parameter]
+    public LibraryItemsResult? Result { get; set; }
+
+    /// <summary>True while the items are loading.</summary>
+    [Parameter]
+    public bool Pending { get; set; }
+
+    /// <summary>The user's library page size; 0 shows everything.</summary>
+    [Parameter]
+    public int PageSize { get; set; }
+
+    /// <summary>Raised when something was created that the list should show (a collection, a playlist).</summary>
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private LibraryTabContent Content => View.Content;
+
+    private int Total => Result?.TotalRecordCount ?? 0;
+
+    private IReadOnlyList<BaseItemDto> Items => Result?.Items ?? [];
+
+    private bool IsPaginationRequired => PageSize > 0 && PageSize < Total;
+
+    private bool ShowQueue => Content.IsBtnQueueEnabled && Item is not null && Playback.CanQueue(Item);
+
+    private bool CanManageCollections => Api.IsAdmin || Api.User?.Policy?.EnableCollectionManagement == true;
+
+    private string CountText
+    {
+        get
+        {
+            if (Pending || Result is null)
+            {
+                return "∙";
+            }
+
+            if (!IsPaginationRequired)
+            {
+                return Globalize.FormatNumber(Total);
+            }
+
+            var start = Total > 0 ? Settings.StartIndex + 1 : 0;
+            var end = Math.Min(Settings.StartIndex + PageSize, Total);
+            return Globalize.Translate("ListPaging", Globalize.FormatNumber(start), Globalize.FormatNumber(end), Globalize.FormatNumber(Total));
+        }
+    }
+
+    // The library plays as a whole unless something narrows the list (PlayAllButton.tsx).
+    private bool PlaysLibrary =>
+        Item is not null && !Settings.HasFilters && !(View.View == LibraryTab.Videos && Config.CollectionType == "homevideos");
+
+    private Task ResetFiltersAsync() => SettingsChanged.InvokeAsync(Settings with { StartIndex = 0, Alphabet = null, Filters = null });
+
+    private Task SetStartIndexAsync(int startIndex) => SettingsChanged.InvokeAsync(Settings with { StartIndex = startIndex });
+
+    private Task PlayAllAsync() => PlaysLibrary
+        ? Playback.PlayAsync(new PlayOptions { Items = [Item!], QueryOptions = LibraryQueryBuilder.SortQueryOptions(Settings) })
+        : Playback.PlayAsync(new PlayOptions
+        {
+            Items = Items,
+            QueryOptions = LibraryQueryBuilder.PlayQueryOptions(View.View, Item?.IdText(), Settings, shuffle: false)
+        });
+
+    private Task ShuffleAsync() => PlaysLibrary
+        ? Playback.ShuffleAsync(Item!)
+        : Playback.PlayAsync(new PlayOptions
+        {
+            Items = Items,
+            QueryOptions = LibraryQueryBuilder.PlayQueryOptions(View.View, Item?.IdText(), Settings, shuffle: true)
+        });
+
+    private Task QueueAsync() =>
+        Playback.QueueAsync(new PlayOptions { Items = Item is not null && !Settings.HasFilters ? [Item] : Items });
+
+    private Task NewCollectionAsync() => CreateAsync(ItemCommand.AddToCollection);
+
+    private Task NewPlaylistAsync() => CreateAsync(ItemCommand.AddToPlaylist);
+
+    // The editors belong to the item dialogs; an empty selection means "create a new one" (see 07-library-pages.md).
+    private async Task CreateAsync(string command)
+    {
+        await Handlers.ExecuteAsync(command, new BaseItemDto { ServerId = Api.ServerId }, new ItemActionContext { SelectedItems = [] });
+        await OnChanged.InvokeAsync();
+    }
+}

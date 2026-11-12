@@ -1,0 +1,68 @@
+@namespace Jellyfin.Web.Components
+@*
+    The suggestions shown while the search field is empty
+    (apps/legacy/features/search/components/SearchSuggestions.tsx): links to twenty favorite or random
+    movies, shows and artists.
+*@
+@inject Globalize Globalize
+@inject SearchService Search
+@inject AppRouter Router
+@inject LoadingService Loading
+
+@if (_suggestions is not null)
+{
+    <div class="verticalSection searchSuggestions" style="text-align:center;">
+        <div>
+            <h2 class="sectionTitle padded-left padded-right">@Globalize["Suggestions"]</h2>
+        </div>
+        <div class="searchSuggestionsList padded-left padded-right">
+            @foreach (var item in _suggestions)
+            {
+                <div @key="item.IdText()">
+                    <LinkButton Class="button-link" Style="display:inline-block;padding:0.5em 1em;" Href="@Router.GetRouteUrl(item)">@item.Name</LinkButton>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private IReadOnlyList<BaseItemDto>? _suggestions;
+    private string? _appliedParentId = "\0";
+    private int _version;
+
+    /// <summary>The library the search is limited to (?parentId=), or null.</summary>
+    [Parameter]
+    public string? ParentId { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_appliedParentId == ParentId)
+        {
+            return;
+        }
+
+        _appliedParentId = ParentId;
+        var version = ++_version;
+        _suggestions = null;
+        IReadOnlyList<BaseItemDto> suggestions = [];
+        Loading.Show();
+        try
+        {
+            suggestions = await Search.GetSuggestionsAsync(ParentId);
+        }
+        catch (HttpRequestException exception)
+        {
+            AppLog.Warn("Loading the search suggestions failed: " + exception.Message);
+        }
+        finally
+        {
+            Loading.Hide();
+        }
+
+        if (version == _version)
+        {
+            _suggestions = suggestions;
+        }
+    }
+}

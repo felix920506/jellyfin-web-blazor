@@ -1,0 +1,34 @@
+@namespace Jellyfin.Web.Components
+@*
+    The view switch of a library page (features/libraries/components/library/LibraryViewMenu.tsx): a button
+    showing the current view and a menu of all views; choosing one sets ?tab=.
+*@
+@inject Globalize Globalize
+
+<MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" Class="jf-library-view-menu" ListClass="jf-library-view-list">
+    <ActivatorContent Context="menu">
+        <MudButton Variant="Variant.Text" Size="Size.Large" Color="Color.Inherit" EndIcon="@MdIcon.Of("arrow_drop_down")"
+                   Class="jf-library-view-button" aria-controls="library-view-menu" aria-haspopup="true" OnClick="@(e => menu.ToggleAsync(e))">
+            <span class="jf-library-view-label">@Globalize[Current.Label]</span>
+        </MudButton>
+    </ActivatorContent>
+    <ChildContent>
+        @foreach (var view in Views)
+        {
+            var current = view;
+            <MudMenuItem @key="current.Index" Class="@(current.Index == Current.Index ? "jf-menu-selected" : null)" data-tab-index="@current.Index"
+                         Label="@Globalize[current.Label]" OnClick="() => OnSelect.InvokeAsync(current)" />
+        }
+    </ChildContent>
+</MudMenu>
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<LibraryViewDefinition> Views { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public LibraryViewDefinition Current { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<LibraryViewDefinition> OnSelect { get; set; }
+}
