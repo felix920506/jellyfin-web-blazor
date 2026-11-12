@@ -76,6 +76,23 @@
     }
 
     [Fact]
+    public async Task The_picker_submits_a_path_typed_into_the_input()
+    {
+        ScriptFolder();
+        App.Server.OnPost("/Environment/ValidatePath");
+        var dialogs = this.RenderDialogs();
+
+        var result = DirectoryBrowser.ShowAsync(this.Dialogs(), path: "/media");
+        dialogs.Eventually(() => Assert.Equal("/media", dialogs.Find("#txtDirectoryPickerPath").Value()));
+
+        dialogs.Find("#txtDirectoryPickerPath").Input("/media/movies");
+        dialogs.Find(".directoryPicker form").Submit();
+
+        Assert.Equal("/media/movies", await result.WaitAsync(Timeout));
+        Assert.Equal("/media/movies", Assert.Single(App.Server.RequestsTo("/Environment/ValidatePath")).JsonBody().Text("Path"));
+    }
+
+    [Fact]
     public async Task The_picker_starts_at_the_servers_default_path_or_its_drives()
     {
         this.UseServer();

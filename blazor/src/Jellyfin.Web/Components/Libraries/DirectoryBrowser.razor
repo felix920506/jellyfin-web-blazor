@@ -10,6 +10,8 @@
     <IconButton Icon="arrow_back" Class="btnCloseDialog autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Cancel()" />
     <h3 class="formDialogHeaderTitle">@(string.IsNullOrEmpty(Header) ? Globalize["HeaderSelectPath"] : Header)</h3>
 </div>
+@if (_ready)
+{
 <div class="formDialogContent scrollY">
     <div class="dialogContentInner dialog-content-centered" style="padding-top:2em;">
         @if (!PathReadOnly && !string.IsNullOrEmpty(Instruction))
@@ -20,14 +22,14 @@
             <div class="inputContainer" style="display: flex; align-items: center;">
                 <div style="flex-grow:1;">
                     <label class="inputLabel @(_focused ? "inputLabelFocused" : "inputLabelUnfocused")" for="txtDirectoryPickerPath">@Globalize[IncludeFiles == true ? "LabelPath" : "LabelFolder"]</label>
-                    <input id="txtDirectoryPickerPath" class="emby-input" type="text" required readonly="@PathReadOnly" value="@_path" autocomplete="off"
-                           @oninput="args => _path = args.Value?.ToString() ?? string.Empty" @onchange="OnPathCommittedAsync"
+                    <input id="txtDirectoryPickerPath" class="emby-input" type="text" required readonly="@PathReadOnly" autocomplete="off"
+                           @bind-Value="_path" @bind-Value:event="oninput" @onchange="OnPathCommittedAsync"
                            @onfocus="() => _focused = true" @onblur="() => _focused = false" />
                 </div>
                 @if (!PathReadOnly)
                 {
                     <IconButton Icon="search" Class="btnRefreshDirectories emby-input-iconbutton" Title="@Globalize["Refresh"]"
-                                OnClick="() => RefreshAsync(_path, false)" />
+                                 OnClick="() => RefreshAsync(_path, false, false)" />
                 }
             </div>
             @if (!PathReadOnly)
@@ -52,11 +54,13 @@
         </form>
     </div>
 </div>
+}
 
 @code {
     private readonly List<Entry> _entries = [];
     private string _path = string.Empty;
     private bool _focused;
+    private bool _ready;
 
     [CascadingParameter]
     public DialogInstance Dialog { get; set; } = default!;
@@ -118,8 +122,9 @@
         _path = await GetDefaultPathAsync();
         if (!PathReadOnly)
         {
-            await RefreshAsync(_path, true);
+            await RefreshAsync(_path, true, true);
         }
+        _ready = true;
     }
 
     public void Dispose() => Loading.Hide();
@@ -142,7 +147,7 @@
         }
     }
 
-    private async Task RefreshAsync(string? path, bool updatePathOnError)
+    private async Task RefreshAsync(string? path, bool updatePathOnError, bool updatePath)
     {
         Loading.Show();
         try
@@ -167,7 +172,10 @@
                 folders = await Api.Client.Environment.Drives.GetAsync() ?? [];
             }
 
-            _path = path ?? string.Empty;
+            if (updatePath)
+            {
+                _path = path ?? string.Empty;
+            }
             _entries.Clear();
             if (!string.IsNullOrEmpty(path))
             {
@@ -203,13 +211,13 @@
             return Task.CompletedTask;
         }
 
-        return RefreshAsync(entry.Path, true);
+        return RefreshAsync(entry.Path, true, true);
     }
 
     private Task OnPathCommittedAsync(ChangeEventArgs args)
     {
         _path = args.Value?.ToString() ?? string.Empty;
-        return RefreshAsync(_path, false);
+        return RefreshAsync(_path, false, false);
     }
 
     private async Task SubmitAsync()
