@@ -1,0 +1,29 @@
+@namespace Jellyfin.Web.Components
+@using Jellyfin.Web.Services.Playback
+
+<div class="bookOsd jf-managedPlayerControls" aria-label="@Title">
+    <div class="bookOsdRow">
+        <button type="button" class="paper-icon-button-light bookplayerButton" title="@BackLabel" @onclick="OnExit">
+            <span class="material-icons">arrow_back</span>
+        </button>
+        <span class="bookOsdTitle">@Title</span>
+    </div>
+    <div class="bookOsdRow">
+        <button type="button" class="paper-icon-button-light bookplayerButton" title="@PreviousLabel" @onclick="OnPrevious">
+            <span class="material-icons">navigate_before</span>
+        </button>
+        <button type="button" class="paper-icon-button-light bookplayerButton" title="@NextLabel" @onclick="OnNext">
+            <span class="material-icons">navigate_next</span>
+        </button>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string BackLabel { get; set; } = "Back";
+    [Parameter] public string PreviousLabel { get; set; } = "Previous";
+    [Parameter] public string NextLabel { get; set; } = "Next";
+    [Parameter] public EventCallback OnExit { get; set; }
+    [Parameter] public EventCallback OnPrevious { get; set; }
+    [Parameter] public EventCallback OnNext { get; set; }
+}
