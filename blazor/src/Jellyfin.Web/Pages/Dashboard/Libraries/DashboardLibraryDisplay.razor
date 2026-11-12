@@ -1,0 +1,128 @@
+@* How the libraries are displayed. Port of apps/dashboard/routes/libraries/display.tsx. *@
+@namespace Jellyfin.Web.Pages.Dashboard
+@attribute [Route("/dashboard/libraries/display")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Text.Json.Nodes
+@inject JellyfinApi Api
+@inject Globalize Globalize
+
+<Page Id="libraryDisplayPage" Title="@Globalize["Display"]" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["DisplayLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <MudText Typo="Typo.h1">@Globalize["Display"]</MudText>
+
+                    <MudSelect T="string" @bind-Value="_dateAdded" Variant="Variant.Filled" Label="@Globalize["LabelDateAddedBehavior"]"
+                               HelperText="@Globalize["LabelDateAddedBehaviorHelp"]" InputId="jf-dashboard-display-dateadded" Class="jf-dashboard-display-dateadded">
+                        <MudSelectItem T="string" Value="@("0")">@Globalize["OptionDateAddedImportTime"]</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("1")">@Globalize["OptionDateAddedFileTime"]</MudSelectItem>
+                    </MudSelect>
+
+                    <DashboardLibraryCheckField @bind-Value="_folderView" Class="jf-dashboard-display-folderview"
+                                                Label="@Globalize["OptionDisplayFolderView"]" Help="@Globalize["OptionDisplayFolderViewHelp"]" />
+
+                    <DashboardLibraryCheckField @bind-Value="_specialsWithinSeasons" Class="jf-dashboard-display-specials"
+                                                Label="@Globalize["LabelDisplaySpecialsWithinSeasons"]" />
+
+                    <DashboardLibraryCheckField @bind-Value="_groupMovies" Class="jf-dashboard-display-groupmovies"
+                                                Label="@Globalize["LabelGroupMoviesIntoCollections"]" Help="@Globalize["LabelGroupMoviesIntoCollectionsHelp"]" />
+
+                    <DashboardLibraryCheckField @bind-Value="_groupShows" Class="jf-dashboard-display-groupshows"
+                                                Label="@Globalize["LabelGroupShowsIntoCollections"]" Help="@Globalize["LabelGroupShowsIntoCollectionsHelp"]" />
+
+                    <DashboardLibraryCheckField @bind-Value="_externalContent" Class="jf-dashboard-display-external"
+                                                Label="@Globalize["OptionEnableExternalContentInSuggestions"]" Help="@Globalize["OptionEnableExternalContentInSuggestionsHelp"]" />
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    // The named configuration the "date added" behaviour is part of.
+    private const string ConfigKey = "metadata";
+
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+    private string _dateAdded = "0";
+    private bool _folderView;
+    private bool _specialsWithinSeasons;
+    private bool _groupMovies;
+    private bool _groupShows;
+    private bool _externalContent;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var named = NamedConfiguration.GetAsync(Api, ConfigKey);
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            var metadata = await named;
+
+            _dateAdded = metadata.Flag("UseFileCreationTimeForDateAdded") ? "1" : "0";
+            _folderView = configuration.EnableFolderView ?? false;
+            _specialsWithinSeasons = configuration.DisplaySpecialsWithinSeasons ?? false;
+            _groupMovies = configuration.EnableGroupingMoviesIntoCollections ?? false;
+            _groupShows = configuration.EnableGroupingShowsIntoCollections ?? false;
+            _externalContent = configuration.EnableExternalContentInSuggestions ?? false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LibraryDisplay] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _saved = false;
+        try
+        {
+            // The settings as they are now, so that nothing changed elsewhere in the meantime is undone.
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            configuration.EnableFolderView = _folderView;
+            configuration.DisplaySpecialsWithinSeasons = _specialsWithinSeasons;
+            configuration.EnableGroupingMoviesIntoCollections = _groupMovies;
+            configuration.EnableGroupingShowsIntoCollections = _groupShows;
+            configuration.EnableExternalContentInSuggestions = _externalContent;
+            await Api.Client.System.Configuration.PostAsync(configuration);
+
+            // The original sends this one value only, not the configuration it loaded.
+            await NamedConfiguration.SaveAsync(Api, ConfigKey, new JsonObject { ["UseFileCreationTimeForDateAdded"] = _dateAdded == "1" });
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LibraryDisplay] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

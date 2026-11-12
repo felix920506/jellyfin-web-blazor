@@ -1,0 +1,149 @@
+@* The media libraries: a card for each, adding one and scanning all of them.
+   Port of apps/dashboard/routes/libraries/index.tsx. *@
+@namespace Jellyfin.Web.Pages.Dashboard
+@attribute [Route("/dashboard/libraries")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Text.Json
+@implements IDisposable
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject ServerEvents Events
+@inject Globalize Globalize
+
+<Page Id="mediaLibraryPage" Title="@Globalize["HeaderLibraries"]" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["LibrariesLoadError"]</MudAlert>
+            }
+            else
+            {
+                <div class="jf-dashboard-libraries">
+                    <div class="jf-dashboard-libraries-actions">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@MdIcon.Of("add")" Class="jf-dashboard-libraries-add"
+                                   OnClick="AddAsync">@Globalize["ButtonAddMediaLibrary"]</MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@(IsScanning ? null : MdIcon.Of("refresh"))"
+                                   Disabled="IsScanning" Class="jf-dashboard-libraries-scan" OnClick="ScanAsync">
+                            @if (IsScanning)
+                            {
+                                <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="jf-dashboard-libraries-scanning" />
+                            }
+                            @Globalize["ButtonScanAllLibraries"]
+                        </MudButton>
+                        @if (LibrariesTask is { State: TaskInfo_State.Running } running)
+                        {
+                            <DashboardTaskProgress Info="running" />
+                        }
+                    </div>
+
+                    <div class="jf-dashboard-libraries-grid">
+                        @foreach (var folder in _folders)
+                        {
+                            <div @key="@(folder.ItemId ?? folder.Name)" class="jf-dashboard-libraries-item">
+                                <DashboardLibraryCard Folder="folder" OnChanged="ReloadAsync" />
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private List<VirtualFolderInfo> _folders = [];
+    private List<TaskInfo>? _tasks;
+    private LiveFeed? _feed;
+    private bool _loading = true;
+    private bool _failed;
+
+    // The task that scans all libraries; the page shows its progress as the server reports it.
+    private TaskInfo? LibrariesTask => _tasks?.FirstOrDefault(task => task.Key == "RefreshLibrary");
+
+    private bool IsScanning => LibrariesTask is { } task && task.State != TaskInfo_State.Idle;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _feed = new LiveFeed(Events, "ScheduledTasksInfo", "1000,1000", OnTasksMessage);
+        var tasks = LoadTasksAsync();
+        await LoadFoldersAsync();
+        var loaded = await tasks;
+        // An update that arrived while the request ran is newer than its answer.
+        _tasks ??= loaded;
+        _loading = false;
+    }
+
+    public void Dispose() => _feed?.Dispose();
+
+    private async Task<List<TaskInfo>> LoadTasksAsync()
+    {
+        try
+        {
+            return await Api.Client.ScheduledTasks.GetAsync(request => request.QueryParameters.IsHidden = false) ?? [];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Libraries] unable to load the tasks: " + ex.Message);
+            return [];
+        }
+    }
+
+    private async Task LoadFoldersAsync()
+    {
+        try
+        {
+            _folders = await Api.Client.Library.VirtualFolders.GetAsync() ?? [];
+            _failed = false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Libraries] unable to load the libraries: " + ex.Message);
+            _failed = true;
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        await LoadFoldersAsync();
+        StateHasChanged();
+    }
+
+    private void OnTasksMessage(JsonElement data) => _ = InvokeAsync(() =>
+    {
+        // The feed carries every task, also the hidden ones.
+        _tasks = KiotaJson.ParseList(data, TaskInfo.CreateFromDiscriminatorValue).Where(task => task.IsHidden != true).ToList();
+        StateHasChanged();
+    });
+
+    private async Task AddAsync()
+    {
+        if (await MediaLibraryCreator.ShowAsync(Dialogs, DashboardLibraries.GetCollectionTypeOptions(Globalize), refresh: true))
+        {
+            await ReloadAsync();
+        }
+    }
+
+    private async Task ScanAsync()
+    {
+        if (LibrariesTask?.Id is not { Length: > 0 } taskId)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.ScheduledTasks.Running[taskId].PostAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Libraries] starting the library scan failed: " + ex.Message);
+        }
+    }
+}

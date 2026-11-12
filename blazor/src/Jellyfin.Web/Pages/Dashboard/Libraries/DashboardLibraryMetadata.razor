@@ -1,0 +1,147 @@
+@* The preferred metadata language and the chapter images.
+   Port of apps/dashboard/routes/libraries/metadata.tsx. *@
+@namespace Jellyfin.Web.Pages.Dashboard
+@attribute [Route("/dashboard/libraries/metadata")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject Globalize Globalize
+
+<Page Id="metadataImagesConfigurationPage" Title="@Globalize["LabelMetadata"]" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["MetadataImagesLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <MudText Typo="Typo.h2">@Globalize["HeaderPreferredMetadataLanguage"]</MudText>
+                    <MudText>@Globalize["DefaultMetadataLangaugeDescription"]</MudText>
+
+                    <MudSelect T="string" @bind-Value="_language" Variant="Variant.Filled" Label="@Globalize["LabelLanguage"]"
+                               InputId="jf-dashboard-metadata-language" Class="jf-dashboard-metadata-language">
+                        @foreach (var culture in _cultures)
+                        {
+                            <MudSelectItem T="string" Value="@(culture.TwoLetterISOLanguageName ?? string.Empty)">@culture.DisplayName</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <MudSelect T="string" @bind-Value="_country" Variant="Variant.Filled" Label="@Globalize["LabelCountry"]"
+                               InputId="jf-dashboard-metadata-country" Class="jf-dashboard-metadata-country">
+                        @foreach (var country in _countries)
+                        {
+                            <MudSelectItem T="string" Value="@(country.TwoLetterISORegionName ?? string.Empty)">@country.DisplayName</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <MudText Typo="Typo.h2">@Globalize["HeaderDummyChapter"]</MudText>
+
+                    <MudNumericField T="int?" @bind-Value="_dummyChapterDuration" Variant="Variant.Filled" Min="0" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelDummyChapterDuration"]" HelperText="@Globalize["LabelDummyChapterDurationHelp"]"
+                                     InputId="jf-dashboard-metadata-chapterduration" />
+
+                    <MudSelect T="string" @bind-Value="_resolution" Variant="Variant.Filled" Label="@Globalize["LabelChapterImageResolution"]"
+                               HelperText="@Globalize["LabelChapterImageResolutionHelp"]" InputId="jf-dashboard-metadata-resolution" Class="jf-dashboard-metadata-resolution">
+                        @foreach (var (name, value) in Resolutions)
+                        {
+                            <MudSelectItem T="string" Value="@value">@(name ?? Globalize["ResolutionMatchSource"])</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    // Port of getImageResolutionOptions; the first is named by a translation.
+    private static readonly (string? Name, string Value)[] Resolutions =
+    [
+        (null, "MatchSource"),
+        ("2160p", "P2160"),
+        ("1440p", "P1440"),
+        ("1080p", "P1080"),
+        ("720p", "P720"),
+        ("480p", "P480"),
+        ("360p", "P360"),
+        ("240p", "P240"),
+        ("144p", "P144"),
+    ];
+
+    private List<CultureDto> _cultures = [];
+    private List<CountryInfo> _countries = [];
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+    private string? _language;
+    private string? _country;
+    private int? _dummyChapterDuration;
+    private string? _resolution;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var cultures = Api.Client.Localization.Cultures.GetAsync();
+            var countries = Api.Client.Localization.Countries.GetAsync();
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            _cultures = await cultures ?? [];
+            _countries = await countries ?? [];
+
+            _language = configuration.PreferredMetadataLanguage;
+            _country = configuration.MetadataCountryCode;
+            _dummyChapterDuration = configuration.DummyChapterDuration;
+            _resolution = configuration.ChapterImageResolution.ToApiString();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LibraryMetadata] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _saved = false;
+        try
+        {
+            // The settings as they are now, so that nothing changed elsewhere in the meantime is undone.
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            configuration.PreferredMetadataLanguage = _language ?? string.Empty;
+            configuration.MetadataCountryCode = _country ?? string.Empty;
+            // The field is required; the browser does not let an empty one through.
+            configuration.DummyChapterDuration = _dummyChapterDuration ?? configuration.DummyChapterDuration;
+            configuration.ChapterImageResolution =
+                EnumText.Parse<ServerConfiguration_ChapterImageResolution>(_resolution) ?? configuration.ChapterImageResolution;
+            await Api.Client.System.Configuration.PostAsync(configuration);
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LibraryMetadata] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

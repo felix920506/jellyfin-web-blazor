@@ -1,0 +1,139 @@
+@* A media library of the libraries page, with its menu. Port of
+   apps/dashboard/features/libraries/components/LibraryCard.tsx and apps/dashboard/components/BaseCard.tsx. *@
+@namespace Jellyfin.Web.Components
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject IBrowser Browser
+@inject Globalize Globalize
+
+<MudCard Class="jf-dashboard-library-card" data-itemid="@Folder.ItemId" data-name="@Folder.Name">
+    <button type="button" class="mud-ripple jf-dashboard-library-action" @onclick="ManageAsync">
+        @if (ImageUrl is { } url)
+        {
+            <div class="jf-dashboard-library-media" title="@Folder.Name" style="@($"background-image:url('{url}')")"></div>
+        }
+        else
+        {
+            <div class="@($"jf-dashboard-library-media jf-dashboard-library-icon {SessionUi.DefaultBackgroundClass(Folder.Name ?? string.Empty)}")">
+                <span class="material-icons @LibraryUi.GetLibraryIcon(Folder.CollectionType.ToApiString())" aria-hidden="true"></span>
+            </div>
+        }
+    </button>
+    <div class="jf-dashboard-library-content">
+        <div class="jf-dashboard-library-texts">
+            <MudText Class="jf-dashboard-library-name">@Folder.Name</MudText>
+            <MudText Typo="Typo.body2" Class="jf-dashboard-library-type">@DashboardLibraries.TypeName(Globalize, Folder.CollectionType.ToApiString())</MudText>
+        </div>
+        <MudMenu Icon="@MdIcon.Of("more_vert")" AriaLabel="@Globalize["ButtonMore"]" Class="jf-dashboard-library-menu"
+                 AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" ListClass="jf-dashboard-library-menu-list">
+            <MudMenuItem Icon="@MdIcon.Of("image")" Label="@Globalize["EditImages"]" Class="jf-dashboard-library-images" OnClick="EditImagesAsync" />
+            <MudMenuItem Icon="@MdIcon.Of("folder")" Label="@Globalize["ManageLibrary"]" Class="jf-dashboard-library-manage" OnClick="ManageAsync" />
+            <MudMenuItem Icon="@MdIcon.Of("edit")" Label="@Globalize["ButtonRename"]" Class="jf-dashboard-library-rename" OnClick="RenameAsync" />
+            <MudMenuItem Icon="@MdIcon.Of("refresh")" Label="@Globalize["ScanLibrary"]" Class="jf-dashboard-library-scan" OnClick="ScanAsync" />
+            <MudMenuItem Icon="@MdIcon.Of("delete")" Label="@Globalize["ButtonRemove"]" Class="jf-dashboard-library-remove" OnClick="RemoveAsync" />
+        </MudMenu>
+    </div>
+</MudCard>
+
+@code {
+    [Parameter, EditorRequired]
+    public VirtualFolderInfo Folder { get; set; } = default!;
+
+    /// <summary>The libraries have changed on the server and are to be loaded again.</summary>
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private string? ImageUrl => Folder is { PrimaryImageItemId.Length: > 0, ItemId: { Length: > 0 } itemId }
+        ? Api.GetUrl(
+            $"Items/{itemId}/Images/Primary",
+            ("maxWidth", DashboardLibraries.CardImageWidth(Browser.Environment.ScreenWidth, Browser.Environment.DevicePixelRatio)))
+        : null;
+
+    private async Task EditImagesAsync()
+    {
+        if (Folder.ItemId is not { Length: > 0 } itemId)
+        {
+            return;
+        }
+
+        // The original reloads the libraries whatever the image editor did.
+        await ImageEditor.ShowAsync(Dialogs, itemId);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task ManageAsync()
+    {
+        if (await MediaLibraryEditor.ShowAsync(Dialogs, Folder, refresh: true))
+        {
+            await OnChanged.InvokeAsync();
+        }
+    }
+
+    private async Task RenameAsync()
+    {
+        var newName = await Dialogs.MuiInputAsync(
+            Globalize["ButtonRename"],
+            Globalize["LabelNewName"],
+            helperText: Globalize["MessageRenameMediaFolder"],
+            confirmText: Globalize["ButtonRename"],
+            initialText: Folder.Name ?? string.Empty);
+        if (newName is null || Folder.Name is not { Length: > 0 } name)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.Library.VirtualFolders.Name.PostAsync(request =>
+            {
+                request.QueryParameters.Name = name;
+                request.QueryParameters.NewName = newName;
+                request.QueryParameters.RefreshLibrary = true;
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Libraries] renaming the library failed: " + ex.Message);
+            return;
+        }
+
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task ScanAsync()
+    {
+        if (Folder.ItemId is { Length: > 0 } itemId)
+        {
+            await RefreshDialog.ShowAsync(Dialogs, [itemId], "scan");
+        }
+    }
+
+    private async Task RemoveAsync()
+    {
+        var confirmed = await Dialogs.MuiConfirmAsync(
+            Globalize["HeaderRemoveMediaFolder"],
+            DashboardLibraries.RemoveConfirmationText(Globalize, Folder),
+            confirmText: Globalize["Delete"],
+            destructive: true);
+        if (!confirmed || Folder.Name is not { Length: > 0 } name)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.Library.VirtualFolders.DeleteAsync(request =>
+            {
+                request.QueryParameters.Name = name;
+                request.QueryParameters.RefreshLibrary = true;
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Libraries] removing the library failed: " + ex.Message);
+            return;
+        }
+
+        await OnChanged.InvokeAsync();
+    }
+}

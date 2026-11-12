@@ -1,0 +1,88 @@
+@* The bitrate limit of remote clients. Port of apps/dashboard/routes/playback/streaming.tsx. *@
+@namespace Jellyfin.Web.Pages.Dashboard
+@attribute [Route("/dashboard/playback/streaming")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject Globalize Globalize
+
+<Page Id="streamingSettingsPage" Title="@Globalize["TabStreaming"]" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["StreamingLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    <MudText Typo="Typo.h1">@Globalize["TabStreaming"]</MudText>
+
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <MudNumericField T="double?" @bind-Value="_bitrateLimit" Variant="Variant.Filled" Min="0" Max="2147.25" Step="0.25"
+                                     InputMode="@(InputMode.@decimal)" Label="@Globalize["LabelRemoteClientBitrateLimit"]"
+                                     HelperText="@Globalize["LabelRemoteClientBitrateLimitHelp"]" InputId="jf-dashboard-streaming-bitrate" />
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+    private double? _bitrateLimit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            // The limit is stored in bits per second and edited in Mbps; none shows as an empty field.
+            _bitrateLimit = configuration.RemoteClientBitrateLimit is { } limit and not 0 ? limit / 1e6 : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Streaming] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _saved = false;
+        try
+        {
+            // The settings as they are now, so that nothing changed elsewhere in the meantime is undone.
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            configuration.RemoteClientBitrateLimit = (int)Math.Truncate(1e6 * (_bitrateLimit ?? 0));
+            await Api.Client.System.Configuration.PostAsync(configuration);
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Streaming] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

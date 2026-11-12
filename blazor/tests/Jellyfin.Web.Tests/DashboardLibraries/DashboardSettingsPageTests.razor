@@ -1,0 +1,233 @@
+@* Page-level tests for the dashboard library, playback and networking forms. *@
+@using System.Text.Json.Nodes
+@using Jellyfin.Web
+@using Jellyfin.Web.Pages.Dashboard
+@using Jellyfin.Web.Services
+@using Jellyfin.Web.Tests.Dashboard
+@using Jellyfin.Web.Tests.Support
+@using Jellyfin.Web.Tests.Session
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@inherits DashboardTestContext
+
+@code {
+    private static readonly object Configuration = new
+    {
+        MinResumePct = 10,
+        MaxResumePct = 90,
+        MinAudiobookResume = 5,
+        MaxAudiobookResume = 95,
+        MinResumeDurationSeconds = 30,
+        RemoteClientBitrateLimit = 5000000,
+        TrickplayOptions = new
+        {
+            EnableHwAcceleration = false,
+            EnableHwEncoding = false,
+            EnableKeyFrameOnlyExtraction = false,
+            ScanBehavior = "NonBlocking",
+            ProcessPriority = "Normal",
+            Interval = 10000,
+            WidthResolutions = new[] { 320, 640 },
+            TileWidth = 10,
+            TileHeight = 10,
+            JpegQuality = 90,
+            Qscale = 4,
+            ProcessThreads = 1
+        }
+    };
+
+    [Fact]
+    public async Task Resume_page_loads_edits_and_saves_all_resume_fields()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/System/Configuration", Configuration);
+        App.Server.OnPost("/System/Configuration");
+
+        var cut = RenderAt<DashboardPlaybackResume>("/dashboard/playback/resume");
+        cut.WaitForElement("#jf-dashboard-resume-minpct");
+        await cut.Find("#jf-dashboard-resume-minpct").ChangeAsync(new ChangeEventArgs { Value = "12" });
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration")));
+        Assert.Equal(12, BodiesTo("/System/Configuration")[0].GetProperty("MinResumePct").GetInt32());
+        Assert.Equal(90, BodiesTo("/System/Configuration")[0].GetProperty("MaxResumePct").GetInt32());
+    }
+
+    [Fact]
+    public async Task Streaming_page_converts_mbps_to_bits_per_second()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/System/Configuration", Configuration);
+        App.Server.OnPost("/System/Configuration");
+
+        var cut = RenderAt<DashboardPlaybackStreaming>("/dashboard/playback/streaming");
+        cut.WaitForElement("#jf-dashboard-streaming-bitrate");
+        await cut.Find("#jf-dashboard-streaming-bitrate").ChangeAsync(new ChangeEventArgs { Value = "7.25" });
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration")));
+        Assert.Equal(7250000, BodiesTo("/System/Configuration")[0].GetProperty("RemoteClientBitrateLimit").GetInt32());
+    }
+
+    [Fact]
+    public async Task Networking_loads_published_uri_fields_and_saves_wire_payload()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/System/Configuration/network", new
+        {
+            InternalHttpPort = 8096,
+            InternalHttpsPort = 8920,
+            EnableHttps = true,
+            RequireHttps = false,
+            EnableRemoteAccess = true,
+            EnableIPv4 = true,
+            EnableIPv6 = false,
+            AutoDiscovery = true,
+            PublishedServerUriBySubnet = new[] { "all=https://media.example" },
+            LocalNetworkAddresses = new[] { "192.168.1.2" },
+            LocalNetworkSubnets = new[] { "192.168.1.0/24" },
+            KnownProxies = new[] { "192.168.1.3" },
+            RemoteIPFilter = new[] { "10.0.0.0/8" },
+            IsRemoteIPFilterBlacklist = false,
+            BaseUrl = "",
+            CertificatePath = "",
+            CertificatePassword = "",
+            PublicHttpPort = 8096,
+            PublicHttpsPort = 8920
+        });
+        App.Server.OnPost("/System/Configuration/network");
+        var cut = RenderAt<DashboardNetworking>("/dashboard/networking");
+        cut.WaitForElement("#jf-dashboard-networking-httpport");
+        await cut.Find("#jf-dashboard-networking-httpport").ChangeAsync(new ChangeEventArgs { Value = "8097" });
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration/network")));
+        var body = BodiesTo("/System/Configuration/network")[0];
+        Assert.Equal(8097, body.GetProperty("InternalHttpPort").GetInt32());
+        Assert.Equal(new[] { "10.0.0.0/8" }, body.GetProperty("RemoteIPFilter").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal(new[] { "all=https://media.example" }, body.GetProperty("PublishedServerUriBySubnet").EnumerateArray().Select(value => value.GetString()));
+    }
+
+    [Fact]
+    public async Task Transcoding_hardware_controls_follow_acceleration_and_preserve_configuration()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/System/Configuration/encoding", new
+        {
+            HardwareAccelerationType = "none",
+            HardwareDecodingCodecs = new[] { "h264" },
+            EncodingThreadCount = 0,
+            EncoderPreset = "medium",
+            DownMixAudioBoost = 1.0,
+            EnableHardwareEncoding = false,
+            AllowHevcEncoding = false,
+            AllowAv1Encoding = false,
+            TranscodingTempPath = "/tmp-transcode",
+            FallbackFontPath = "",
+            EncoderAppPath = "/usr/bin/ffmpeg",
+            EncoderAppPathDisplay = "/usr/bin/ffmpeg",
+            TonemappingAlgorithm = "none",
+            TonemappingRange = "auto",
+            TonemappingMode = "auto",
+            EnableThrottling = true,
+            EnableSegmentDeletion = true,
+            ThrottleDelaySeconds = 180,
+            SegmentKeepSeconds = 60
+        });
+        App.Server.OnPost("/System/Configuration/encoding");
+        this.RenderDialogs();
+
+        var cut = RenderAt<DashboardPlaybackTranscoding>("/dashboard/playback/transcoding");
+        cut.WaitForElement("#jf-dashboard-transcoding-hardwareaccelerationtype");
+        Assert.Empty(cut.FindAll("#jf-dashboard-transcoding-vaapidevice"));
+        await ChooseAsync(cut, "jf-dashboard-transcoding-hardwareaccelerationtype", "vaapi");
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#jf-dashboard-transcoding-vaapidevice")));
+        Assert.NotEmpty(cut.FindAll(".jf-dashboard-transcoding-enablevpptonemapping"));
+        Assert.NotEmpty(cut.FindAll(".jf-dashboard-transcoding-enabledecodingcolordepth10hevc"));
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration/encoding")));
+        var body = BodiesTo("/System/Configuration/encoding")[0];
+        Assert.Equal("vaapi", body.GetProperty("HardwareAccelerationType").GetString());
+        Assert.Equal("/tmp-transcode", body.GetProperty("TranscodingTempPath").GetString());
+        Assert.Equal("", body.GetProperty("FallbackFontPath").GetString());
+        Assert.Equal("/usr/bin/ffmpeg", body.GetProperty("EncoderAppPath").GetString());
+        Assert.Equal("/usr/bin/ffmpeg", body.GetProperty("EncoderAppPathDisplay").GetString());
+        Assert.Equal(180, body.GetProperty("ThrottleDelaySeconds").GetInt32());
+        Assert.True(body.GetProperty("EnableThrottling").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Trickplay_rejects_invalid_resolution_characters_before_post()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/System/Configuration", Configuration);
+        App.Server.OnPost("/System/Configuration");
+
+        var cut = RenderAt<DashboardPlaybackTrickplay>("/dashboard/playback/trickplay");
+        cut.WaitForElement("#jf-dashboard-trickplay-widths");
+        await cut.Find("#jf-dashboard-trickplay-widths").ChangeAsync(new ChangeEventArgs { Value = "320,640x" });
+        await cut.Find("form").SubmitAsync();
+
+        Assert.DoesNotContain(App.Server.RequestsTo("/System/Configuration"), request => request.Method == HttpMethod.Post);
+    }
+
+    [Fact]
+    public async Task Library_display_saves_server_and_named_configuration_fields()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/System/Configuration", new { EnableFolderView = false, DisplaySpecialsWithinSeasons = false, EnableGroupingMoviesIntoCollections = false, EnableGroupingShowsIntoCollections = false, EnableExternalContentInSuggestions = false });
+        App.Server.OnGet("/System/Configuration/metadata", new { UseFileCreationTimeForDateAdded = false });
+        App.Server.OnPost("/System/Configuration");
+        App.Server.OnPost("/System/Configuration/metadata");
+
+        var cut = RenderAt<DashboardLibraryDisplay>("/dashboard/libraries/display");
+        cut.WaitForElement(".jf-dashboard-display-folderview");
+        await Box(cut, "jf-dashboard-display-folderview").ChangeAsync(new ChangeEventArgs { Value = true });
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration")));
+        Assert.True(BodiesTo("/System/Configuration")[0].GetProperty("EnableFolderView").GetBoolean());
+        Assert.Equal("metadata", Assert.Single(App.Server.RequestsTo("/System/Configuration/metadata"), request => request.Method == HttpMethod.Post).Path.Split('/').Last());
+    }
+
+    [Fact]
+    public async Task Library_metadata_saves_the_language_country_and_chapter_fields()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Localization/Cultures", new[] { new { DisplayName = "English", TwoLetterISOLanguageName = "en" } });
+        App.Server.OnGet("/Localization/Countries", new[] { new { DisplayName = "United States", TwoLetterISORegionName = "US" } });
+        App.Server.OnGet("/System/Configuration", new { PreferredMetadataLanguage = "en", MetadataCountryCode = "US", DummyChapterDuration = 0, ChapterImageResolution = "MatchSource" });
+        App.Server.OnPost("/System/Configuration");
+
+        var cut = RenderAt<DashboardLibraryMetadata>("/dashboard/libraries/metadata");
+        cut.WaitForElement("#jf-dashboard-metadata-chapterduration");
+        await cut.Find("#jf-dashboard-metadata-chapterduration").ChangeAsync(new ChangeEventArgs { Value = "15" });
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration")));
+        Assert.Equal(15, BodiesTo("/System/Configuration")[0].GetProperty("DummyChapterDuration").GetInt32());
+        Assert.Equal("en", BodiesTo("/System/Configuration")[0].GetProperty("PreferredMetadataLanguage").GetString());
+    }
+
+    [Fact]
+    public async Task Library_nfo_saves_the_exact_named_configuration_payload()
+    {
+        SignIn(admin: true);
+        App.Server.OnGet("/Users", new[] { new { Id = "11111111-1111-1111-1111-111111111111", Name = "admin" } });
+        App.Server.OnGet("/System/Configuration/xbmcmetadata", new { UserId = "", ReleaseDateFormat = "yyyy-MM-dd", SaveImagePathsInNfo = false, EnablePathSubstitution = false, EnableExtraThumbsDuplication = false });
+        App.Server.OnPost("/System/Configuration/xbmcmetadata");
+        this.RenderDialogs();
+
+        var cut = RenderAt<DashboardLibraryNfo>("/dashboard/libraries/nfo");
+        cut.WaitForElement("#jf-dashboard-nfo-user");
+        await Box(cut, "jf-dashboard-nfo-imagepaths").ChangeAsync(new ChangeEventArgs { Value = true });
+        await cut.Find("form").SubmitAsync();
+
+        cut.WaitForAssertion(() => Assert.Single(BodiesTo("/System/Configuration/xbmcmetadata")));
+        var body = BodiesTo("/System/Configuration/xbmcmetadata")[0];
+        Assert.True(body.GetProperty("SaveImagePathsInNfo").GetBoolean());
+        Assert.Equal("yyyy-MM-dd", body.GetProperty("ReleaseDateFormat").GetString());
+        Assert.Equal(5, body.EnumerateObject().Count());
+    }
+}

@@ -1,0 +1,183 @@
+@* The trickplay image settings. Port of apps/dashboard/routes/playback/trickplay.tsx. *@
+@namespace Jellyfin.Web.Pages.Dashboard
+@attribute [Route("/dashboard/playback/trickplay")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Globalization
+@inject JellyfinApi Api
+@inject Globalize Globalize
+
+<Page Id="trickplayConfigurationPage" Title="@Globalize["Trickplay"]" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["TrickplayLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    <MudText Typo="Typo.h1">@Globalize["Trickplay"]</MudText>
+
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <DashboardLibraryCheckField @bind-Value="_hwAcceleration" Class="jf-dashboard-trickplay-hwaccel"
+                                                Label="@Globalize["LabelTrickplayAccel"]" />
+
+                    <DashboardLibraryCheckField @bind-Value="_hwEncoding" Class="jf-dashboard-trickplay-hwencoding"
+                                                Label="@Globalize["LabelTrickplayAccelEncoding"]" Help="@Globalize["LabelTrickplayAccelEncodingHelp"]" />
+
+                    <DashboardLibraryCheckField @bind-Value="_keyFrameOnly" Class="jf-dashboard-trickplay-keyframes"
+                                                Label="@Globalize["LabelTrickplayKeyFrameOnlyExtraction"]" Help="@Globalize["LabelTrickplayKeyFrameOnlyExtractionHelp"]" />
+
+                    <MudSelect T="string" @bind-Value="_scanBehavior" Variant="Variant.Filled" Label="@Globalize["LabelScanBehavior"]"
+                               HelperText="@Globalize["LabelScanBehaviorHelp"]" InputId="jf-dashboard-trickplay-scan" Class="jf-dashboard-trickplay-scan">
+                        <MudSelectItem T="string" Value="@("NonBlocking")">@Globalize["NonBlockingScan"]</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("Blocking")">@Globalize["BlockingScan"]</MudSelectItem>
+                    </MudSelect>
+
+                    <MudSelect T="string" @bind-Value="_processPriority" Variant="Variant.Filled" Label="@Globalize["LabelProcessPriority"]"
+                               HelperText="@Globalize["LabelProcessPriorityHelp"]" InputId="jf-dashboard-trickplay-priority" Class="jf-dashboard-trickplay-priority">
+                        <MudSelectItem T="string" Value="@("High")">@Globalize["PriorityHigh"]</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("AboveNormal")">@Globalize["PriorityAboveNormal"]</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("Normal")">@Globalize["PriorityNormal"]</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("BelowNormal")">@Globalize["PriorityBelowNormal"]</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("Idle")">@Globalize["PriorityIdle"]</MudSelectItem>
+                    </MudSelect>
+
+                    <MudNumericField T="int?" @bind-Value="_interval" Variant="Variant.Filled" Min="1" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelImageInterval"]" HelperText="@Globalize["LabelImageIntervalHelp"]"
+                                     InputId="jf-dashboard-trickplay-interval" />
+
+                    <MudTextField T="string" @bind-Value="_widthResolutions" Variant="Variant.Filled" UserAttributes="@(new() { ["required"] = true })" Pattern="[0-9,]*"
+                                  Label="@Globalize["LabelWidthResolutions"]" HelperText="@Globalize["LabelWidthResolutionsHelp"]"
+                                  InputId="jf-dashboard-trickplay-widths" />
+
+                    <MudNumericField T="int?" @bind-Value="_tileWidth" Variant="Variant.Filled" Min="1" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelTileWidth"]" HelperText="@Globalize["LabelTileWidthHelp"]"
+                                     InputId="jf-dashboard-trickplay-tilewidth" />
+
+                    <MudNumericField T="int?" @bind-Value="_tileHeight" Variant="Variant.Filled" Min="1" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelTileHeight"]" HelperText="@Globalize["LabelTileHeightHelp"]"
+                                     InputId="jf-dashboard-trickplay-tileheight" />
+
+                    <MudNumericField T="int?" @bind-Value="_jpegQuality" Variant="Variant.Filled" Min="1" Max="100" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelJpegQuality"]" HelperText="@Globalize["LabelJpegQualityHelp"]"
+                                     InputId="jf-dashboard-trickplay-jpegquality" />
+
+                    <MudNumericField T="int?" @bind-Value="_qscale" Variant="Variant.Filled" Min="2" Max="31" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelQscale"]" HelperText="@Globalize["LabelQscaleHelp"]"
+                                     InputId="jf-dashboard-trickplay-qscale" />
+
+                    <MudNumericField T="int?" @bind-Value="_threads" Variant="Variant.Filled" Min="0" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelTrickplayThreads"]" HelperText="@Globalize["LabelTrickplayThreadsHelp"]"
+                                     InputId="jf-dashboard-trickplay-threads" />
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+    private bool _hwAcceleration;
+    private bool _hwEncoding;
+    private bool _keyFrameOnly;
+    private string? _scanBehavior;
+    private string? _processPriority;
+    private int? _interval;
+    private string? _widthResolutions;
+    private int? _tileWidth;
+    private int? _tileHeight;
+    private int? _jpegQuality;
+    private int? _qscale;
+    private int? _threads;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            var options = configuration.TrickplayOptions;
+            _hwAcceleration = options?.EnableHwAcceleration ?? false;
+            _hwEncoding = options?.EnableHwEncoding ?? false;
+            _keyFrameOnly = options?.EnableKeyFrameOnlyExtraction ?? false;
+            _scanBehavior = options?.ScanBehavior.ToApiString();
+            _processPriority = options?.ProcessPriority.ToApiString();
+            _interval = options?.Interval;
+            // The list shows as a script shows an array: its values with commas between them.
+            _widthResolutions = string.Join(
+                ',', (options?.WidthResolutions ?? []).Select(width => width?.ToString(CultureInfo.InvariantCulture)));
+            _tileWidth = options?.TileWidth;
+            _tileHeight = options?.TileHeight;
+            _jpegQuality = options?.JpegQuality;
+            _qscale = options?.Qscale;
+            _threads = options?.ProcessThreads;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Trickplay] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        // The browser lets the form through only with widths of digits and commas; a list with
+        // anything else is not sent.
+        if (!DashboardLibraries.IsValidWidthResolutions(_widthResolutions))
+        {
+            return;
+        }
+
+        _saving = true;
+        _saved = false;
+        try
+        {
+            // The settings as they are now, so that nothing changed elsewhere in the meantime is undone.
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            var options = configuration.TrickplayOptions ?? throw new InvalidOperationException("Unexpected null TrickplayOptions");
+
+            options.EnableHwAcceleration = _hwAcceleration;
+            options.EnableHwEncoding = _hwEncoding;
+            options.EnableKeyFrameOnlyExtraction = _keyFrameOnly;
+            options.ScanBehavior = EnumText.Parse<TrickplayOptions_ScanBehavior>(_scanBehavior) ?? options.ScanBehavior;
+            options.ProcessPriority = EnumText.Parse<TrickplayOptions_ProcessPriority>(_processPriority) ?? options.ProcessPriority;
+            // An empty number field stands for the value the original falls back to.
+            options.Interval = _interval ?? 10000;
+            options.WidthResolutions = DashboardLibraries.ParseWidthResolutions(_widthResolutions);
+            options.TileWidth = _tileWidth ?? 10;
+            options.TileHeight = _tileHeight ?? 10;
+            options.Qscale = _qscale ?? 4;
+            options.JpegQuality = _jpegQuality ?? 90;
+            options.ProcessThreads = _threads ?? 1;
+
+            await Api.Client.System.Configuration.PostAsync(configuration);
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Trickplay] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

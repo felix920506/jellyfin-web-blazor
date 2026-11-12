@@ -1,0 +1,312 @@
+@* The server's addresses, ports, HTTPS, remote access and published addresses.
+   Port of apps/dashboard/routes/networking/index.tsx.
+
+   Like the original the page sends the settings of its fields as a new "network" configuration:
+   what the server stores besides them is not sent back. *@
+@namespace Jellyfin.Web.Pages.Dashboard
+@attribute [Route("/dashboard/networking")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Text.Json.Nodes
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+<Page Id="networkingPage" Title="@Globalize["TabNetworking"]" Class="type-interior mainAnimatedPage">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["NetworkingPageLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-networking" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <MudText Typo="Typo.h1">@Globalize["TabNetworking"]</MudText>
+
+                    <div class="jf-dashboard-form jf-dashboard-networking-section">
+                        <MudText Typo="Typo.h2">@Globalize["HeaderServerAddressSettings"]</MudText>
+
+                        <MudTextField T="string" @bind-Value="_internalHttpPort" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelLocalHttpServerPortNumber"]" HelperText="@Globalize["LabelLocalHttpServerPortNumberHelp"]"
+                                      InputId="jf-dashboard-networking-httpport" />
+
+                        <DashboardLibraryCheckField @bind-Value="_enableHttps" Class="jf-dashboard-networking-https"
+                                                    Label="@Globalize["LabelEnableHttps"]" Help="@Globalize["LabelEnableHttpsHelp"]" />
+
+                        <MudTextField T="string" @bind-Value="_internalHttpsPort" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelHttpsPort"]" HelperText="@Globalize["LabelHttpsPortHelp"]"
+                                      InputId="jf-dashboard-networking-httpsport" />
+
+                        <MudTextField T="string" @bind-Value="_baseUrl" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelBaseUrl"]" HelperText="@Globalize["LabelBaseUrlHelp"]"
+                                      InputId="jf-dashboard-networking-baseurl" />
+
+                        <MudTextField T="string" @bind-Value="_localNetworkAddresses" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelBindToLocalNetworkAddress"]" HelperText="@Globalize["LabelBindToLocalNetworkAddressHelp"]"
+                                      InputId="jf-dashboard-networking-localaddresses" />
+
+                        <MudTextField T="string" @bind-Value="_localNetworkSubnets" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelLanNetworks"]" HelperText="@Globalize["LanNetworksHelp"]"
+                                      InputId="jf-dashboard-networking-subnets" />
+
+                        <MudTextField T="string" @bind-Value="_knownProxies" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelKnownProxies"]" HelperText="@Globalize["KnownProxiesHelp"]"
+                                      InputId="jf-dashboard-networking-proxies" />
+                    </div>
+
+                    <div class="jf-dashboard-form jf-dashboard-networking-section">
+                        <MudText Typo="Typo.h2">@Globalize["HeaderHttpsSettings"]</MudText>
+
+                        <DashboardLibraryCheckField @bind-Value="_requireHttps" Class="jf-dashboard-networking-requirehttps"
+                                                    Label="@Globalize["LabelRequireHttps"]" Help="@Globalize["LabelRequireHttpsHelp"]" />
+
+                        <MudTextField T="string" @bind-Value="_certificatePath" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelCustomCertificatePath"]" HelperText="@Globalize["LabelCustomCertificatePathHelp"]"
+                                      InputId="jf-dashboard-networking-certificatepath"
+                                      Adornment="Adornment.End" AdornmentIcon="@MdIcon.Of("search")" OnAdornmentClick="PickCertificatePathAsync" />
+
+                        <MudTextField T="string" @bind-Value="_certificatePassword" Variant="Variant.Filled" InputType="InputType.Password"
+                                      Label="@Globalize["LabelCertificatePassword"]" HelperText="@Globalize["LabelCertificatePasswordHelp"]"
+                                      InputId="jf-dashboard-networking-certificatepassword" />
+                    </div>
+
+                    <div class="jf-dashboard-form jf-dashboard-networking-section">
+                        <MudText Typo="Typo.h2">@Globalize["HeaderRemoteAccessSettings"]</MudText>
+
+                        <DashboardLibraryCheckField @bind-Value="_enableRemoteAccess" Class="jf-dashboard-networking-remoteaccess"
+                                                    Label="@Globalize["AllowRemoteAccess"]" Help="@Globalize["AllowRemoteAccessHelp"]" />
+
+                        <MudTextField T="string" @bind-Value="_remoteIpFilter" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelAllowedRemoteAddresses"]" HelperText="@Globalize["AllowedRemoteAddressesHelp"]"
+                                      InputId="jf-dashboard-networking-remotefilter" />
+
+                        <MudSelect T="string" @bind-Value="_remoteIpFilterMode" Variant="Variant.Filled" Label="@Globalize["LabelAllowedRemoteAddressesMode"]"
+                                   InputId="jf-dashboard-networking-remotefiltermode" Class="jf-dashboard-networking-remotefiltermode">
+                            <MudSelectItem T="string" Value="@("whitelist")">@Globalize["Whitelist"]</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("blacklist")">@Globalize["Blacklist"]</MudSelectItem>
+                        </MudSelect>
+
+                        <MudTextField T="string" @bind-Value="_publicHttpPort" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelPublicHttpPort"]" HelperText="@Globalize["LabelPublicHttpPortHelp"]"
+                                      InputId="jf-dashboard-networking-publichttpport" />
+
+                        <MudTextField T="string" @bind-Value="_publicHttpsPort" Variant="Variant.Filled"
+                                      Label="@Globalize["LabelPublicHttpsPort"]" HelperText="@Globalize["LabelPublicHttpsPortHelp"]"
+                                      InputId="jf-dashboard-networking-publichttpsport" />
+                    </div>
+
+                    <div class="jf-dashboard-form jf-dashboard-networking-section">
+                        <MudText Typo="Typo.h2">@Globalize["HeaderNetworking"]</MudText>
+
+                        <DashboardLibraryCheckField @bind-Value="_enableIPv4" Class="jf-dashboard-networking-ipv4"
+                                                    Label="@Globalize["LabelEnableIP4"]" Help="@Globalize["LabelEnableIP4Help"]" />
+
+                        <DashboardLibraryCheckField @bind-Value="_enableIPv6" Class="jf-dashboard-networking-ipv6"
+                                                    Label="@Globalize["LabelEnableIP6"]" Help="@Globalize["LabelEnableIP6Help"]" />
+                    </div>
+
+                    <div class="jf-dashboard-form jf-dashboard-networking-section">
+                        <MudText Typo="Typo.h2">@Globalize["HeaderAutoDiscovery"]</MudText>
+
+                        <DashboardLibraryCheckField @bind-Value="_autoDiscovery" Class="jf-dashboard-networking-autodiscovery"
+                                                    Label="@Globalize["LabelAutomaticDiscovery"]" Help="@Globalize["LabelAutomaticDiscoveryHelp"]" />
+                    </div>
+
+                    <div class="jf-dashboard-form jf-dashboard-networking-section">
+                        <MudText Typo="Typo.h2">@Globalize["HeaderPortRanges"]</MudText>
+
+                        <div class="jf-dashboard-field jf-dashboard-check-field">
+                            <MudSwitch T="bool" Value="_useSamePublishedUri" ValueChanged="OnUseSamePublishedUriChanged" Color="Color.Primary"
+                                       Label="@Globalize["LabelUseSamePublishedServerUri"]" Class="jf-dashboard-networking-sameuri" />
+                        </div>
+
+                        @if (_useSamePublishedUri)
+                        {
+                            <MudTextField T="string" @bind-Value="_publishedUri" Variant="Variant.Filled"
+                                          Label="@Globalize["LabelPublishedServerUri"]" HelperText="@Globalize["LabelPublishedServerUriHelp"]"
+                                          InputId="jf-dashboard-networking-publisheduri" />
+                        }
+                        else
+                        {
+                            <div class="jf-dashboard-networking-uris">
+                                <MudTextField T="string" @bind-Value="_internalUri" Variant="Variant.Filled"
+                                              Label="@Globalize["LabelInternalServerUri"]" HelperText="@Globalize["LabelInternalServerUriHelp"]"
+                                              InputId="jf-dashboard-networking-internaluri" />
+                                <MudTextField T="string" @bind-Value="_externalUri" Variant="Variant.Filled"
+                                              Label="@Globalize["LabelExternalServerUri"]" HelperText="@Globalize["LabelExternalServerUriHelp"]"
+                                              InputId="jf-dashboard-networking-externaluri" />
+                            </div>
+                        }
+                    </div>
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private const string ConfigKey = "network";
+
+    private PublishedServerUris? _loadedUris;
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+    private string? _internalHttpPort;
+    private bool _enableHttps;
+    private string? _internalHttpsPort;
+    private string? _baseUrl;
+    private string? _localNetworkAddresses;
+    private string? _localNetworkSubnets;
+    private string? _knownProxies;
+    private bool _requireHttps;
+    private string? _certificatePath;
+    private string? _certificatePassword;
+    private bool _enableRemoteAccess;
+    private string? _remoteIpFilter;
+    private string _remoteIpFilterMode = "whitelist";
+    private string? _publicHttpPort;
+    private string? _publicHttpsPort;
+    private bool _enableIPv4;
+    private bool _enableIPv6;
+    private bool _autoDiscovery;
+    private bool _useSamePublishedUri = true;
+    private string? _publishedUri;
+    private string? _internalUri;
+    private string? _externalUri;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var configuration = await NamedConfiguration.GetAsync(Api, ConfigKey);
+
+            _internalHttpPort = configuration.Shown("InternalHttpPort");
+            _enableHttps = configuration.Flag("EnableHttps");
+            _internalHttpsPort = configuration.Shown("InternalHttpsPort");
+            _baseUrl = configuration.Shown("BaseUrl");
+            _localNetworkAddresses = NetworkingLogic.JoinList(configuration.Texts("LocalNetworkAddresses"));
+            _localNetworkSubnets = NetworkingLogic.JoinList(configuration.Texts("LocalNetworkSubnets"));
+            _knownProxies = NetworkingLogic.JoinList(configuration.Texts("KnownProxies"));
+            _requireHttps = configuration.Flag("RequireHttps");
+            _certificatePath = configuration.Shown("CertificatePath");
+            _certificatePassword = configuration.Shown("CertificatePassword");
+            _enableRemoteAccess = configuration.Flag("EnableRemoteAccess");
+            _remoteIpFilter = NetworkingLogic.JoinList(configuration.Texts("RemoteIPFilter"));
+            _remoteIpFilterMode = configuration.Flag("IsRemoteIPFilterBlacklist") ? "blacklist" : "whitelist";
+            _publicHttpPort = configuration.Shown("PublicHttpPort");
+            _publicHttpsPort = configuration.Shown("PublicHttpsPort");
+            _enableIPv4 = configuration.Flag("EnableIPv4");
+            _enableIPv6 = configuration.Flag("EnableIPv6");
+            _autoDiscovery = configuration.Flag("AutoDiscovery");
+
+            // One address for everyone unless the server stores one each for inside and outside.
+            var published = configuration.Texts("PublishedServerUriBySubnet");
+            if (published.Count > 0)
+            {
+                _loadedUris = NetworkingLogic.GetPublishedServerUris(published);
+                _useSamePublishedUri = !string.IsNullOrEmpty(_loadedUris.All);
+            }
+
+            ShowLoadedUris();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Networking] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    // The original's address fields are new ones each time the switch changes: they show what the
+    // server stores again, not what was typed before.
+    private void OnUseSamePublishedUriChanged(bool same)
+    {
+        _useSamePublishedUri = same;
+        ShowLoadedUris();
+    }
+
+    private void ShowLoadedUris()
+    {
+        _publishedUri = _loadedUris?.All;
+        _internalUri = _loadedUris?.Internal;
+        _externalUri = _loadedUris?.External;
+    }
+
+    private async Task PickCertificatePathAsync()
+    {
+        var path = await DirectoryBrowser.ShowAsync(
+            Dialogs,
+            path: _certificatePath,
+            header: Globalize["HeaderSelectCertificatePath"],
+            includeDirectories: true,
+            includeFiles: true);
+        if (!string.IsNullOrEmpty(path))
+        {
+            _certificatePath = path;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _saved = false;
+        try
+        {
+            // The address for everyone when there is one, else the two of the fields that show.
+            var published = _useSamePublishedUri
+                ? new PublishedServerUris(All: _publishedUri)
+                : new PublishedServerUris(Internal: _internalUri, External: _externalUri);
+
+            var configuration = new JsonObject
+            {
+                ["BaseUrl"] = _baseUrl ?? string.Empty,
+                ["EnableHttps"] = _enableHttps,
+                ["RequireHttps"] = _requireHttps,
+                ["CertificatePath"] = _certificatePath ?? string.Empty,
+                ["CertificatePassword"] = _certificatePassword ?? string.Empty,
+                // A port that is no number is sent as none, as the original's NaN is.
+                ["InternalHttpPort"] = NetworkingLogic.ParseInt(_internalHttpPort),
+                ["InternalHttpsPort"] = NetworkingLogic.ParseInt(_internalHttpsPort),
+                ["PublicHttpPort"] = NetworkingLogic.ParseInt(_publicHttpPort),
+                ["PublicHttpsPort"] = NetworkingLogic.ParseInt(_publicHttpsPort),
+                ["AutoDiscovery"] = _autoDiscovery,
+                ["EnableIPv4"] = _enableIPv4,
+                ["EnableIPv6"] = _enableIPv6,
+                ["EnableRemoteAccess"] = _enableRemoteAccess,
+            };
+            configuration.SetTexts("LocalNetworkSubnets", NetworkingLogic.SplitString(_localNetworkSubnets));
+            configuration.SetTexts("LocalNetworkAddresses", NetworkingLogic.SplitString(_localNetworkAddresses));
+            configuration.SetTexts("KnownProxies", NetworkingLogic.SplitString(_knownProxies));
+            configuration.SetTexts("RemoteIPFilter", NetworkingLogic.SplitString(_remoteIpFilter));
+            configuration["IsRemoteIPFilterBlacklist"] = _remoteIpFilterMode == "blacklist";
+            configuration.SetTexts("PublishedServerUriBySubnet", NetworkingLogic.EncodePublishedServerUris(published));
+
+            await NamedConfiguration.SaveAsync(Api, ConfigKey, configuration);
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Networking] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

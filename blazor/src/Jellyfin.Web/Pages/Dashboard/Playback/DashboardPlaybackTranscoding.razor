@@ -1,0 +1,387 @@
+@* The transcoding settings: hardware acceleration and what depends on it, tone mapping, the
+   encoder and its paths. Port of apps/dashboard/routes/playback/transcoding.tsx.
+
+   The page edits the "encoding" configuration as the server sent it and sends all of it back,
+   so that settings without a field here stay as they are. *@
+@namespace Jellyfin.Web.Pages.Dashboard
+@attribute [Route("/dashboard/playback/transcoding")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Globalization
+@using System.Text.Json.Nodes
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+<Page Id="encodingSettingsPage" Title="@Globalize["TitlePlayback"]" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["TranscodingLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    <MudText Typo="Typo.h1">@Globalize["Transcoding"]</MudText>
+
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <div class="jf-dashboard-field">
+                        @Choice("HardwareAccelerationType", "LabelHardwareAccelerationType", TranscodingLogic.AccelerationTypes)
+                        <div class="jf-dashboard-field-help">
+                            <MudLink Href="https://jellyfin.org/docs/general/administration/hardware-acceleration" Target="_blank" Typo="Typo.inherit">@Globalize["LabelHardwareAccelerationTypeHelp"]</MudLink>
+                        </div>
+                    </div>
+
+                    @if (Acceleration == "vaapi")
+                    {
+                        @Field("VaapiDevice", "LabelVaapiDevice", "LabelVaapiDeviceHelp")
+                    }
+
+                    @if (Acceleration == "qsv")
+                    {
+                        @Field("QsvDevice", "LabelQsvDevice", "LabelQsvDeviceHelp")
+                    }
+
+                    @if (Acceleration != "none")
+                    {
+                        <MudText Typo="Typo.h3">@Globalize["LabelEnableHardwareDecodingFor"]</MudText>
+                        <div class="jf-dashboard-check-group jf-dashboard-transcoding-codecs">
+                            @foreach (var codec in TranscodingLogic.CodecsFor(Acceleration))
+                            {
+                                var name = codec.Codec;
+                                <MudCheckBox @key="name" T="bool" Value="@Codecs.Contains(name)" ValueChanged="@(enabled => SetCodec(name, enabled))"
+                                             Color="Color.Primary" Label="@codec.Name" Class="@Css("codec-" + name)" />
+                            }
+
+                            @if (TranscodingLogic.SupportsHevcVp9TenBit(Acceleration))
+                            {
+                                @Box("EnableDecodingColorDepth10Hevc", "HEVC 10bit")
+                                @Box("EnableDecodingColorDepth10Vp9", "VP9 10bit")
+                            }
+
+                            @if (TranscodingLogic.SupportsHevcRext(Acceleration))
+                            {
+                                @Box("EnableDecodingColorDepth10HevcRext", "HEVC RExt 8/10bit")
+                                @Box("EnableDecodingColorDepth12HevcRext", "HEVC RExt 12bit")
+                            }
+                        </div>
+                    }
+
+                    @if (Acceleration == "nvenc")
+                    {
+                        @Check("EnableEnhancedNvdecDecoder", "EnableEnhancedNvdecDecoder", "EnableEnhancedNvdecDecoderHelp")
+                    }
+
+                    @if (Acceleration == "qsv")
+                    {
+                        @Check("PreferSystemNativeHwDecoder", "PreferSystemNativeHwDecoder")
+                    }
+
+                    @if (Acceleration != "none")
+                    {
+                        <div class="jf-dashboard-field">
+                            <MudText Typo="Typo.h3">@Globalize["LabelHardwareEncodingOptions"]</MudText>
+                            <div class="jf-dashboard-check-group">
+                                @Box("EnableHardwareEncoding", Globalize["EnableHardwareEncoding"])
+                                @if (TranscodingLogic.IsIntel(Acceleration))
+                                {
+                                    @Box("EnableIntelLowPowerH264HwEncoder", Globalize["EnableIntelLowPowerH264HwEncoder"])
+                                    @Box("EnableIntelLowPowerHevcHwEncoder", Globalize["EnableIntelLowPowerHevcHwEncoder"])
+                                    <div class="jf-dashboard-field-help">
+                                        <MudLink Href="https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/intel#configure-and-verify-lp-mode-on-linux" Target="_blank" Typo="Typo.inherit">@Globalize["IntelLowPowerEncHelp"]</MudLink>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <div class="jf-dashboard-field">
+                        <MudText Typo="Typo.h3">@Globalize["LabelEncodingFormatOptions"]</MudText>
+                        <div class="jf-dashboard-field-help">@Globalize["EncodingFormatHelp"]</div>
+                        <div class="jf-dashboard-check-group">
+                            @Box("AllowHevcEncoding", Globalize["AllowHevcEncoding"])
+                            @Box("AllowAv1Encoding", Globalize["AllowAv1Encoding"])
+                        </div>
+                    </div>
+
+                    @if (TranscodingLogic.IsIntel(Acceleration))
+                    {
+                        @Check("EnableVppTonemapping", "EnableVppTonemapping", "AllowVppTonemappingHelp")
+                        @Number("VppTonemappingBrightness", "LabelVppTonemappingBrightness", "LabelVppTonemappingBrightnessHelp", 0, 100, 0.00001)
+                        @Number("VppTonemappingContrast", "LabelVppTonemappingContrast", "LabelVppTonemappingContrastHelp", 1, 2, 0.00001)
+                    }
+
+                    @if (Acceleration == "videotoolbox")
+                    {
+                        @Check("EnableVideoToolboxTonemapping", "EnableVideoToolboxTonemapping", "AllowVideoToolboxTonemappingHelp")
+                    }
+
+                    @if (TranscodingLogic.ShowsTonemapping(Acceleration))
+                    {
+                        if (TranscodingLogic.IsHwaSelected(Acceleration))
+                        {
+                            @Check("EnableTonemapping", "EnableTonemapping", "AllowTonemappingHelp")
+                        }
+
+                        <div class="jf-dashboard-field">
+                            @Choice("TonemappingAlgorithm", "LabelTonemappingAlgorithm", TranscodingLogic.TonemappingAlgorithms)
+                            <div class="jf-dashboard-field-help">
+                                <MudLink Href="https://ffmpeg.org/ffmpeg-all.html#tonemap_005fopencl" Target="_blank" Typo="Typo.inherit">@Globalize["TonemappingAlgorithmHelp"]</MudLink>
+                            </div>
+                        </div>
+
+                        @if (TranscodingLogic.IsHwaSelected(Acceleration))
+                        {
+                            @Choice("TonemappingMode", "LabelTonemappingMode", TranscodingLogic.TonemappingModes, "TonemappingModeHelp")
+                        }
+
+                        @Choice("TonemappingRange", "LabelTonemappingRange", TranscodingLogic.TonemappingRanges, "TonemappingRangeHelp")
+                        @Number("TonemappingDesat", "LabelTonemappingDesat", "LabelTonemappingDesatHelp", 0, double.MaxValue, 0.00001)
+                        @Number("TonemappingPeak", "LabelTonemappingPeak", "LabelTonemappingPeakHelp", 0, double.MaxValue, 0.00001)
+                        @Number("TonemappingParam", "LabelTonemappingParam", "LabelTonemappingParamHelp", 0, double.MaxValue, 0.00001)
+                    }
+
+                    @Choice("EncodingThreadCount", "LabelTranscodingThreadCount", TranscodingLogic.ThreadCounts, "LabelTranscodingThreadCountHelp")
+
+                    <MudTextField T="string" Value="@_config.Shown("EncoderAppPathDisplay")" Variant="Variant.Filled" Disabled="true"
+                                  Label="@Globalize["LabelffmpegPath"]" HelperText="@Globalize["LabelffmpegPathHelp"]"
+                                  InputId="@Css("FFmpegPath")" />
+
+                    <MudTextField T="string" Value="@_config.Shown("TranscodingTempPath")" ValueChanged="@(value => SetText("TranscodingTempPath", value))"
+                                  Variant="Variant.Filled" Label="@Globalize["LabelTranscodePath"]" HelperText="@Globalize["LabelTranscodingTempPathHelp"]"
+                                  InputId="@Css("TranscodingTempPath")"
+                                  Adornment="Adornment.End" AdornmentIcon="@MdIcon.Of("search")" OnAdornmentClick="PickTranscodingPathAsync" />
+
+                    <div class="jf-dashboard-field">
+                        <MudTextField T="string" Value="@_config.Shown("FallbackFontPath")" ValueChanged="@(value => SetText("FallbackFontPath", value))"
+                                      Variant="Variant.Filled" Label="@Globalize["LabelFallbackFontPath"]" InputId="@Css("FallbackFontPath")"
+                                      Adornment="Adornment.End" AdornmentIcon="@MdIcon.Of("search")" OnAdornmentClick="PickFallbackFontPathAsync" />
+                        <div class="jf-dashboard-field-help">
+                            <MudLink Href="https://jellyfin.org/docs/general/administration/configuration#fonts" Target="_blank" Typo="Typo.inherit">@Globalize["LabelFallbackFontPathHelp"]</MudLink>
+                        </div>
+                    </div>
+
+                    @Check("EnableFallbackFont", "EnableFallbackFont", "EnableFallbackFontHelp")
+                    @Check("EnableAudioVbr", "LabelEnableAudioVbr", "LabelEnableAudioVbrHelp")
+                    @Number("DownMixAudioBoost", "LabelDownMixAudioScale", "LabelDownMixAudioScaleHelp", 0.5, 3, 0.1, required: true)
+                    @Choice("DownMixStereoAlgorithm", "LabelStereoDownmixAlgorithm", TranscodingLogic.DownMixAlgorithms, "StereoDownmixAlgorithmHelp")
+                    @Choice("HlsAudioSeekStrategy", "LabelHlsAudioSeekStrategy", TranscodingLogic.HlsAudioSeekStrategies, "HlsAudioSeekStrategy")
+                    @Field("MaxMuxingQueueSize", "LabelMaxMuxingQueueSize", "LabelMaxMuxingQueueSizeHelp")
+                    @Choice("EncoderPreset", "LabelEncoderPreset", TranscodingLogic.EncoderPresets, "EncoderPresetHelp")
+                    @Number("H265Crf", "LabelH265Crf", null, 0, 51, 1)
+                    @Number("H264Crf", "LabelH264Crf", "H264CrfHelp", 0, 51, 1)
+                    @Choice("DeinterlaceMethod", "LabelDeinterlaceMethod", TranscodingLogic.DeinterlaceMethods, "DeinterlaceMethodHelp")
+                    @Check("DeinterlaceDoubleRate", "UseDoubleRateDeinterlacing", "UseDoubleRateDeinterlacingHelp")
+                    @Check("EnableSubtitleExtraction", "AllowOnTheFlySubtitleExtraction", "AllowOnTheFlySubtitleExtractionHelp")
+                    @Check("EnableThrottling", "AllowFfmpegThrottling", "AllowFfmpegThrottlingHelp")
+                    @Check("EnableSegmentDeletion", "AllowSegmentDeletion", "AllowSegmentDeletionHelp")
+                    @Number("ThrottleDelaySeconds", "LabelThrottleDelaySeconds", "LabelThrottleDelaySecondsHelp", 10, 3600, 1)
+                    @Number("SegmentKeepSeconds", "LabelSegmentKeepSeconds", "LabelSegmentKeepSecondsHelp", 10, 3600, 1)
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private const string ConfigKey = "encoding";
+
+    // The number fields of the page. What a field shows is kept beside the configuration, so that
+    // an emptied field stays empty while its setting keeps the value it had.
+    private static readonly string[] NumberNames =
+    [
+        "VppTonemappingBrightness", "VppTonemappingContrast", "TonemappingDesat", "TonemappingPeak", "TonemappingParam",
+        "DownMixAudioBoost", "H265Crf", "H264Crf", "ThrottleDelaySeconds", "SegmentKeepSeconds",
+    ];
+
+    private readonly Dictionary<string, double?> _numbers = [];
+    private JsonObject _config = new();
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+
+    /// <summary>The acceleration type the dependent fields follow.</summary>
+    private string Acceleration => TranscodingLogic.AccelerationOf(_config.Text("HardwareAccelerationType"));
+
+    private List<string> Codecs => _config.Texts("HardwareDecodingCodecs");
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _config = await NamedConfiguration.GetAsync(Api, ConfigKey);
+            foreach (var name in NumberNames)
+            {
+                _numbers[name] = _config.Number(name);
+            }
+
+            // The original shows no parameter rather than zero.
+            if (_numbers["TonemappingParam"] is 0)
+            {
+                _numbers["TonemappingParam"] = null;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Transcoding] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    /// <summary>The class and input id of a setting's field.</summary>
+    private static string Css(string name) => "jf-dashboard-transcoding-" + name.ToLowerInvariant();
+
+    private static Dictionary<string, object?> Attributes(bool required) =>
+        required ? new() { ["required"] = true } : [];
+
+    // A list of choices.
+    private RenderFragment Choice(string name, string labelKey, IReadOnlyList<TranscodingChoice> choices, string? helpKey = null) =>
+        @<MudSelect T="string" Value="@_config.Shown(name)" ValueChanged="@(value => SetChoice(name, value))" Variant="Variant.Filled"
+                    Label="@Globalize[labelKey]" HelperText="@(helpKey is null ? null : Globalize[helpKey])"
+                    InputId="@Css(name)" Class="@Css(name)">
+            @foreach (var choice in choices)
+            {
+                <MudSelectItem T="string" Value="@choice.Value">@(choice.Key is null ? choice.Text : Globalize[choice.Key])</MudSelectItem>
+            }
+        </MudSelect>;
+
+    // A text field.
+    private RenderFragment Field(string name, string labelKey, string helpKey) =>
+        @<MudTextField T="string" Value="@_config.Shown(name)" ValueChanged="@(value => SetText(name, value))" Variant="Variant.Filled"
+                       Label="@Globalize[labelKey]" HelperText="@Globalize[helpKey]" InputId="@Css(name)" />;
+
+    // A number field.
+    private RenderFragment Number(string name, string labelKey, string? helpKey, double min, double max, double step, bool required = false) =>
+        @<MudNumericField T="double?" Value="@_numbers.GetValueOrDefault(name)" ValueChanged="@(value => SetNumber(name, value))"
+                          Variant="Variant.Filled" Min="@min" Max="@max" Step="@step" UserAttributes="@Attributes(required)"
+                          Label="@Globalize[labelKey]" HelperText="@(helpKey is null ? null : Globalize[helpKey])" InputId="@Css(name)" />;
+
+    // A checkbox with its help text.
+    private RenderFragment Check(string name, string labelKey, string? helpKey = null) =>
+        @<DashboardLibraryCheckField Value="@_config.Flag(name)" ValueChanged="@(value => SetFlag(name, value))" Class="@Css(name)"
+                                     Label="@Globalize[labelKey]" Help="@(helpKey is null ? null : Globalize[helpKey])" />;
+
+    // A checkbox of a group.
+    private RenderFragment Box(string name, string label) =>
+        @<MudCheckBox T="bool" Value="@_config.Flag(name)" ValueChanged="@(value => SetFlag(name, value))" Color="Color.Primary"
+                      Label="@label" Class="@Css(name)" />;
+
+    private void SetText(string name, string? value)
+    {
+        // The queue size is a number the original edits in a text field.
+        if (name == "MaxMuxingQueueSize" && int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var size))
+        {
+            _config[name] = size;
+            return;
+        }
+
+        _config[name] = value ?? string.Empty;
+    }
+
+    private void SetChoice(string name, string? value)
+    {
+        // The thread count is the one list of numbers.
+        if (name == "EncodingThreadCount" && int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count))
+        {
+            _config[name] = count;
+            return;
+        }
+
+        _config[name] = value ?? string.Empty;
+    }
+
+    private void SetFlag(string name, bool value) => _config[name] = value;
+
+    private void SetNumber(string name, double? value)
+    {
+        _numbers[name] = value;
+        // An emptied field leaves the setting as it is; no tone mapping parameter is zero.
+        var number = value ?? (name == "TonemappingParam" ? 0 : null);
+        if (number is not { } stored)
+        {
+            return;
+        }
+
+        // A whole number is stored as one: the quality and delay settings take no fraction.
+        if (Math.Abs(stored - Math.Round(stored)) < double.Epsilon && Math.Abs(stored) <= int.MaxValue)
+        {
+            _config[name] = (int)stored;
+        }
+        else
+        {
+            _config[name] = stored;
+        }
+    }
+
+    // Port of onCodecChange: only a codec list the server sent is edited.
+    private void SetCodec(string codec, bool enabled)
+    {
+        if (_config.HasList("HardwareDecodingCodecs"))
+        {
+            _config.SetTexts("HardwareDecodingCodecs", TranscodingLogic.ToggleCodec(Codecs, codec, enabled));
+        }
+    }
+
+    private async Task PickTranscodingPathAsync()
+    {
+        var path = await DirectoryBrowser.ShowAsync(
+            Dialogs,
+            header: Globalize["HeaderSelectTranscodingPath"],
+            instruction: Globalize["HeaderSelectTranscodingPathHelp"],
+            validateWriteable: true);
+        if (!string.IsNullOrEmpty(path))
+        {
+            _config["TranscodingTempPath"] = path;
+        }
+    }
+
+    private async Task PickFallbackFontPathAsync()
+    {
+        var path = await DirectoryBrowser.ShowAsync(
+            Dialogs,
+            header: Globalize["HeaderSelectFallbackFontPath"],
+            instruction: Globalize["HeaderSelectFallbackFontPathHelp"]);
+        if (!string.IsNullOrEmpty(path))
+        {
+            _config["FallbackFontPath"] = path;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        // The original opens this note with the submit; it does not wait for it to be closed.
+        _ = Dialogs.MuiAlertAsync(Globalize["TitleHardwareAcceleration"], Globalize["HardwareAccelerationWarning"]);
+
+        _saving = true;
+        _saved = false;
+        try
+        {
+            await NamedConfiguration.SaveAsync(Api, ConfigKey, _config);
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Transcoding] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

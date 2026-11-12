@@ -1,0 +1,124 @@
+@* The NFO metadata settings. Port of apps/dashboard/routes/libraries/nfo.tsx. *@
+@namespace Jellyfin.Web.Pages.Dashboard
+@attribute [Route("/dashboard/libraries/nfo")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@using System.Text.Json.Nodes
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+<Page Id="metadataNfoPage" Title="@Globalize["TabNfoSettings"]" Class="type-interior mainAnimatedPage">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["MetadataNfoLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <MudText Typo="Typo.h1">@Globalize["TabNfoSettings"]</MudText>
+                    <MudText>@Globalize["HeaderKodiMetadataHelp"]</MudText>
+
+                    <MudSelect T="string" @bind-Value="_userId" Variant="Variant.Filled" Label="@Globalize["LabelKodiMetadataUser"]"
+                               HelperText="@Globalize["LabelKodiMetadataUserHelp"]" InputId="jf-dashboard-nfo-user" Class="jf-dashboard-nfo-user">
+                        <MudSelectItem T="string" Value="@string.Empty">@Globalize["None"]</MudSelectItem>
+                        @foreach (var user in _users)
+                        {
+                            <MudSelectItem T="string" Value="@UserPages.IdText(user.Id)">@user.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <DashboardLibraryCheckField @bind-Value="_saveImagePaths" Class="jf-dashboard-nfo-imagepaths"
+                                                Label="@Globalize["LabelKodiMetadataSaveImagePaths"]" Help="@Globalize["LabelKodiMetadataSaveImagePathsHelp"]" />
+
+                    <DashboardLibraryCheckField @bind-Value="_pathSubstitution" Class="jf-dashboard-nfo-substitution"
+                                                Label="@Globalize["LabelKodiMetadataEnablePathSubstitution"]" Help="@Globalize["LabelKodiMetadataEnablePathSubstitutionHelp"]" />
+
+                    <DashboardLibraryCheckField @bind-Value="_extraThumbs" Class="jf-dashboard-nfo-extrathumbs"
+                                                Label="@Globalize["LabelKodiMetadataEnableExtraThumbs"]" Help="@Globalize["LabelKodiMetadataEnableExtraThumbsHelp"]" />
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private const string ConfigKey = "xbmcmetadata";
+
+    private List<UserDto> _users = [];
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+    private string _userId = string.Empty;
+    private bool _saveImagePaths;
+    private bool _pathSubstitution;
+    private bool _extraThumbs;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var users = Api.Client.Users.GetAsync();
+            var configuration = await NamedConfiguration.GetAsync(Api, ConfigKey);
+            _users = await users ?? [];
+
+            _userId = configuration.Text("UserId") ?? string.Empty;
+            _saveImagePaths = configuration.Flag("SaveImagePathsInNfo");
+            _pathSubstitution = configuration.Flag("EnablePathSubstitution");
+            _extraThumbs = configuration.Flag("EnableExtraThumbsDuplication");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LibraryNfo] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        // The original opens this note with the submit; it does not wait for it to be closed.
+        _ = Dialogs.MuiAlertAsync(null, Globalize["MetadataSettingChangeHelp"]);
+
+        _saving = true;
+        _saved = false;
+        try
+        {
+            // The original sends these five values, not the configuration it loaded.
+            await NamedConfiguration.SaveAsync(Api, ConfigKey, new JsonObject
+            {
+                ["UserId"] = _userId ?? string.Empty,
+                ["ReleaseDateFormat"] = "yyyy-MM-dd",
+                ["SaveImagePathsInNfo"] = _saveImagePaths,
+                ["EnablePathSubstitution"] = _pathSubstitution,
+                ["EnableExtraThumbsDuplication"] = _extraThumbs,
+            });
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[LibraryNfo] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}
