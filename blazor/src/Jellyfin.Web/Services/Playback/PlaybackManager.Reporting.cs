@@ -120,6 +120,11 @@ public sealed partial class PlaybackManager
     /// <summary>Port of getPlayerState().</summary>
     public PlayerState GetPlayerState(IMediaPlayer player, BaseItemDto? item = null, MediaSourceInfo? mediaSource = null)
     {
+        if (player is IRemotePlayer remote)
+        {
+            return remote.GetPlayerState();
+        }
+
         var data = Data(player);
         var streamInfo = data.StreamInfo;
         item ??= streamInfo?.Item;
@@ -159,6 +164,17 @@ public sealed partial class PlaybackManager
     /// </summary>
     internal void OnPlayerEvent(IMediaPlayer player, PlayerEvent playerEvent)
     {
+        if (player is IRemotePlayer)
+        {
+            // The target reports its own playback; its events only refresh what is shown here.
+            if (ReferenceEquals(CurrentPlayer, player))
+            {
+                Raise(playerEvent.Name);
+            }
+
+            return;
+        }
+
         switch (playerEvent.Name)
         {
             case "error":

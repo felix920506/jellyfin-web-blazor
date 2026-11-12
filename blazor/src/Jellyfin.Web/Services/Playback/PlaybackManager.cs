@@ -31,13 +31,15 @@ public sealed class PlayerData
 public sealed record PlaybackStoppedInfo(IMediaPlayer Player, PlayerState State, BaseItemDto? NextItem, string? NextMediaType);
 
 /// <summary>
-/// The playback manager. Port of components/playback/playbackmanager.js for the local players:
-/// item translation, the play queue, PlaybackInfo negotiation, stream changes, progress reporting.
+/// The playback manager. Port of components/playback/playbackmanager.js: item translation, the
+/// play queue, PlaybackInfo negotiation, stream changes and progress reporting for the local
+/// players; requests for a remote target (<see cref="IRemotePlayer"/>) are handed to its player.
 /// </summary>
 /// <remarks>
 /// Split over partial classes: this file (state, players, events), <c>.Items</c> (what to play),
-/// <c>.Streams</c> (how to play it), <c>.Reporting</c> (telling the server) and <c>.Controls</c>
-/// (transport, tracks, queue). See docs/blazor-port/06-playback-port.md.
+/// <c>.Streams</c> (how to play it), <c>.Reporting</c> (telling the server), <c>.Controls</c>
+/// (transport, tracks, queue) and <c>.Remote</c> (play targets). See
+/// docs/blazor-port/06-playback-port.md and 15-playback-extras.md.
 /// </remarks>
 [AppService(typeof(IPlaybackManager))]
 public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
@@ -112,7 +114,7 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
 
     public StreamInfo? CurrentStreamInfo => CurrentPlayer is { } player ? Data(player).StreamInfo : null;
 
-    public BaseItemDto? CurrentItem => CurrentStreamInfo?.Item;
+    public BaseItemDto? CurrentItem => Remote is { } remote ? remote.NowPlayingItem : CurrentStreamInfo?.Item;
 
     public MediaSourceInfo? CurrentMediaSource => CurrentStreamInfo?.MediaSource;
 
@@ -120,7 +122,7 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
 
     public string? PlaySessionId => CurrentStreamInfo?.PlaySessionId;
 
-    public bool IsPlaying => CurrentPlayer?.CurrentSrc is not null;
+    public bool IsPlaying => Remote is { } remote ? remote.IsPlaying() : CurrentPlayer?.CurrentSrc is not null;
 
     public bool IsPlayingVideo => IsPlayingMediaType("Video");
 
@@ -145,21 +147,17 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
         _players.Add(player);
         _playerData[player] = new PlayerData();
         player.Event += OnPlayerEvent;
+        (player as IRemotePlayer)?.Attach(this);
     }
 
-    /// <summary>Port of setCurrentPlayerInternal(): raises "playerchange" when the player changes.</summary>
-    public void SetCurrentPlayer(IMediaPlayer? player)
-    {
-        if (ReferenceEquals(CurrentPlayer, player))
-        {
-            return;
-        }
+    /// <summary>
+    /// Makes a local player the current one (or none): raises "playerchange" when the player
+    /// changes. Remote targets are chosen with <see cref="TrySetActivePlayerAsync"/>.
+    /// </summary>
+    public void SetCurrentPlayer(IMediaPlayer? player) => SetCurrentPlayerInternal(player, null);
 
-        CurrentPlayer = player;
-        Raise(PlaybackEvents.PlayerChange);
-    }
-
-    public bool IsPlayingMediaType(string mediaType) => IsPlaying && CurrentStreamInfo?.MediaType == mediaType;
+    public bool IsPlayingMediaType(string mediaType) =>
+        Remote is { } remote ? remote.IsPlaying(mediaType) : IsPlaying && CurrentStreamInfo?.MediaType == mediaType;
 
     /// <summary>The play options stored with a queue item, or the defaults.</summary>
     public ItemPlayOptions GetItemPlayOptions(BaseItemDto item) =>
@@ -255,6 +253,9 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
     private async Task OnLocalUserSignedOutAsync()
     {
         // Signing out ends playback: stop, report and forget the queue and the connection data.
+        // A remote target keeps playing; only the connection to it ends. (The target to return
+        // to after signing in is kept, as in the original.)
+        SetDefaultPlayerActive();
         try
         {
             if (CurrentPlayer is not null && IsPlaying)

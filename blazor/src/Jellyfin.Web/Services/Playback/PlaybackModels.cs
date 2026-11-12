@@ -47,6 +47,9 @@ public static class PlaybackEvents
     public const string PlaybackRateChange = "playbackratechange";
     public const string Click = "click";
     public const string DblClick = "dblclick";
+
+    /// <summary>Raised by a remote player when its state changed in a way the other events do not cover.</summary>
+    public const string StateChange = "statechange";
 }
 
 /// <summary>

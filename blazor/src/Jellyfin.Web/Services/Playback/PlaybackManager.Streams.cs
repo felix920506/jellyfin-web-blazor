@@ -667,7 +667,7 @@ public sealed partial class PlaybackManager
     /// <summary>Port of cancelPlayback().</summary>
     private void CancelPlayback()
     {
-        if (CurrentPlayer is { } player)
+        if (CurrentPlayer is { IsLocalPlayer: true } player)
         {
             StopProgressTimer();
             Data(player).StreamInfo = null;

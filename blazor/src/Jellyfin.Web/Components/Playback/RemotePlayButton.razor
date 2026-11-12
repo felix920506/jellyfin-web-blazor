@@ -1,0 +1,181 @@
+@namespace Jellyfin.Web.Components
+@*
+    The "cast" button of the app bar and its menus. Port of
+    apps/modern/components/AppToolbar/RemotePlayButton.tsx with its menus RemotePlayMenu.tsx (the
+    play targets) and RemotePlayActiveMenu.tsx (shown while a remote target is active).
+    The Google Cast entry is the "unsupported" one: the Chromecast player is not ported.
+*@
+@attribute [ShellSlot(ShellSlot.Toolbar, 10)]
+@implements IDisposable
+@inject PlaybackManager Playback
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject Globalize Globalize
+
+@if (Api.IsLoggedIn)
+{
+    var info = Playback.GetPlayerInfo();
+    if (info is { IsLocalPlayer: false })
+    {
+        var playerName = info.DeviceName is { Length: > 0 } deviceName ? deviceName : info.Name;
+        <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" Class="jf-remote-play" ListClass="jf-remote-play-active-menu">
+            <ActivatorContent Context="menu">
+                <MudTooltip Text="@Globalize["ButtonCast"]">
+                    <MudButton Variant="Variant.Text" Size="Size.Large" Color="Color.Primary" StartIcon="@MdIcon.Of("cast_connected")"
+                               Class="jf-remote-play-button jf-remote-play-button-active" aria-label="@Globalize["ButtonCast"]" aria-haspopup="true"
+                               OnClick="@(e => OpenActiveMenuAsync(menu, e))">@playerName</MudButton>
+                </MudTooltip>
+            </ActivatorContent>
+            <ChildContent>
+                <div class="jf-menu-subheader">@playerName</div>
+                @if (info.SupportedCommands.Contains("DisplayContent"))
+                {
+                    <MudMenuItem AutoClose="false" Class="jf-remote-play-mirror" OnClick="ToggleDisplayMirror">
+                        <span class="jf-menu-row">
+                            <span class="jf-menu-check material-icons @(_displayMirror ? "check" : null)" aria-hidden="true"></span>
+                            <span class="jf-menu-text">@Globalize["EnableDisplayMirroring"]</span>
+                        </span>
+                    </MudMenuItem>
+                }
+                <MudMenuItem AutoClose="false" Class="jf-remote-play-autocast" OnClick="ToggleAutoCast">
+                    <span class="jf-menu-row">
+                        <span class="jf-menu-check material-icons @(_autoCast ? "check" : null)" aria-hidden="true"></span>
+                        <span class="jf-menu-text">@Globalize["EnableAutoCast"]</span>
+                    </span>
+                </MudMenuItem>
+                <MudDivider />
+                <MudMenuItem Href="#/queue" Icon="@MdIcon.Of("settings_remote")" Label="@Globalize["HeaderRemoteControl"]" Class="jf-remote-play-control" />
+                <MudDivider />
+                <MudMenuItem Icon="@MdIcon.Of("close")" Label="@Globalize["Disconnect"]" Class="jf-remote-play-disconnect" OnClick="() => DisconnectAsync(playerName)" />
+            </ChildContent>
+        </MudMenu>
+    }
+    else
+    {
+        <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true" Class="jf-remote-play" ListClass="jf-remote-play-menu">
+            <ActivatorContent Context="menu">
+                <MudTooltip Text="@Globalize["ButtonCast"]">
+                    <MudIconButton Icon="@MdIcon.Of("cast")" Color="Color.Inherit" Size="Size.Large" Class="jf-remote-play-button"
+                                   aria-label="@Globalize["ButtonCast"]" aria-haspopup="true" OnClick="@(e => OpenTargetMenuAsync(menu, e))" />
+                </MudTooltip>
+            </ActivatorContent>
+            <ChildContent>
+                @* The Chromecast player is not ported, so this is the original's menu without that plugin. *@
+                <MudMenuItem Disabled="true" Icon="@MdIcon.Of("warning")" Label="@Globalize["GoogleCastUnsupported"]" Class="jf-remote-play-nocast" />
+                @if (_targets.Count > 0)
+                {
+                    <MudDivider />
+                }
+                @foreach (var target in _targets)
+                {
+                    var current = target;
+                    <MudMenuItem @key="current.Id" Icon="@MdIcon.Of(TargetIcon(current))" Class="jf-remote-play-target" data-id="@current.Id"
+                                 OnClick="() => SelectTargetAsync(current)">
+                        <span class="jf-menu-lines">
+                            <span class="jf-menu-primary">@(current.AppName is { Length: > 0 } appName ? $"{current.Name} - {appName}" : current.Name)</span>
+                            @if (current.UserName is { Length: > 0 } userName)
+                            {
+                                <span class="jf-menu-secondary">@userName</span>
+                            }
+                        </span>
+                    </MudMenuItem>
+                }
+            </ChildContent>
+        </MudMenu>
+    }
+}
+
+@code {
+    private IReadOnlyList<PlayTarget> _targets = [];
+    private bool _displayMirror;
+    private bool _autoCast;
+
+    protected override void OnInitialized()
+    {
+        Playback.Event += OnPlaybackEvent;
+        Api.Changed += Refresh;
+        Globalize.LanguageChanged += Refresh;
+    }
+
+    public void Dispose()
+    {
+        Playback.Event -= OnPlaybackEvent;
+        Api.Changed -= Refresh;
+        Globalize.LanguageChanged -= Refresh;
+    }
+
+    /// <summary>Port of PlayTargetIcon.tsx.</summary>
+    internal static string TargetIcon(PlayTarget target) => target.DeviceType switch
+    {
+        "smartphone" => "smartphone",
+        "tablet" => "tablet",
+        "desktop" => "computer",
+        "cast" => "cast",
+        "tv" => "tv",
+        _ => "devices",
+    };
+
+    private void OnPlaybackEvent(string name)
+    {
+        if (name == PlaybackEvents.PlayerChange)
+        {
+            Refresh();
+        }
+    }
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    // The targets are loaded each time the menu opens, as in the original.
+    private async Task OpenTargetMenuAsync(MenuContext menu, MouseEventArgs e)
+    {
+        await menu.ToggleAsync(e);
+        _targets = await Playback.GetTargetsAsync();
+    }
+
+    private Task OpenActiveMenuAsync(MenuContext menu, MouseEventArgs e)
+    {
+        _displayMirror = Playback.EnableDisplayMirroring;
+        _autoCast = Playback.IsAutoCastEnabled;
+        return menu.ToggleAsync(e);
+    }
+
+    private Task SelectTargetAsync(PlayTarget target) => Playback.TrySetActivePlayerAsync(target.PlayerName, target);
+
+    private void ToggleDisplayMirror()
+    {
+        _displayMirror = !_displayMirror;
+        Playback.EnableDisplayMirroring = _displayMirror;
+    }
+
+    private void ToggleAutoCast()
+    {
+        _autoCast = !_autoCast;
+        Playback.SetAutoCast(_autoCast);
+    }
+
+    private async Task DisconnectAsync(string playerName)
+    {
+        if (Playback.GetSupportedCommands().Contains("EndSession"))
+        {
+            var answer = await Dialogs.ShowAsync<MessageDialog>(
+                new Dictionary<string, object?>
+                {
+                    ["Text"] = Globalize.Translate("ConfirmEndPlayerSession", playerName),
+                    ["Buttons"] = new[] { new DialogButton("yes", Globalize["Yes"], "submit"), new DialogButton("no", Globalize["No"], "cancel") },
+                },
+                new AppDialogOptions { Size = null }) as string;
+            if (answer is null)
+            {
+                // Closed without an answer: the target stays.
+                return;
+            }
+
+            if (answer == "yes")
+            {
+                await Playback.EndSessionAsync();
+            }
+        }
+
+        Playback.SetDefaultPlayerActive();
+    }
+}

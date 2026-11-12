@@ -6,14 +6,16 @@
    - the playlist is reordered with an "Up" and a "Down" button per entry instead of by dragging;
    - the context menu offers the two entries the page adds to the item menu (stop playback, clear
      queue); the item menu itself belongs to the shared item components.
-   PORT-TODO(playback): the remote control sections (navigation, send message, type text), saving the
-   queue as a playlist, the lyrics page, the page backdrop and the played/favourite buttons of the
-   playlist entries are not ported. *@
+   With a remote play target (see RemotePlayButton) the same page is the remote control: the state
+   and the queue are those of the target, and the navigation, message and text sections appear.
+   PORT-TODO(playback): saving the queue as a playlist, the page backdrop and the played/favourite
+   buttons of the playlist entries are not ported. *@
 @attribute [Route("/queue")]
 @attribute [Access(AccessLevel.User)]
 @using System.Globalization
 @implements IDisposable
 @inject PlaybackManager Playback
+@inject ToastService Toasts
 @inject PlaybackText Text
 @inject Globalize Globalize
 @inject AppRouter Router
@@ -48,6 +50,11 @@
     var isAudioItem = item is not null && (type is "AudioBook" or "Audio" || item.MediaStreams is { Count: > 0 } streams && streams[0].Type.ToApiString() == "Audio");
     var title = item is null ? string.Empty : string.Join(" - ", PlaybackText.ItemTextLines(item));
     var imageUrl = item is null ? null : Text.ImageUrl(item, maxHeight: 300);
+    var remoteTarget = Playback.GetPlayerInfo() is { IsLocalPlayer: false };
+    var showSendMessage = remoteTarget && commands.Contains("DisplayMessage");
+    var showSendText = remoteTarget && commands.Contains("SendString");
+    var showNavigation = remoteTarget && commands.Contains("Select");
+    var repeatDisabled = !commands.Contains("SetRepeatMode");
 
     RenderFragment volumeControl =
         @<div class="volumecontrol flex align-items-center flex-wrap-wrap justify-content-center @(!showMute && !showVolume || (mobile && _playlistOpen) ? "hide" : null)">
@@ -144,7 +151,7 @@
                 <div class="nowPlayingButtonsContainer focuscontainer-x justify-content-space-between">
                     <div class="nowPlayingInfoButtons" dir="ltr">
                         <button type="button" class="btnCommand btnRepeat repeatToggleButton autoSize paper-icon-button-light @(repeatMode == PlayQueue.RepeatNone ? null : "buttonActive") @(showRepeat ? null : "hide")"
-                                title="@Globalize["Repeat"]" @onclick="ToggleRepeat">
+                                title="@Globalize["Repeat"]" data-command="SetRepeatMode" disabled="@repeatDisabled" @onclick="ToggleRepeat">
                             <span class="material-icons @(repeatMode == PlayQueue.RepeatOne ? "repeat_one" : "repeat")" aria-hidden="true"></span>
                         </button>
                         <button type="button" class="btnRewind btnNowPlayingRewind btnPlayStateCommand autoSize paper-icon-button-light @(showSkip ? null : "hide")"
@@ -202,7 +209,7 @@
                             <span class="material-icons shuffle" aria-hidden="true"></span>
                         </button>
                         <button type="button" class="btnCommand btnRepeat repeatToggleButton autoSize paper-icon-button-light @(repeatMode == PlayQueue.RepeatNone ? null : "buttonActive") @(showSecondaryToggles ? null : "hide")"
-                                title="@Globalize["Repeat"]" @onclick="ToggleRepeat">
+                                title="@Globalize["Repeat"]" data-command="SetRepeatMode" disabled="@repeatDisabled" @onclick="ToggleRepeat">
                             <span class="material-icons @(repeatMode == PlayQueue.RepeatOne ? "repeat_one" : "repeat")" aria-hidden="true"></span>
                         </button>
                         @if (!mobile)
@@ -214,8 +221,61 @@
             </div>
         </div>
 
-        @* PORT-TODO(playback): the remote control sections (navigation buttons, send message, type
-           text) belong to the remote control workstream and are not rendered. *@
+        @* What only a remote target has: its page can be navigated, and it can show a message or
+           take text for its focused input. *@
+        <div class="remoteControlSection @(showNavigation || showSendMessage || showSendText ? null : "hide")">
+            <div class="navigationSection @(showNavigation ? null : "hide")">
+                <EmbyCollapse Title="@Globalize["HeaderNavigation"]">
+                    <div>
+                        @CommandButton("btnArrowUp", "button-submit", "Up", "MoveUp", "keyboard_arrow_up", commands)
+                    </div>
+                    <br />
+                    <div>
+                        @CommandButton("btnArrowLeft", "button-submit", "ButtonArrowLeft", "MoveLeft", "keyboard_arrow_left", commands)
+                        @CommandButton("btnOk", "button-submit", "ButtonOk", "Select", "keyboard_return", commands)
+                        @CommandButton("btnArrowRight", "button-submit", "ButtonArrowRight", "MoveRight", "keyboard_arrow_right", commands)
+                    </div>
+                    <br />
+                    <div>
+                        @CommandButton("btnBack", null, "ButtonBack", "Back", "arrow_back", commands)
+                        @CommandButton("btnArrowDown", "button-submit", "Down", "MoveDown", "keyboard_arrow_down", commands)
+                        @CommandButton("btnContextMenu", null, "ButtonInfo", "ToggleContextMenu", "menu", commands)
+                    </div>
+                    <br />
+                    <div>
+                        @CommandButton("btnGoHome", null, "Home", "GoHome", "home", commands)
+                        @CommandButton("btnShowSearch", null, "Search", "GoToSearch", "search", commands)
+                        @CommandButton("bthShowSettings", null, "Settings", "GoToSettings", "settings", commands)
+                    </div>
+                </EmbyCollapse>
+            </div>
+            <div class="sendMessageSection @(showSendMessage ? null : "hide")">
+                <EmbyCollapse Title="@Globalize["HeaderSendMessage"]">
+                    <div style="text-align: left;">
+                        <form class="sendMessageForm" @onsubmit="SendMessageAsync" @onsubmit:preventDefault="true">
+                            <EmbyInput Id="txtMessageTitle" Class="sendMessageElement" Label="@Globalize["LabelMessageTitle"]" Required="true" @bind-Value="_messageTitle" />
+                            <br />
+                            <EmbyInput Id="txtMessageText" Class="sendMessageElement" Label="@Globalize["LabelMessageText"]" Required="true" @bind-Value="_messageText" />
+                            <p>
+                                <EmbyButton Type="submit" Class="sendMessageElement button-submit block raised">@Globalize["ButtonSend"]</EmbyButton>
+                            </p>
+                        </form>
+                    </div>
+                </EmbyCollapse>
+            </div>
+            <div class="sendTextSection @(showSendText ? null : "hide")">
+                <EmbyCollapse Title="@Globalize["HeaderTypeText"]">
+                    <div style="text-align: left;">
+                        <form class="typeTextForm" @onsubmit="SendTextAsync" @onsubmit:preventDefault="true">
+                            <EmbyInput Id="txtTypeText" Class="typeTextElement" Label="@Globalize["LabelTypeText"]" Required="true" @bind-Value="_typeText" />
+                            <p>
+                                <EmbyButton Type="submit" Class="typeTextElement button-submit block raised">@Globalize["ButtonSend"]</EmbyButton>
+                            </p>
+                        </form>
+                    </div>
+                </EmbyCollapse>
+            </div>
+        </div>
 
         <div class="playlistSection">
             <div class="@PlaylistButtonsClass(mobile)">
@@ -298,6 +358,9 @@
 
     private bool _playlistOpen;
     private long _lastTimeUpdate;
+    private string? _messageTitle;
+    private string? _messageText;
+    private string? _typeText;
 
     private long? RuntimeTicks => Playback.DurationTicks is { } duration && duration > 0 ? duration : null;
 
@@ -374,7 +437,38 @@
             _lastTimeUpdate = now;
         }
 
+        // A remote target reports the end of its playback with this event alone; the page closes
+        // as it does for local playback (see OnPlaybackStopped).
+        if (name == PlaybackEvents.PlaybackStop && Playback.CurrentPlayer is IRemotePlayer)
+        {
+            _ = InvokeAsync(Router.Back);
+            return;
+        }
+
         Refresh();
+    }
+
+    /// <summary>A button of the navigation section: enabled when the target supports its command.</summary>
+    private RenderFragment CommandButton(string name, string? variant, string titleKey, string command, string icon, IReadOnlyList<string> commands) =>
+        @<button type="button" class="@name btnCommand autoSize @variant paper-icon-button-light" title="@Globalize[titleKey]" data-command="@command"
+                 disabled="@(!commands.Contains(command))" @onclick="() => Playback.SendCommandAsync(command)">
+            <span class="material-icons @icon" aria-hidden="true"></span>
+        </button>;
+
+    /// <summary>Port of onMessageSubmit(): the target shows the message; the title is cleared, the text stays.</summary>
+    private async Task SendMessageAsync()
+    {
+        await Playback.SendCommandAsync("DisplayMessage", CommandArguments.Of(("Header", _messageTitle ?? string.Empty), ("Text", _messageText ?? string.Empty)));
+        _messageTitle = string.Empty;
+        Toasts.Show(Globalize["MessageSent"]);
+    }
+
+    /// <summary>Port of onSendStringSubmit(): the text goes into the input that has the focus on the target.</summary>
+    private async Task SendTextAsync()
+    {
+        await Playback.SendCommandAsync("SendString", CommandArguments.Of(("String", _typeText ?? string.Empty)));
+        _typeText = string.Empty;
+        Toasts.Show(Globalize["TextSent"]);
     }
 
     /// <summary>Port of onPlaybackStopped(): the page closes when nothing follows.</summary>

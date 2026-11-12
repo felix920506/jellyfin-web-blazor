@@ -192,7 +192,8 @@
             return false;
         }
 
-        if (Playback.LastStartState is { IsFullscreen: false })
+        // What a remote target plays is always shown; the rule is about what started here.
+        if (player.IsLocalPlayer && Playback.LastStartState is { IsFullscreen: false })
         {
             return false;
         }

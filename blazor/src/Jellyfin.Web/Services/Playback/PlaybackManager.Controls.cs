@@ -34,35 +34,56 @@ public sealed partial class PlaybackManager
 
     public string AspectRatio => CurrentPlayer?.AspectRatio ?? "auto";
 
-    public string RepeatMode => _playQueue.RepeatMode;
+    public string RepeatMode => Remote is { } remote ? remote.RepeatMode : _playQueue.RepeatMode;
 
-    public string ShuffleMode => _playQueue.ShuffleMode;
+    public string ShuffleMode => Remote is { } remote ? remote.ShuffleMode : _playQueue.ShuffleMode;
 
-    public int? AudioStreamIndex => CurrentPlayer is { } player ? Data(player).AudioStreamIndex : null;
+    public int? AudioStreamIndex => CurrentPlayer switch
+    {
+        IRemotePlayer remote => remote.AudioStreamIndex,
+        { } player => Data(player).AudioStreamIndex,
+        _ => null,
+    };
 
-    public int? SubtitleStreamIndex => CurrentPlayer is { } player ? Data(player).SubtitleStreamIndex : null;
+    public int? SubtitleStreamIndex => CurrentPlayer switch
+    {
+        IRemotePlayer remote => remote.SubtitleStreamIndex,
+        { } player => Data(player).SubtitleStreamIndex,
+        _ => null,
+    };
 
     public bool IsFullscreen => CurrentPlayer?.IsFullscreen == true;
 
     public bool IsPictureInPictureEnabled => CurrentPlayer?.IsPictureInPictureEnabled == true;
 
-    public string? CurrentPlaylistItemId => _playQueue.CurrentPlaylistItemId;
+    public string? CurrentPlaylistItemId => Remote is { } remote ? remote.CurrentPlaylistItemId : _playQueue.CurrentPlaylistItemId;
 
-    public int CurrentPlaylistIndex => _playQueue.GetCurrentPlaylistIndex();
+    public int CurrentPlaylistIndex => Remote is { } remote ? RemotePlaylistIndex(remote) : _playQueue.GetCurrentPlaylistIndex();
 
     /// <summary>Whether the current stream can be positioned.</summary>
-    public bool CanSeek() => CurrentPlayer is { } player && ((CurrentMediaSource?.RunTimeTicks ?? 0) > 0 || CanSeek(player));
+    public bool CanSeek() => CurrentPlayer switch
+    {
+        IRemotePlayer remote => remote.Seekable == true,
+        { } player => (CurrentMediaSource?.RunTimeTicks ?? 0) > 0 || CanSeek(player),
+        _ => false,
+    };
 
-    public IReadOnlyList<BaseItemDto> GetPlaylist() => _playQueue.GetPlaylist();
+    public IReadOnlyList<BaseItemDto> GetPlaylist() => Remote is { } remote ? remote.Playlist : _playQueue.GetPlaylist();
 
     /// <summary>Port of audioTracks(): the audio streams of the current source, in menu order.</summary>
-    public IReadOnlyList<MediaStream> AudioTracks() => SortTracks("Audio");
+    public IReadOnlyList<MediaStream> AudioTracks() => Remote is { } remote ? remote.AudioTracks : SortTracks("Audio");
 
     /// <summary>Port of subtitleTracks().</summary>
-    public IReadOnlyList<MediaStream> SubtitleTracks() => SortTracks("Subtitle");
+    public IReadOnlyList<MediaStream> SubtitleTracks() => Remote is { } remote ? remote.SubtitleTracks : SortTracks("Subtitle");
 
-    /// <summary>Port of getSupportedCommands() for the local players.</summary>
-    public IReadOnlyList<string> GetSupportedCommands()
+    /// <summary>
+    /// Port of getSupportedCommands(): what this client can do for a local player, what the target
+    /// announced for a remote one.
+    /// </summary>
+    public IReadOnlyList<string> GetSupportedCommands() =>
+        Remote is not null ? CurrentTarget?.SupportedCommands ?? [] : LocalSupportedCommands(CurrentPlayer);
+
+    private static List<string> LocalSupportedCommands(IMediaPlayer? current)
     {
         var list = new List<string>
         {
@@ -74,7 +95,7 @@ public sealed partial class PlaybackManager
         // Browsers without the Fullscreen API (iPhone) fall back to the element's own fullscreen.
         list.Add("ToggleFullscreen");
 
-        if (CurrentPlayer is { } player)
+        if (current is { } player)
         {
             foreach (var feature in new[] { "PictureInPicture", "AirPlay", "SetBrightness", "SetAspectRatio", "PlaybackRate" })
             {
@@ -105,6 +126,11 @@ public sealed partial class PlaybackManager
     /// <inheritdoc />
     public Task PlayPauseAsync()
     {
+        if (Remote is { } remote)
+        {
+            return remote.PlayPauseAsync();
+        }
+
         if (CurrentPlayer is { } player)
         {
             if (player.Paused)
@@ -125,7 +151,11 @@ public sealed partial class PlaybackManager
     {
         if (CurrentPlayer is { } player)
         {
-            _playNextAfterEnded = false;
+            if (player.IsLocalPlayer)
+            {
+                _playNextAfterEnded = false;
+            }
+
             await player.StopAsync(destroyPlayer: true);
         }
     }
@@ -133,6 +163,12 @@ public sealed partial class PlaybackManager
     /// <inheritdoc />
     public async Task NextTrackAsync()
     {
+        if (Remote is { } remote)
+        {
+            await remote.NextTrackAsync();
+            return;
+        }
+
         if (CurrentPlayer is not { } player || _playQueue.GetNextItemInfo() is not { } next)
         {
             return;
@@ -148,6 +184,12 @@ public sealed partial class PlaybackManager
     /// <inheritdoc />
     public async Task PreviousTrackAsync()
     {
+        if (Remote is { } remote)
+        {
+            await remote.PreviousTrackAsync();
+            return;
+        }
+
         if (CurrentPlayer is not { } player)
         {
             return;
@@ -173,7 +215,11 @@ public sealed partial class PlaybackManager
     /// <inheritdoc />
     public async Task SeekAsync(long positionTicks)
     {
-        if (CurrentPlayer is { } player)
+        if (Remote is { } remote)
+        {
+            await remote.SeekAsync(Math.Max(0, positionTicks));
+        }
+        else if (CurrentPlayer is { } player)
         {
             await ChangeStreamAsync(player, Math.Max(0, positionTicks));
         }
@@ -231,13 +277,43 @@ public sealed partial class PlaybackManager
 
     public void SetVolume(int value) => CurrentPlayer?.SetVolume(Math.Clamp(value, 0, 100));
 
-    public void VolumeUp() => SetVolume(Math.Min(Volume + 2, 100));
+    public void VolumeUp()
+    {
+        if (Remote is { } remote)
+        {
+            remote.VolumeUp();
+        }
+        else
+        {
+            SetVolume(Math.Min(Volume + 2, 100));
+        }
+    }
 
-    public void VolumeDown() => SetVolume(Math.Max(Volume - 2, 0));
+    public void VolumeDown()
+    {
+        if (Remote is { } remote)
+        {
+            remote.VolumeDown();
+        }
+        else
+        {
+            SetVolume(Math.Max(Volume - 2, 0));
+        }
+    }
 
     public void SetMute(bool mute) => CurrentPlayer?.SetMute(mute);
 
-    public void ToggleMute() => SetMute(!IsMuted);
+    public void ToggleMute()
+    {
+        if (Remote is { } remote)
+        {
+            remote.ToggleMute();
+        }
+        else
+        {
+            SetMute(!IsMuted);
+        }
+    }
 
     /// <summary>Port of setPlaybackRate(): the rate is remembered for the browser session.</summary>
     public void SetPlaybackRate(double value)
@@ -294,6 +370,12 @@ public sealed partial class PlaybackManager
     /// <summary>Port of setRepeatMode().</summary>
     public void SetRepeatMode(string value)
     {
+        if (Remote is { } remote)
+        {
+            remote.SetRepeatMode(value);
+            return;
+        }
+
         _playQueue.SetRepeatMode(value);
         RaisePlayerEvent(PlaybackEvents.RepeatModeChange);
     }
@@ -301,6 +383,12 @@ public sealed partial class PlaybackManager
     /// <summary>Port of setQueueShuffleMode().</summary>
     public void SetQueueShuffleMode(string value)
     {
+        if (Remote is { } remote)
+        {
+            remote.SetQueueShuffleMode(value);
+            return;
+        }
+
         _playQueue.SetShuffleMode(value);
         RaisePlayerEvent(PlaybackEvents.ShuffleQueueModeChange);
     }
@@ -308,6 +396,12 @@ public sealed partial class PlaybackManager
     /// <summary>Port of toggleQueueShuffleMode().</summary>
     public void ToggleQueueShuffleMode()
     {
+        if (Remote is { } remote)
+        {
+            remote.SetQueueShuffleMode(remote.ShuffleMode == PlayQueue.Shuffled ? PlayQueue.Sorted : PlayQueue.Shuffled);
+            return;
+        }
+
         _playQueue.ToggleShuffleMode();
         RaisePlayerEvent(PlaybackEvents.ShuffleQueueModeChange);
     }
@@ -315,6 +409,12 @@ public sealed partial class PlaybackManager
     /// <summary>Port of clearQueue().</summary>
     public void ClearQueue(bool clearCurrentItem = false)
     {
+        if (Remote is not null)
+        {
+            // The queue of a remote target is its own.
+            return;
+        }
+
         _playQueue.ClearPlaylist(clearCurrentItem);
         RaisePlayerEvent(PlaybackEvents.PlaylistItemRemove);
     }
@@ -322,6 +422,12 @@ public sealed partial class PlaybackManager
     /// <summary>Port of setCurrentPlaylistItem(): plays an item of the queue.</summary>
     public async Task SetCurrentPlaylistItemAsync(string playlistItemId)
     {
+        if (Remote is { } remote)
+        {
+            await remote.SetCurrentPlaylistItemAsync(playlistItemId);
+            return;
+        }
+
         var playlist = _playQueue.GetPlaylist();
         for (var i = 0; i < playlist.Count; i++)
         {
@@ -341,6 +447,12 @@ public sealed partial class PlaybackManager
     public async Task RemoveFromPlaylistAsync(IReadOnlyCollection<string> playlistItemIds)
     {
         ArgumentNullException.ThrowIfNull(playlistItemIds);
+        if (Remote is not null)
+        {
+            // Not supported by the session player (the original's removeFromPlaylist() does nothing).
+            return;
+        }
+
         var result = _playQueue.RemoveFromPlaylist(playlistItemIds);
         if (result.Result == "empty")
         {
@@ -358,6 +470,12 @@ public sealed partial class PlaybackManager
     /// <summary>Port of movePlaylistItem().</summary>
     public void MovePlaylistItem(string playlistItemId, int newIndex)
     {
+        if (Remote is { } remote)
+        {
+            _ = HandleAsync(remote.MovePlaylistItemAsync(playlistItemId, newIndex));
+            return;
+        }
+
         var result = _playQueue.MovePlaylistItem(playlistItemId, newIndex);
         if (result.Result != "noop")
         {
@@ -368,6 +486,12 @@ public sealed partial class PlaybackManager
     /// <summary>Port of setAudioStreamIndex().</summary>
     public async Task SetAudioStreamIndexAsync(int index)
     {
+        if (Remote is { } remote)
+        {
+            remote.SetAudioStreamIndex(index);
+            return;
+        }
+
         if (CurrentPlayer is not { } player || Data(player).StreamInfo is not { } streamInfo)
         {
             return;
@@ -404,6 +528,12 @@ public sealed partial class PlaybackManager
     /// </summary>
     public async Task SetSubtitleStreamIndexAsync(int index)
     {
+        if (Remote is { } remote)
+        {
+            remote.SetSubtitleStreamIndex(index);
+            return;
+        }
+
         if (CurrentPlayer is not { } player || Data(player).StreamInfo is not { } streamInfo)
         {
             return;
@@ -565,6 +695,22 @@ public sealed partial class PlaybackManager
         }
 
         return options;
+    }
+
+    /// <summary>The position of the item that plays in the queue of a remote target, or -1.</summary>
+    private static int RemotePlaylistIndex(IRemotePlayer remote)
+    {
+        var playlist = remote.Playlist;
+        var current = remote.CurrentPlaylistItemId;
+        for (var i = 0; i < playlist.Count; i++)
+        {
+            if (playlist[i].PlaylistItemId == current)
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private void RaisePlayerEvent(string name)
