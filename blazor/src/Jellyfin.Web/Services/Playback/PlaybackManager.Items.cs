@@ -681,6 +681,7 @@ public sealed partial class PlaybackManager
             MediaSourceId = options.MediaSourceId;
             AudioStreamIndex = options.AudioStreamIndex;
             SubtitleStreamIndex = options.SubtitleStreamIndex;
+            SecondarySubtitleStreamIndex = options.SecondarySubtitleStreamIndex;
             Shuffle = options.Shuffle;
             Fullscreen = options.Fullscreen;
             QueryOptions = options.QueryOptions;
@@ -700,6 +701,8 @@ public sealed partial class PlaybackManager
 
         public int? SubtitleStreamIndex { get; }
 
+        public int? SecondarySubtitleStreamIndex { get; }
+
         public bool Shuffle { get; }
 
         public bool Fullscreen { get; }
@@ -713,6 +716,7 @@ public sealed partial class PlaybackManager
             MediaSourceId = MediaSourceId,
             AudioStreamIndex = AudioStreamIndex,
             SubtitleStreamIndex = SubtitleStreamIndex,
+            SecondarySubtitleStreamIndex = SecondarySubtitleStreamIndex,
             StartPositionTicks = StartPositionTicks,
         };
     }

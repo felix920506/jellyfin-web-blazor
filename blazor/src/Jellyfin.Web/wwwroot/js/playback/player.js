@@ -674,6 +674,14 @@ export function setAudioTrack(position) {
 // Text subtitles are fetched by C# as TrackEvents and shown through a native text track, as the
 // original does with its "manualTrack".
 export function setSubtitleCues(cues) {
+    setTrackCues('manualTrack', cues);
+}
+
+export function setSecondarySubtitleCues(cues) {
+    setTrackCues('manualSecondaryTrack', cues);
+}
+
+function setTrackCues(label, cues) {
     const elem = players.video && players.video.elem;
     if (!elem || !elem.textTracks) {
         return;
@@ -681,7 +689,7 @@ export function setSubtitleCues(cues) {
 
     let track = null;
     for (const current of Array.from(elem.textTracks)) {
-        if (current.label === 'manualTrack') {
+        if (current.label === label) {
             track = current;
             break;
         }
@@ -700,7 +708,7 @@ export function setSubtitleCues(cues) {
     }
 
     if (!track) {
-        track = elem.addTextTrack('subtitles', 'manualTrack', 'und');
+        track = elem.addTextTrack('subtitles', label, 'und');
     } else {
         track.mode = 'hidden';
         for (const cue of Array.from(track.cues || [])) {

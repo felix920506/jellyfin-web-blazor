@@ -11,6 +11,7 @@ public sealed class ItemPlayOptions
     public string? MediaSourceId { get; set; }
     public int? AudioStreamIndex { get; set; }
     public int? SubtitleStreamIndex { get; set; }
+    public int? SecondarySubtitleStreamIndex { get; set; }
     public long? StartPositionTicks { get; set; }
     public bool IsFirstItem { get; set; }
 
@@ -23,6 +24,7 @@ public sealed class PlayerData
     public StreamInfo? StreamInfo { get; set; }
     public int? AudioStreamIndex { get; set; }
     public int? SubtitleStreamIndex { get; set; }
+    public int? SecondarySubtitleStreamIndex { get; set; }
     public int? MaxStreamingBitrate { get; set; }
     public bool IsChangingStream { get; set; }
 }

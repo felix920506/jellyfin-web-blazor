@@ -71,9 +71,11 @@ public class ProgressReportTests
         await harness.Timers.AdvanceAsync(10000);
         await PlaybackHarness.Eventually(() => harness.ProgressReports.Count == 1, "the first interval report");
         Assert.Equal("timeupdate", (string?)harness.ProgressReports[0]["EventName"]);
+        await PlaybackHarness.Eventually(() => harness.PlayingPings.Count == 1, "the first playing ping");
 
         await harness.Timers.AdvanceAsync(10000);
         await PlaybackHarness.Eventually(() => harness.ProgressReports.Count == 2, "the second interval report");
+        await PlaybackHarness.Eventually(() => harness.PlayingPings.Count == 2, "the second playing ping");
     }
 
     [Fact]

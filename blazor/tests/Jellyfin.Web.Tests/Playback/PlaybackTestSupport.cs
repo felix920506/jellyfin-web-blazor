@@ -40,6 +40,8 @@ internal sealed class FakePlayerInterop : IPlayerInterop
 
     public List<IReadOnlyList<SubtitleCue>?> SubtitleCues { get; } = [];
 
+    public List<IReadOnlyList<SubtitleCue>?> SecondarySubtitleCues { get; } = [];
+
     public List<MediaSessionInfo?> MediaSessions { get; } = [];
 
     public PlayerStats? Stats { get; set; } = new() { VideoWidth = 1280, VideoHeight = 720, ViewWidth = 1366, ViewHeight = 768, DroppedFrames = 2 };
@@ -123,6 +125,12 @@ internal sealed class FakePlayerInterop : IPlayerInterop
     {
         Calls.Add("cues " + (cues?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none"));
         SubtitleCues.Add(cues);
+    }
+
+    public void SetSecondarySubtitleCues(IReadOnlyList<SubtitleCue>? cues)
+    {
+        Calls.Add("secondary cues " + (cues?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none"));
+        SecondarySubtitleCues.Add(cues);
     }
 
     public void ToggleFullscreen()
@@ -516,9 +524,11 @@ internal static class PlaybackServer
         server.OnGet("/System/Endpoint", new { IsLocal = false, IsInNetwork = false });
         server.OnGet("/Playback/BitrateTest", _ => new byte[0]);
         server.OnPost("/Sessions/Playing");
+        server.OnPost("/Sessions/Playing/Ping");
         server.OnPost("/Sessions/Playing/Progress");
         server.OnPost("/Sessions/Playing/Stopped");
         server.OnDelete("/Videos/ActiveEncodings");
+        server.OnGet("/MediaSegments/", new JsonObject { ["Items"] = new JsonArray() });
         server.OnGet("/Items", request =>
         {
             var ids = (request.Query("ids") ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries);
@@ -672,9 +682,16 @@ internal sealed class PlaybackHarness : IAsyncDisposable
             .Select(r => JsonNode.Parse(r.Body ?? "{}")!.AsObject())
             .ToList();
 
+    public List<JsonObject> PlayingPingReports => Server.Requests
+        .Where(r => r.Method == HttpMethod.Post && r.Path.EndsWith("/Sessions/Playing/Ping", StringComparison.OrdinalIgnoreCase))
+        .Select(r => JsonNode.Parse(r.Body ?? "{}")!.AsObject())
+        .ToList();
+
     public List<JsonObject> ProgressReports => Posts("/Sessions/Playing/Progress");
 
     public List<JsonObject> StartReports => Posts("/Sessions/Playing");
+
+    public List<JsonObject> PlayingPings => PlayingPingReports;
 
     public List<JsonObject> StopReports => Posts("/Sessions/Playing/Stopped");
 

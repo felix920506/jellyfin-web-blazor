@@ -84,6 +84,8 @@ public sealed class SessionPlayer(JellyfinApi api, ServerEvents events, IPlaybac
 
     public int? SubtitleStreamIndex => _session?.PlayState?.SubtitleStreamIndex;
 
+    public int? SecondarySubtitleStreamIndex => null;
+
     public IReadOnlyList<MediaStream> AudioTracks => Streams(MediaStream_Type.Audio);
 
     public IReadOnlyList<MediaStream> SubtitleTracks => Streams(MediaStream_Type.Subtitle);
@@ -297,6 +299,16 @@ public sealed class SessionPlayer(JellyfinApi api, ServerEvents events, IPlaybac
 
     /// <inheritdoc />
     public void SetSubtitleStreamIndex(int index) => _ = SendCommandAsync("SetSubtitleStreamIndex", CommandArguments.Of(("Index", index)));
+
+    public void SetSecondarySubtitleStreamIndex(int index) => _ = SendCommandAsync("SetSecondarySubtitleStreamIndex", CommandArguments.Of(("Index", index)));
+
+    public double SubtitleOffset => 0;
+
+    public void SetSubtitleOffset(double seconds)
+    {
+    }
+
+    public bool SupportsSubtitleOffset => false;
 
     /// <inheritdoc />
     public void SetAspectRatio(string value)

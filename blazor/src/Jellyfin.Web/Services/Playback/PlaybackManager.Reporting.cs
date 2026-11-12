@@ -20,6 +20,7 @@ public sealed class PlayerState
     public long? PlaybackStartTimeTicks { get; init; }
     public double PlaybackRate { get; init; } = 1;
     public int? SubtitleStreamIndex { get; init; }
+    public int? SecondarySubtitleStreamIndex { get; init; }
     public int? AudioStreamIndex { get; init; }
     public IReadOnlyList<BufferedRange> BufferedRanges { get; init; } = [];
     public string? PlayMethod { get; init; }
@@ -63,6 +64,7 @@ public sealed class PlayerState
         Add(info, "PlaybackStartTimeTicks", PlaybackStartTimeTicks);
         info["PlaybackRate"] = PlaybackRate;
         Add(info, "SubtitleStreamIndex", SubtitleStreamIndex);
+        Add(info, "SecondarySubtitleStreamIndex", SecondarySubtitleStreamIndex);
         Add(info, "AudioStreamIndex", AudioStreamIndex);
         info["BufferedRanges"] = new JsonArray(BufferedRanges
             .Select(r => (JsonNode)new JsonObject { ["start"] = r.Start, ["end"] = r.End })
@@ -144,6 +146,7 @@ public sealed partial class PlaybackManager
             PlaybackStartTimeTicks = streamInfo?.PlaybackStartTimeTicks,
             PlaybackRate = player.PlaybackRate,
             SubtitleStreamIndex = data.SubtitleStreamIndex,
+            SecondarySubtitleStreamIndex = data.SecondarySubtitleStreamIndex,
             AudioStreamIndex = data.AudioStreamIndex,
             BufferedRanges = player.BufferedRanges,
             PlayMethod = streamInfo?.PlayMethod,
@@ -369,9 +372,26 @@ public sealed partial class PlaybackManager
             () =>
             {
                 SendProgressUpdate(player, PlaybackEvents.TimeUpdate);
+                SendPlayingPing(player);
                 return Task.CompletedTask;
             },
             ProgressIntervalMs);
+    }
+
+    private void SendPlayingPing(IMediaPlayer player)
+    {
+        if (Data(player).StreamInfo is not { Started: true, Ended: false } || GetPlayerState(player) is not { } state)
+        {
+            return;
+        }
+
+        var playSessionId = state.PlaySessionId;
+        if (string.IsNullOrEmpty(playSessionId))
+        {
+            return;
+        }
+
+        _ = PostReportAsync($"Sessions/Playing/Ping?playSessionId={Uri.EscapeDataString(playSessionId)}", state.ToReport());
     }
 
     private void StopProgressTimer()
@@ -390,6 +410,7 @@ public sealed partial class PlaybackManager
         streamInfo.PlaybackStartTimeTicks = _timers.NowMs * 10000;
         data.AudioStreamIndex = mediaSource?.Info.DefaultAudioStreamIndex;
         data.SubtitleStreamIndex = mediaSource?.Info.DefaultSubtitleStreamIndex;
+        data.SecondarySubtitleStreamIndex = playOptions.SecondarySubtitleStreamIndex;
 
         _playNextAfterEnded = true;
 

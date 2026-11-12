@@ -52,6 +52,17 @@ public sealed partial class PlaybackManager
         _ => null,
     };
 
+    public int? SecondarySubtitleStreamIndex => CurrentPlayer switch
+    {
+        IRemotePlayer remote => remote.SecondarySubtitleStreamIndex,
+        { } player => Data(player).SecondarySubtitleStreamIndex,
+        _ => null,
+    };
+
+    public double SubtitleOffset => CurrentPlayer?.SubtitleOffset ?? 0;
+
+    public bool SupportsSubtitleOffset => CurrentPlayer?.SupportsSubtitleOffset == true;
+
     public bool IsFullscreen => CurrentPlayer?.IsFullscreen == true;
 
     public bool IsPictureInPictureEnabled => CurrentPlayer?.IsPictureInPictureEnabled == true;
@@ -76,6 +87,15 @@ public sealed partial class PlaybackManager
     /// <summary>Port of subtitleTracks().</summary>
     public IReadOnlyList<MediaStream> SubtitleTracks() => Remote is { } remote ? remote.SubtitleTracks : SortTracks("Subtitle");
 
+    /// <summary>Whether the current primary subtitle can be paired with an external secondary track.</summary>
+    public bool HasSecondarySubtitleSupport =>
+        CurrentPlayer?.Supports("SecondarySubtitles") == true
+        && SubtitleStreamIndex is not null
+        && SecondarySubtitleTracks().Any(stream => stream.Index != SubtitleStreamIndex);
+
+    public IReadOnlyList<MediaStream> SecondarySubtitleTracks() =>
+        SubtitleTracks().Where(stream => stream.Index != SubtitleStreamIndex && SupportsSecondarySubtitle(stream)).ToList();
+
     /// <summary>
     /// Port of getSupportedCommands(): what this client can do for a local player, what the target
     /// announced for a remote one.
@@ -97,7 +117,7 @@ public sealed partial class PlaybackManager
 
         if (current is { } player)
         {
-            foreach (var feature in new[] { "PictureInPicture", "AirPlay", "SetBrightness", "SetAspectRatio", "PlaybackRate" })
+            foreach (var feature in new[] { "PictureInPicture", "AirPlay", "SetBrightness", "SetAspectRatio", "PlaybackRate", "SecondarySubtitles" })
             {
                 if (player.Supports(feature))
                 {
@@ -596,11 +616,55 @@ public sealed partial class PlaybackManager
 
         player.SetSubtitleStreamIndex(selectedTrackElementIndex);
 
-        // PORT-TODO(playback): secondary subtitles are not ported (the original also resets the
-        // secondary track here when it is no longer compatible).
         data.SubtitleStreamIndex = index;
+        if (index < 0 || !SupportsSecondarySubtitle(index))
+        {
+            await SetSecondarySubtitleStreamIndexAsync(-1);
+        }
         Raise(PlaybackEvents.MediaStreamsChange);
     }
+
+    public async Task SetSecondarySubtitleStreamIndexAsync(int index)
+    {
+        if (Remote is { } remote)
+        {
+            remote.SetSecondarySubtitleStreamIndex(index);
+            return;
+        }
+
+        if (CurrentPlayer is not { } player || !player.Supports("SecondarySubtitles") || Data(player).StreamInfo is null)
+        {
+            return;
+        }
+
+        var stream = index < 0 ? null : GetSubtitleStream(index);
+        if (stream is not null && !SupportsSecondarySubtitle(stream))
+        {
+            return;
+        }
+
+        player.SetSecondarySubtitleStreamIndex(index);
+        Data(player).SecondarySubtitleStreamIndex = index;
+        Raise(PlaybackEvents.MediaStreamsChange);
+    }
+
+    public void SetSubtitleOffset(double seconds)
+    {
+        if (CurrentPlayer is not { } player || !player.SupportsSubtitleOffset)
+        {
+            return;
+        }
+
+        player.SetSubtitleOffset(Math.Clamp(seconds, -60, 60));
+        Raise(PlaybackEvents.MediaStreamsChange);
+    }
+
+    private bool SupportsSecondarySubtitle(int index) =>
+        GetSubtitleStream(index) is { } stream && SupportsSecondarySubtitle(stream);
+
+    private static bool SupportsSecondarySubtitle(MediaStream stream) =>
+        stream.DeliveryMethod == MediaStream_DeliveryMethod.External
+        && stream.Codec?.ToLowerInvariant() is not ("ssa" or "ass" or "pgssub" or "dvdsub" or "vobsub");
 
     /// <summary>Port of changeAudioStream(): the next audio track, wrapping around.</summary>
     public Task ChangeAudioStreamAsync()

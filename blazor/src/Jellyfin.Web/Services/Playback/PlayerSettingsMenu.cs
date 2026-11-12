@@ -52,7 +52,15 @@ public sealed class PlayerSettingsMenu(PlaybackManager playback, AppDialogs dial
             });
         }
 
-        // PORT-TODO(playback): the subtitle offset entry ("SubtitleOffset") is not ported.
+        if (playback.SupportsSubtitleOffset)
+        {
+            items.Add(new ActionSheetItem
+            {
+                Name = globalize["SubtitleOffset"],
+                Id = "suboffset",
+                AsideText = playback.SubtitleOffset.ToString("+0.##;-0.##;0", CultureInfo.InvariantCulture) + "s",
+            });
+        }
         if (stats)
         {
             items.Add(new ActionSheetItem { Name = globalize["PlaybackData"], Id = "stats" });
@@ -75,6 +83,9 @@ public sealed class PlayerSettingsMenu(PlaybackManager playback, AppDialogs dial
                 break;
             case "stats":
                 return "stats";
+            case "suboffset":
+                await ShowSubtitleOffsetAsync();
+                break;
         }
 
         return null;
@@ -173,6 +184,15 @@ public sealed class PlayerSettingsMenu(PlaybackManager playback, AppDialogs dial
         if (id is not null && double.TryParse(id, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate))
         {
             playback.SetPlaybackRate(rate);
+        }
+    }
+
+    private async Task ShowSubtitleOffsetAsync()
+    {
+        var value = await dialogs.PromptAsync(globalize["SubtitleOffset"], value: playback.SubtitleOffset.ToString("0.##", CultureInfo.InvariantCulture));
+        if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var offset))
+        {
+            playback.SetSubtitleOffset(offset);
         }
     }
 }

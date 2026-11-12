@@ -17,6 +17,7 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
     private readonly string _kind;
     private PlayerSnapshot _snapshot = new() { Paused = true };
     private double? _currentTime;
+    private double _subtitleOffset;
 
     protected HtmlMediaPlayer(
         string kind,
@@ -138,6 +139,11 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
     public async Task PlayAsync(StreamInfo streamInfo)
     {
         _currentTime = null;
+        if (streamInfo.ResetSubtitleOffset)
+        {
+            _subtitleOffset = 0;
+        }
+
         var request = await BuildLoadRequestAsync(streamInfo);
         CurrentOptions = streamInfo;
         CurrentSrc = request.Url;
@@ -177,6 +183,21 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
     public virtual void SetSubtitleStreamIndex(int index)
     {
     }
+
+    public virtual int? SecondarySubtitleStreamIndex => null;
+
+    public virtual void SetSecondarySubtitleStreamIndex(int index)
+    {
+    }
+
+    public virtual double SubtitleOffset => _subtitleOffset;
+
+    public virtual void SetSubtitleOffset(double seconds)
+    {
+        _subtitleOffset = seconds;
+    }
+
+    public virtual bool SupportsSubtitleOffset => false;
 
     public virtual void SetAspectRatio(string value)
     {
@@ -282,8 +303,11 @@ public sealed class HtmlVideoPlayer(
     : HtmlMediaPlayer("video", interop, probe, profiles, appSettings, appHost, browser)
 {
     private int _subtitleTrackIndexToSetOnPlaying = -1;
+    private int _secondarySubtitleTrackIndexToSetOnPlaying = -1;
+    private int? _secondarySubtitleTrackIndex;
     private int? _audioTrackIndexToSetOnPlaying;
     private int _subtitleRequest;
+    private int _secondarySubtitleRequest;
 
     public override string Name => "Html Video Player";
 
@@ -302,9 +326,24 @@ public sealed class HtmlVideoPlayer(
         "AirPlay" => AppHost.Browser.Safari || AppHost.Browser.Ios,
         "PlaybackRate" or "SetAspectRatio" => true,
 
-        // PORT-TODO(playback): SetBrightness (touch gestures) and SecondarySubtitles are not ported.
+        // SetBrightness is still a touch-gesture feature; secondary subtitle tracks are supported
+        // through the same external cue path as the primary track.
+        "SecondarySubtitles" => SupportsSecondarySubtitles,
         _ => false,
     };
+
+    private bool SupportsSecondarySubtitles => CurrentSrc is not null;
+
+    public override int? SecondarySubtitleStreamIndex => _secondarySubtitleTrackIndex;
+
+    public override bool SupportsSubtitleOffset => CurrentSrc is not null;
+
+    public override void SetSubtitleOffset(double seconds)
+    {
+        base.SetSubtitleOffset(seconds);
+        _ = SetCurrentTrackElementAsync(_subtitleTrackIndexToSetOnPlaying, secondary: false);
+        _ = SetCurrentTrackElementAsync(_secondarySubtitleTrackIndex ?? -1, secondary: true);
+    }
 
     public override void SetAspectRatio(string value)
     {
@@ -329,7 +368,17 @@ public sealed class HtmlVideoPlayer(
         }
     }
 
-    public override void SetSubtitleStreamIndex(int index) => _ = SetCurrentTrackElementAsync(index);
+    public override void SetSubtitleStreamIndex(int index)
+    {
+        _subtitleTrackIndexToSetOnPlaying = index;
+        _ = SetCurrentTrackElementAsync(index, secondary: false);
+    }
+
+    public override void SetSecondarySubtitleStreamIndex(int index)
+    {
+        _secondarySubtitleTrackIndex = index;
+        _ = SetCurrentTrackElementAsync(index, secondary: true);
+    }
 
     public override void OnNavigatedToOsd()
     {
@@ -356,6 +405,8 @@ public sealed class HtmlVideoPlayer(
         }
 
         _subtitleTrackIndexToSetOnPlaying = source?.DefaultSubtitleStreamIndex ?? -1;
+        _secondarySubtitleTrackIndexToSetOnPlaying = streamInfo.SecondarySubtitleStreamIndex ?? -1;
+        _secondarySubtitleTrackIndex = _secondarySubtitleTrackIndexToSetOnPlaying;
         if (_subtitleTrackIndexToSetOnPlaying >= 0)
         {
             var streams = source?.MediaStreams ?? [];
@@ -402,7 +453,8 @@ public sealed class HtmlVideoPlayer(
 
     private void OnStartedAndNavigatedToOsd()
     {
-        _ = SetCurrentTrackElementAsync(_subtitleTrackIndexToSetOnPlaying);
+        _ = SetCurrentTrackElementAsync(_subtitleTrackIndexToSetOnPlaying, secondary: false);
+        _ = SetCurrentTrackElementAsync(_secondarySubtitleTrackIndexToSetOnPlaying, secondary: true);
         if (_audioTrackIndexToSetOnPlaying is { } audioIndex && CanSetAudioStreamIndex)
         {
             SetAudioStreamIndex(audioIndex);
@@ -439,16 +491,23 @@ public sealed class HtmlVideoPlayer(
     }
 
     /// <summary>Port of setCurrentTrackElement() for externally delivered text tracks.</summary>
-    private async Task SetCurrentTrackElementAsync(int streamIndex)
+    private async Task SetCurrentTrackElementAsync(int streamIndex, bool secondary)
     {
-        var request = ++_subtitleRequest;
+        var request = secondary ? ++_secondarySubtitleRequest : ++_subtitleRequest;
         var options = CurrentOptions;
         var track = streamIndex < 0
             ? null
             : options?.MediaSource?.MediaStreams?.FirstOrDefault(s => s.Type == MediaStream_Type.Subtitle && s.Index == streamIndex);
         if (options is null || track is null || track.DeliveryMethod != MediaStream_DeliveryMethod.External || string.IsNullOrEmpty(track.DeliveryUrl))
         {
-            Interop.SetSubtitleCues(null);
+            if (secondary)
+            {
+                Interop.SetSecondarySubtitleCues(null);
+            }
+            else
+            {
+                Interop.SetSubtitleCues(null);
+            }
             return;
         }
 
@@ -458,7 +517,7 @@ public sealed class HtmlVideoPlayer(
             using var response = await api.SendAsync(HttpMethod.Get, url.Replace(".vtt", ".js", StringComparison.Ordinal));
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            if (request != _subtitleRequest)
+            if (request != (secondary ? _secondarySubtitleRequest : _subtitleRequest))
             {
                 return;
             }
@@ -469,8 +528,8 @@ public sealed class HtmlVideoPlayer(
             {
                 foreach (var trackEvent in events.EnumerateArray())
                 {
-                    var start = (trackEvent.GetProperty("StartPositionTicks").GetInt64() / 10000000d) - offset;
-                    var end = (trackEvent.GetProperty("EndPositionTicks").GetInt64() / 10000000d) - offset;
+                    var start = Math.Max(0, (trackEvent.GetProperty("StartPositionTicks").GetInt64() / 10000000d) - offset - SubtitleOffset);
+                    var end = Math.Max(start, (trackEvent.GetProperty("EndPositionTicks").GetInt64() / 10000000d) - offset - SubtitleOffset);
                     if (end <= 0)
                     {
                         continue;
@@ -481,12 +540,26 @@ public sealed class HtmlVideoPlayer(
                 }
             }
 
-            Interop.SetSubtitleCues(cues);
+            if (secondary)
+            {
+                Interop.SetSecondarySubtitleCues(cues);
+            }
+            else
+            {
+                Interop.SetSubtitleCues(cues);
+            }
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException or InvalidOperationException)
         {
             AppLog.Warn($"[playback] subtitle track {streamIndex} could not be loaded: {ex.Message}");
-            Interop.SetSubtitleCues(null);
+            if (secondary)
+            {
+                Interop.SetSecondarySubtitleCues(null);
+            }
+            else
+            {
+                Interop.SetSubtitleCues(null);
+            }
         }
     }
 

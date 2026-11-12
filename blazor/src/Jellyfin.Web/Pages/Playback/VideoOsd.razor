@@ -6,8 +6,7 @@
    - the header is drawn by the page (the app bar is not shown on this route);
    - the show transitions are simplified: "hide" is added by a timer instead of transitionend;
    - buttons are not focused when the OSD appears.
-   PORT-TODO(playback): live TV (programme info, progress by time of day, record button), SyncPlay,
-   AirPlay, subtitle offset (G/H keys), secondary subtitles, media segments (skip intro), the TV
+   PORT-TODO(playback): recording controls, SyncPlay, AirPlay, the TV
    layout's key handling and the iOS forced-fullscreen back navigation are not ported. *@
 @attribute [Route("/video")]
 @attribute [Access(AccessLevel.User)]
@@ -25,24 +24,28 @@
 @inject LoadingService Loading
 @inject IPlaybackTimers Timers
 @inject IPlaybackUiInterop Ui
+@inject MediaSegmentService MediaSegments
 
 @{
     var item = Playback.CurrentItem;
+    var displayItem = item is null ? null : PlaybackText.DisplayItem(item);
+    var liveProgress = Text.LiveTvProgress(item);
     var commands = Playback.GetSupportedCommands();
-    var canSeek = item is not null && Playback.CanSeek();
+    var canSeek = item is not null && liveProgress is null && Playback.CanSeek();
     var paused = Playback.IsPaused;
     var muted = Playback.IsMuted;
     var fullscreen = Playback.IsFullscreen;
-    var runtime = RuntimeTicks;
+    var runtime = liveProgress is null ? RuntimeTicks : null;
     var position = Playback.CurrentTimeTicks;
     var chapters = item?.Chapters;
     var hasChapters = chapters is { Count: > 1 };
     var hasPlaylist = Playback.GetPlaylist().Count > 1;
     var subtitleTracks = item is null ? 0 : Playback.SubtitleTracks().Count;
+    var secondarySubtitleTracks = Playback.SecondarySubtitleTracks().Count;
     var audioTracks = item is null ? 0 : Playback.AudioTracks().Count;
 }
 
-<Page Id="videoOsdPage" Class="libraryPage jf-videoOsdPage" Title="@(item?.SeriesName ?? item?.Name)"
+    <Page Id="videoOsdPage" Class="libraryPage jf-videoOsdPage" Title="@(displayItem?.SeriesName ?? displayItem?.Name)"
       @onpointerdown="OnPagePointerDown" @ondblclick="OnPageDoubleClick" @onwheel="OnWheel">
     <div class="skinHeader focuscontainer-x skinHeader-withBackground osdHeader jf-osdHeader @(_headerHidden ? "osdHeader-hidden" : null)"
          @onpointerdown="ShowOsd" @onpointerdown:stopPropagation="true" @ondblclick:stopPropagation="true">
@@ -52,13 +55,23 @@
                         title="@Globalize["ButtonBack"]" @onclick="Router.Back">
                     <span class="material-icons arrow_back" aria-hidden="true"></span>
                 </button>
-                <h3 class="pageTitle">@(item is null ? null : Text.OsdTitle(item))</h3>
+                <h3 class="pageTitle">@(displayItem is null ? null : Text.OsdTitle(displayItem))</h3>
             </div>
             <div class="headerRight"></div>
         </div>
     </div>
 
     <PlayerStatsOverlay Visible="_statsVisible" OnClose="() => _statsVisible = false" />
+
+    @if (_skipSegment is not null)
+    {
+        <div class="skip-button-container">
+            <button type="button" class="skip-button" @onclick="SkipSegmentAsync">
+                @Globalize.Translate("MediaSegmentSkipPrompt", Globalize["MediaSegmentType." + _skipSegment.Type])
+                <span class="material-icons skip_next" aria-hidden="true"></span>
+            </button>
+        </div>
+    }
 
     <UpNextDialog Item="_nextItem" Visible="_upNextVisible" OnStartNow="StartNextNowAsync" OnHide="HideUpNext" />
 
@@ -75,12 +88,12 @@
             <div class="osdTextContainer osdSecondaryMediaInfo hide"></div>
 
             <div class="flex flex-direction-row align-items-center" dir="ltr">
-                <div class="osdTextContainer startTimeText osdPositionText" style="margin: 0 .25em 0 0;">@Text.RunningTime(position)</div>
+                <div class="osdTextContainer startTimeText osdPositionText" style="margin: 0 .25em 0 0;">@(liveProgress?.StartText ?? Text.RunningTime(position))</div>
                 <PlaybackSlider ContainerClass="flex-grow" ContainerStyle="margin: .5em 0 .25em;" Class="osdPositionSlider"
-                                Step=".01" KeepProgress="true" Disabled="@(!canSeek)" Value="PositionPercent"
-                                Clear="@(Playback.CurrentMediaSource is { RunTimeTicks: null })"
+                                Step=".01" KeepProgress="true" Disabled="@(!canSeek)" Value="DisplayPositionPercent"
+                                Clear="@(liveProgress is null && Playback.CurrentMediaSource is { RunTimeTicks: null })"
                                 Buffered="@(PlaybackSlider.BufferedPercent(Playback.BufferedRanges, runtime, position))"
-                                Markers="@Markers(item)" OnChange="value => Playback.SeekPercentAsync(value)">
+                                Markers="@Markers(displayItem)" OnChange="value => SeekPositionAsync(value)">
                     <BubbleContent Context="value">
                         @if (runtime is not { } total)
                         {
@@ -121,8 +134,8 @@
                         }
                     </BubbleContent>
                 </PlaybackSlider>
-                <div class="osdTextContainer endTimeText osdDurationText @(DurationText(runtime, position) is null ? "hide" : null)"
-                     style="margin: 0 0 0 .25em;" @onclick="ToggleRemainingTime">@DurationText(runtime, position)</div>
+                <div class="osdTextContainer endTimeText osdDurationText @(liveProgress is null && DurationText(runtime, position) is null ? "hide" : null)"
+                     style="margin: 0 0 0 .25em;" @onclick="ToggleRemainingTime">@(liveProgress?.EndText ?? DurationText(runtime, position))</div>
             </div>
 
             <div class="buttons focuscontainer-x">
@@ -170,9 +183,13 @@
 
                 <PlaybackFavoriteButton ItemId="@(item?.Id?.ToString("N"))" Class="btnUserRating autoSize" IconClass="xlargePaperIconButton" />
 
-                <button type="button" class="btnSubtitles autoSize paper-icon-button-light @(subtitleTracks > 0 ? null : "hide")"
+                 <button type="button" class="btnSubtitles autoSize paper-icon-button-light @(subtitleTracks > 0 ? null : "hide")"
                         title="@Globalize["Subtitles"]" @onclick="ShowSubtitleMenuAsync">
                     <span class="xlargePaperIconButton material-icons closed_caption" aria-hidden="true"></span>
+                 </button>
+                <button type="button" class="btnSecondarySubtitles autoSize paper-icon-button-light @(secondarySubtitleTracks > 0 && Playback.HasSecondarySubtitleSupport ? null : "hide")"
+                        title="@Globalize["SecondarySubtitles"]" @onclick="ShowSecondarySubtitleMenuAsync">
+                    <span class="xlargePaperIconButton material-icons subtitles" aria-hidden="true"></span>
                 </button>
                 <button type="button" class="btnAudio autoSize paper-icon-button-light @(audioTracks > 1 ? null : "hide")"
                         title="@Globalize["Audio"]" @onclick="ShowAudioMenuAsync">
@@ -250,6 +267,9 @@
     private BaseItemDto? _trickplayItem;
     private string? _trickplaySourceId;
     private TrickplayResolution? _trickplay;
+    private IReadOnlyList<PlaybackMediaSegment> _mediaSegments = [];
+    private PlaybackMediaSegment? _skipSegment;
+    private PlaybackMediaSegment? _lastAutoSkippedSegment;
 
     private string? BottomStateClass => _visibleMenu == MenuOsd
         ? null
@@ -258,6 +278,8 @@
     private long? RuntimeTicks => Playback.DurationTicks is { } duration && duration > 0 ? duration : null;
 
     private double PositionPercent => RuntimeTicks is { } runtime ? Math.Clamp(Playback.CurrentTimeTicks * 100d / runtime, 0, 100) : 0;
+
+    private double DisplayPositionPercent => Text.LiveTvProgress(Playback.CurrentItem)?.Percent ?? PositionPercent;
 
     protected override void OnInitialized()
     {
@@ -271,6 +293,7 @@
         // HtmlVideoPlayer.OnFirstPlaying().
         RestorePlaybackRate();
         ShowOsd();
+        _ = LoadMediaSegmentsAsync(Playback.CurrentItem);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -639,6 +662,49 @@
 
     private void OnPlaybackEvent(string name) => _ = InvokeAsync(() => HandlePlaybackEvent(name));
 
+    private async Task LoadMediaSegmentsAsync(BaseItemDto? item)
+    {
+        if (item?.Id is not { } id)
+        {
+            return;
+        }
+
+        _mediaSegments = await MediaSegments.LoadAsync(id);
+        await InvokeAsync(UpdateMediaSegment);
+    }
+
+    private void UpdateMediaSegment()
+    {
+        var current = MediaSegments.Current(_mediaSegments, Playback.CurrentTimeTicks);
+        if (current is null)
+        {
+            _lastAutoSkippedSegment = null;
+        }
+
+        if (current is not null && MediaSegments.Action(current.Type) == "Skip" && current.EndTicks is { } end
+            && !ReferenceEquals(current, _lastAutoSkippedSegment))
+        {
+            _lastAutoSkippedSegment = current;
+            _ = Playback.SeekAsync(end);
+        }
+
+        var previous = _skipSegment;
+        _skipSegment = current is not null && MediaSegments.Action(current.Type) == "AskToSkip" ? current : null;
+        if (!ReferenceEquals(previous, _skipSegment))
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task SkipSegmentAsync()
+    {
+        if (_skipSegment?.EndTicks is { } end)
+        {
+            await Playback.SeekAsync(end);
+            _skipSegment = null;
+        }
+    }
+
     private void HandlePlaybackEvent(string name)
     {
         if (_disposed)
@@ -658,10 +724,12 @@
 
                 _lastTimeUpdate = now;
                 ShowComingUpNextIfNeeded();
+                UpdateMediaSegment();
                 break;
             case PlaybackEvents.PlaybackStart:
                 ResetUpNext();
                 RestorePlaybackRate();
+                _ = LoadMediaSegmentsAsync(Playback.CurrentItem);
                 break;
             case PlaybackEvents.Waiting:
                 _ = ShowLoadingWhenStalledAsync(++_waitingGeneration);
@@ -813,7 +881,6 @@
 
     private async Task ShowSubtitleMenuAsync()
     {
-        // PORT-TODO(playback): secondary subtitles are not offered.
         var current = Playback.SubtitleStreamIndex ?? -1;
         var items = new List<ActionSheetItem>
         {
@@ -834,6 +901,28 @@
         }
     }
 
+    private async Task ShowSecondarySubtitleMenuAsync()
+    {
+        var current = Playback.SecondarySubtitleStreamIndex ?? -1;
+        var items = new List<ActionSheetItem>
+        {
+            new() { Id = "-1", Name = Globalize["Off"], Selected = current == -1 },
+        };
+        items.AddRange(Playback.SecondarySubtitleTracks().Select(stream => new ActionSheetItem
+        {
+            Id = (stream.Index ?? -1).ToString(CultureInfo.InvariantCulture),
+            Name = stream.DisplayTitle ?? string.Empty,
+            Selected = stream.Index == current,
+        }));
+
+        var id = await Dialogs.ActionSheetAsync(new ActionSheetOptions { Title = Globalize["SecondarySubtitles"], Items = items });
+        ResetIdle();
+        if (int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) && index != current)
+        {
+            await Playback.SetSecondarySubtitleStreamIndexAsync(index);
+        }
+    }
+
     private async Task ShowSettingsMenuAsync()
     {
         var result = await SettingsMenu.ShowAsync(quality: Playback.CurrentMediaSource?.SupportsTranscoding == true, stats: true);
@@ -845,6 +934,11 @@
     }
 
     private void ToggleRemainingTime() => UserSettings.EnableVideoRemainingTime = !UserSettings.EnableVideoRemainingTime;
+
+    private Task SeekPositionAsync(double percent) =>
+        Text.LiveTvProgress(Playback.CurrentItem) is not null
+            ? Task.CompletedTask
+            : Playback.SeekPercentAsync(percent);
 
     // --- texts and previews ------------------------------------------------------------------------
 
