@@ -36,6 +36,9 @@ public interface IBrowser
 {
     BrowserEnvironment Environment { get; }
 
+    /// <summary>The browser's advertised maximum downlink in Mbps, when Network Information exposes it.</summary>
+    double? ConnectionDownlinkMax { get; }
+
     // --- storage (localStorage unless session is true) ---
     string? StorageGet(string key, bool session = false);
     void StorageSet(string key, string value, bool session = false);

@@ -126,6 +126,24 @@ public class PlaybackUiTests : PlaybackTestContext
     }
 
     [Fact]
+    public async Task Subtitle_offset_keys_show_the_slider_and_adjust_the_offset()
+    {
+        StartRouter();
+        await PlayMovieAsync();
+        var cut = Render<VideoOsd>();
+        var osd = Osd;
+
+        await osd.OnKeyDown("KeyH", false, false);
+        cut.WaitForAssertion(() => Assert.DoesNotContain("hide", cut.Find(".subtitleSyncContainer").ClassList), Timeout);
+        Assert.Equal(0.1, Manager.SubtitleOffset, precision: 6);
+
+        await osd.OnKeyDown("KeyG", false, false);
+        Assert.Equal(0, Manager.SubtitleOffset, precision: 6);
+        cut.Find(".subtitleSync-closeButton").Click();
+        cut.WaitForAssertion(() => Assert.Contains("hide", cut.Find(".subtitleSyncContainer").ClassList), Timeout);
+    }
+
+    [Fact]
     public async Task The_osd_hides_when_nothing_happens_and_returns_with_the_pointer()
     {
         StartRouter();
@@ -476,7 +494,9 @@ public class PlaybackUiTests : PlaybackTestContext
 
         cut.Find(".btnToggleContextMenu").Click();
         dialogs.WaitForAssertion(() => Assert.NotEmpty(dialogs.FindAll(".actionSheetMenuItem")), Timeout);
-        Assert.Equal(new[] { "stopPlayback", "clearQueue" }, dialogs.FindAll(".actionSheetMenuItem").Select(e => e.GetAttribute("data-id")));
+        var menuIds = dialogs.FindAll(".actionSheetMenuItem").Select(e => e.GetAttribute("data-id")).ToList();
+        Assert.Equal(new[] { "stopPlayback", "clearQueue" }, menuIds.Take(2));
+        Assert.Contains("addtoplaylist", menuIds);
         Assert.Equal("/home", App.Browser.Hash);
 
         dialogs.Find("[data-id=stopPlayback]").Click();

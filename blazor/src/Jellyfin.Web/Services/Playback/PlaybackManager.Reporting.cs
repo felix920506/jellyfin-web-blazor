@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.Json;
 using Jellyfin.Sdk.Generated.Models;
 
 namespace Jellyfin.Web.Services.Playback;
@@ -214,9 +215,7 @@ public sealed partial class PlaybackManager
     /// <summary>Port of sendProgressUpdate().</summary>
     private void SendProgressUpdate(IMediaPlayer player, string eventName, bool reportPlaylist = false)
     {
-        // PORT-TODO(playback): the original refreshes the media info of live streams every ten
-        // minutes here (getLiveStreamMediaInfo()).
-        if (Data(player).StreamInfo is not { Started: true, Ended: false })
+        if (Data(player).StreamInfo is not { } streamInfo)
         {
             return;
         }
@@ -227,7 +226,40 @@ public sealed partial class PlaybackManager
             return;
         }
 
+        // Live streams can add or remove tracks while they are playing. Keep the source in sync
+        // with the server at the same ten-minute cadence as the original client.
+        if (streamInfo.LiveStreamId is { Length: > 0 } liveStreamId
+            && _timers.NowMs - streamInfo.LastMediaInfoQuery >= 600000)
+        {
+            streamInfo.LastMediaInfoQuery = _timers.NowMs;
+            _ = RefreshLiveStreamMediaInfoAsync(streamInfo, liveStreamId);
+        }
+
+        if (!streamInfo.Started || streamInfo.Ended)
+        {
+            return;
+        }
+
         ReportPlayback(state, reportPlaylist, "Sessions/Playing/Progress", eventName);
+    }
+
+    private async Task RefreshLiveStreamMediaInfoAsync(StreamInfo streamInfo, string liveStreamId)
+    {
+        try
+        {
+            using var response = await _api.SendAsync(HttpMethod.Get, _api.GetUrl($"LiveStreams/{liveStreamId}/MediaInfo"));
+            response.EnsureSuccessStatusCode();
+            var source = KiotaJson.Parse(await response.Content.ReadAsStringAsync(), MediaSourceInfo.CreateFromDiscriminatorValue);
+            if (source?.MediaStreams is { } streams && streamInfo.MediaSource is { } mediaSource)
+            {
+                mediaSource.MediaStreams = streams;
+                Raise(PlaybackEvents.MediaStreamsChange);
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            // A transient live-stream metadata failure must not interrupt playback.
+        }
     }
 
     /// <summary>Port of reportPlayback() and the api client's reportPlayback* methods.</summary>

@@ -27,34 +27,8 @@
             </h2>
             <h3 class="upNextDialog-title" style="margin:.25em 0 .5em;">@Title(item)</h3>
             <div class="flex flex-direction-row upNextDialog-mediainfo">
-                @* PORT-TODO(playback): use the shared media-info component once it exists; this is the
-                   subset of mediaInfo.getPrimaryMediaInfoHtml() the prompt shows. *@
-                @if (item.Type.ToApiString() != "Episode" && item.ProductionYear is { } year && year != 0)
-                {
-                    <div class="mediaInfoItem">@year</div>
-                }
-                @if (item.RunTimeTicks is { } runtime && runtime > 0)
-                {
-                    <div class="mediaInfoItem">@PlaybackText.DisplayDuration(runtime)</div>
-                }
-                @if (!string.IsNullOrEmpty(item.OfficialRating) && item.Type.ToApiString() is not ("Season" or "Episode"))
-                {
-                    <div class="mediaInfoItem mediaInfoText mediaInfoOfficialRating">@item.OfficialRating</div>
-                }
-                @if (item.CommunityRating is { } rating)
-                {
-                    <div class="starRatingContainer mediaInfoItem">
-                        <span class="material-icons starIcon star" aria-hidden="true"></span>@rating.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)
-                    </div>
-                }
-                @if (item.CriticRating is { } critic)
-                {
-                    <div class="mediaInfoItem mediaInfoCriticRating @(critic >= 60 ? "mediaInfoCriticRatingFresh" : "mediaInfoCriticRatingRotten")">@critic.ToString("0", System.Globalization.CultureInfo.InvariantCulture)</div>
-                }
-                @if (item.RunTimeTicks is { } total && total > 0)
-                {
-                    <div class="mediaInfoItem endsAt">@Text.EndsAt(total, 0, 1)</div>
-                }
+                <MediaInfoLine Item="item" Class="itemMiscInfo itemMiscInfo-primary"
+                               Options="new MediaInfoOptions { OriginalAirDate = false, EpisodeTitle = false, Subtitles = false, Container = false }" />
             </div>
             <div class="flex flex-direction-row upNextDialog-buttons" style="margin-top:1em;">
                 <button type="button" class="raised raised-mini btnStartNow upNextDialog-button emby-button" @onclick="OnStartNow">@Globalize["HeaderStartNow"]</button>

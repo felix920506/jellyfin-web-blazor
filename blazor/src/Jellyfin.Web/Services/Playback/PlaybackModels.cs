@@ -106,6 +106,9 @@ public sealed class StreamInfo
     public bool Ended { get; set; }
     public long PlaybackStartTimeTicks { get; set; }
 
+    /// <summary>The last time live-stream media information was requested.</summary>
+    public long LastMediaInfoQuery { get; set; }
+
     /// <summary>The max bitrate in effect, for the player's buffer sizing.</summary>
     public int? MaxStreamingBitrate { get; set; }
 }

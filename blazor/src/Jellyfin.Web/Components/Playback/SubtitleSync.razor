@@ -1,0 +1,33 @@
+@namespace Jellyfin.Web.Components
+@inject PlaybackManager Playback
+@inject Globalize Globalize
+
+<div class="subtitleSync">
+    <div class="subtitleSyncContainer @(!Visible ? "hide" : null)">
+        <button type="button" class="subtitleSync-closeButton paper-icon-button-light" title="@Globalize["ButtonClose"]" @onclick="OnClose">
+            <span class="material-icons close" aria-hidden="true"></span>
+        </button>
+        <div class="subtitleSyncTextField" contenteditable="true" spellcheck="false">@OffsetText</div>
+        <div class="sliderContainer subtitleSyncSliderContainer">
+            <input type="range" step="0.1" min="-30" max="30" value="@Playback.SubtitleOffset.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)"
+                   class="subtitleSyncSlider" @oninput="OnInput" @onchange="OnInput" />
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string OffsetText => Playback.SubtitleOffset.ToString("+0.##;-0.##;0", System.Globalization.CultureInfo.InvariantCulture) + "s";
+
+
+    private void OnInput(ChangeEventArgs args)
+    {
+        if (double.TryParse(args.Value?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value))
+        {
+            Playback.SetSubtitleOffset(value);
+        }
+    }
+
+}

@@ -79,6 +79,10 @@
         innerWidth: window.innerWidth,
         innerHeight: window.innerHeight
     });
+    jf.connectionDownlinkMax = () => {
+        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        return typeof connection?.downlinkMax === 'number' ? connection.downlinkMax : null;
+    };
 
     // --- location (hash routing) ---------------------------------------------------------------
     const currentHash = () => {

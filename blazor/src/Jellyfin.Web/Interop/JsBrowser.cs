@@ -21,6 +21,8 @@ public sealed class JsBrowser : IBrowser, IDisposable
 
     public BrowserEnvironment Environment => _environment ??= _js.Invoke<BrowserEnvironment>("jf.environment");
 
+    public double? ConnectionDownlinkMax => _js.Invoke<double?>("jf.connectionDownlinkMax");
+
     public string? StorageGet(string key, bool session = false) => _js.Invoke<string?>("jf.storageGet", key, session);
 
     public void StorageSet(string key, string value, bool session = false) => _js.InvokeVoid("jf.storageSet", key, value, session);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Jellyfin.Web.Interop;
 
 namespace Jellyfin.Web.Services.Playback;
 
@@ -10,7 +11,7 @@ public sealed record EndpointInfo(bool? IsInNetwork = null, bool? IsLocal = null
 /// apps/legacy/features/playback/utils/bitrateTest.ts, with the same test sizes, thresholds and cache.
 /// </summary>
 [AppService]
-public sealed class BitrateDetector(JellyfinApi api, IPlaybackTimers timers)
+public sealed class BitrateDetector(JellyfinApi api, IPlaybackTimers timers, IBrowser browser)
 {
     public const int MaxBitrate = 2147483647;
     public const int LanBitrate = 140000000;
@@ -133,9 +134,12 @@ public sealed class BitrateDetector(JellyfinApi api, IPlaybackTimers timers)
             bitrate = 0;
         }
 
-        // PORT-TODO(playback): the original also clamps to navigator.connection.downlinkMax where the
-        // browser exposes it (Network Information API on some mobile browsers).
         var result = (int)Math.Min(Math.Round(bitrate.Value * 0.7), MaxBitrate);
+        if (browser.ConnectionDownlinkMax is > 0 and var downlinkMax)
+        {
+            // Network Information reports Mbps, while Jellyfin bitrate values are bits per second.
+            result = (int)Math.Min(result, Math.Round(downlinkMax * 1_000_000));
+        }
         if (info.IsInNetwork == true)
         {
             result = Math.Max(result, LanBitrate);

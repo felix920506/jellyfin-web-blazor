@@ -59,7 +59,7 @@ now-playing bar and `/queue` expose the lyrics action for audio items with lyric
 
 ## Remaining priorities
 
-- OSD media segments, subtitle offset/secondary subtitles, Live TV-specific controls, additional
+- Live TV-specific controls, additional
   settings entries and the requested Playing/Ping policy (the original itself sends no such ping).
 - Remove `PlaybackTestHook`/`testCommand` and rewrite the older `e2e/playback.py` around public UI.
 - SyncPlay is not started. `PORT-TODO(syncplay)` belongs at its future integration points.
