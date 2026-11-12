@@ -4,13 +4,7 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
-import lib
 from lib import SERVER, finish, go, new_page, shot, sign_in
-
-# The seeded private image occasionally answers the browser's named-encoding POST with 404 even
-# though the same authenticated request succeeds through page.request (the fallback below). Do
-# not turn that image quirk into a console failure; the subsequent API assertion remains required.
-lib.IGNORED_FAILURES = ("/System/Configuration/encoding",)
 
 PAGES = (
     ("libraries", "/dashboard/libraries", ".jf-dashboard-libraries"),
@@ -29,6 +23,7 @@ def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = new_page(browser)
+        page.on("request", capture_encoding_request)
         sign_in(page)
         user_id, token = credentials(page)
 
@@ -76,21 +71,44 @@ def save(page):
         timeout=30_000,
     ) as saved:
         page.locator(".jf-dashboard-submit").click()
-    return saved.value
     if page.locator(".jf-dashboard-dialog-form").count():
         page.locator(".jf-dashboard-dialog-form [data-id=ok]").click()
     if saved.value.ok:
         page.wait_for_selector(".jf-dashboard-saved", timeout=15_000)
+    # These alerts are opened asynchronously by some pages after the POST starts, so checking
+    # immediately after expect_response can miss them and leave them over the next page.
+    page.wait_for_timeout(500)
+    dismiss_message_dialogs(page)
+    return saved.value
+
+
+def dismiss_message_dialogs(page):
+    """Dismiss any message dialogs left by a settings page, without touching form dialogs."""
+    for _ in range(10):
+        buttons = page.locator(".dialogContainer .btnOption")
+        if buttons.count():
+            buttons.last.click(force=True)
+            page.wait_for_timeout(100)
+            continue
+        page.wait_for_timeout(500)
+
+
+def capture_encoding_request(request):
+    if request.method == "POST" and "/System/Configuration/encoding" in request.url:
+        body = request.post_data or "<no body>"
+        print("ENCODING_PAGE_POST_BODY=" + body, flush=True)
 
 
 def mutate_and_restore(page, name, token, originals):
     """Change one field, verify the wire value through the API, then restore the original object."""
     if name == "networking":
-        field = page.locator("#jf-dashboard-networking-baseurl")
-        original = field.input_value()
-        field.fill((original or "") + "/e2e")
+        # Changing BaseUrl changes the server's routing prefix immediately, which would make the
+        # following root-relative API assertion redirect. Toggle a boolean instead so the save can
+        # be verified without changing how the test server addresses subsequent requests.
+        box = page.locator(".jf-dashboard-networking-ipv6 input[type=checkbox]")
+        box.evaluate("e => e.click()")
         save(page)
-        assert api(page, "GET", "/System/Configuration/network", token).json()["BaseUrl"].endswith("/e2e")
+        assert api(page, "GET", "/System/Configuration/network", token).json()["EnableIPv6"] == box.is_checked()
         api(page, "POST", "/System/Configuration/network", token, originals["network"])
     elif name == "library-display":
         box = page.locator(".jf-dashboard-display-folderview input[type=checkbox]")
@@ -114,18 +132,12 @@ def mutate_and_restore(page, name, token, originals):
         api(page, "POST", "/System/Configuration/xbmcmetadata", token, originals["xbmcmetadata"])
     elif name == "playback-transcoding":
         field = page.locator("#jf-dashboard-transcoding-transcodingtemppath")
-        original = field.input_value()
-        field.fill((original or "/tmp") + "-e2e")
+        # The server validates this directory while handling the POST.  Use a path that exists
+        # in the private-server container; a synthetic path makes the server correctly return 404.
+        field.fill("/tmp")
         response = save(page)
-        if not response.ok:
-            # Some private-server builds reject the named encoding POST despite accepting the
-            # corresponding GET. Keep the UI edit exercised and use the same exact payload via
-            # the authenticated API so the wire value is still verified and restored.
-            changed = dict(originals["encoding"])
-            changed["TranscodingTempPath"] = (original or "/tmp") + "-e2e"
-            response = api(page, "POST", "/System/Configuration/encoding", token, changed)
-            assert response.ok, f"API encoding restore workaround failed: {response.status}"
-        assert api(page, "GET", "/System/Configuration/encoding", token).json()["TranscodingTempPath"].endswith("-e2e")
+        assert response.ok, f"page encoding save failed: {response.status} {response.url}"
+        assert api(page, "GET", "/System/Configuration/encoding", token).json()["TranscodingTempPath"] == "/tmp"
         api(page, "POST", "/System/Configuration/encoding", token, originals["encoding"])
     elif name == "playback-streaming":
         field = page.locator("#jf-dashboard-streaming-bitrate")
@@ -159,8 +171,9 @@ def library_lifecycle(page, token):
     page.fill("#txtValue", "E2E Library")
     page.click(".btnAddFolder")
     page.wait_for_selector("#txtDirectoryPickerPath", timeout=15_000)
-    page.fill("#txtDirectoryPickerPath", "/media/Movies")
+    page.fill("#txtDirectoryPickerPath", "/media/movies")
     page.click(".directoryPicker form button[type=submit]")
+    page.wait_for_selector(".directoryPicker", state="detached", timeout=15_000)
     page.click(".dlg-librarycreator form button[type=submit]")
     page.wait_for_function("document.querySelector('[data-name=\"E2E Library\"]')")
     assert any(item.get("Name") == "E2E Library" for item in api(page, "GET", "/Library/VirtualFolders", token).json())
@@ -169,7 +182,7 @@ def library_lifecycle(page, token):
     card.locator(".jf-dashboard-library-menu button").click()
     page.locator(".jf-dashboard-library-rename").click()
     page.fill("#jf-dashboard-dialog-input", "E2E Renamed")
-    page.locator(".jf-dashboard-dialog-form").click("button[type=submit]")
+    page.locator(".jf-dashboard-dialog-form button[type=submit]").click()
     page.wait_for_selector('[data-name="E2E Renamed"]')
     assert any(item.get("Name") == "E2E Renamed" for item in api(page, "GET", "/Library/VirtualFolders", token).json())
 

@@ -124,6 +124,8 @@
             AllowAv1Encoding = false,
             TranscodingTempPath = "/tmp-transcode",
             FallbackFontPath = "",
+            EncoderAppPath = "/usr/bin/ffmpeg",
+            EncoderAppPathDisplay = "/usr/bin/ffmpeg",
             TonemappingAlgorithm = "none",
             TonemappingRange = "auto",
             TonemappingMode = "auto",
@@ -148,6 +150,9 @@
         var body = BodiesTo("/System/Configuration/encoding")[0];
         Assert.Equal("vaapi", body.GetProperty("HardwareAccelerationType").GetString());
         Assert.Equal("/tmp-transcode", body.GetProperty("TranscodingTempPath").GetString());
+        Assert.Equal("", body.GetProperty("FallbackFontPath").GetString());
+        Assert.Equal("/usr/bin/ffmpeg", body.GetProperty("EncoderAppPath").GetString());
+        Assert.Equal("/usr/bin/ffmpeg", body.GetProperty("EncoderAppPathDisplay").GetString());
         Assert.Equal(180, body.GetProperty("ThrottleDelaySeconds").GetInt32());
         Assert.True(body.GetProperty("EnableThrottling").GetBoolean());
     }
