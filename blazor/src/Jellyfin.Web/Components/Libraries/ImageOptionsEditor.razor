@@ -1,0 +1,79 @@
+@namespace Jellyfin.Web.Components
+@* Which images a library fetches for one content type. Port of components/imageOptionsEditor
+   (template and logic); opened by the "Fetcher settings" buttons of LibraryOptionsEditor. *@
+@implements IDisposable
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="Close" />
+    <h3 class="formDialogHeaderTitle">@Globalize["HeaderImageOptions"]</h3>
+</div>
+
+<div class="formDialogContent scrollY">
+    <div class="dialogContentInner dialog-content-centered">
+        <form style="margin:1.5em auto 0;" @onsubmit="@(() => { })" @onsubmit:preventDefault="true">
+            <div class="verticalSection">
+                <h3 class="checkboxListLabel">@Globalize["HeaderFetchImages"]</h3>
+                <div class="imageSelections checkboxList">
+                    @foreach (var choice in _state.Types)
+                    {
+                        <EmbyCheckbox Class="imageType" LabelClass="@(choice.Supported ? null : "hide")" Label="@Globalize[choice.LabelKey]"
+                                      data-imagetype="@choice.Type.ToApiString()" Value="choice.Checked" ValueChanged="value => choice.Checked = value"
+                                      @key="choice" />
+                    }
+                </div>
+            </div>
+
+            <div class="@("backdropFields" + (_state.SupportsBackdrops ? null : " hide"))">
+                <EmbyInput Type="number" Id="txtMaxBackdrops" Label="@Globalize["LabelMaxBackdropsPerItem"]" pattern="[0-9]*" min="0"
+                           Required="_state.SupportsBackdrops" Value="@_state.MaxBackdrops" ValueChanged="value => _state.MaxBackdrops = value" />
+                <EmbyInput Type="number" Id="txtMinBackdropDownloadWidth" Label="@Globalize["LabelMinBackdropDownloadWidth"]" pattern="[0-9]*" min="0"
+                           Required="_state.SupportsBackdrops" Value="@_state.MinBackdropWidth" ValueChanged="value => _state.MinBackdropWidth = value" />
+            </div>
+        </form>
+    </div>
+</div>
+
+@code {
+    private ImageOptionsState _state = new();
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The content type ("Movie", "Series", ...) the options are for.</summary>
+    [Parameter]
+    public string? Type { get; set; }
+
+    /// <summary>The library's options of that type; the choices are written into it when the dialog closes.</summary>
+    [Parameter, EditorRequired]
+    public TypeOptions Options { get; set; } = default!;
+
+    /// <summary>What the server offers for the type: its image types and the default options.</summary>
+    [Parameter]
+    public LibraryTypeOptionsDto? AvailableOptions { get; set; }
+
+    /// <summary>
+    /// Opens the editor (<c>new ImageOptionsEditor().show(type, options, availableOptions)</c>). The
+    /// task ends when the dialog is closed, by which time <paramref name="options"/> holds the choices.
+    /// </summary>
+    public static Task ShowAsync(AppDialogs dialogs, string? type, TypeOptions options, LibraryTypeOptionsDto? availableOptions) =>
+        dialogs.ShowAsync<ImageOptionsEditor>(
+            new Dictionary<string, object?>
+            {
+                [nameof(Type)] = type,
+                [nameof(Options)] = options,
+                [nameof(AvailableOptions)] = availableOptions
+            },
+            new AppDialogOptions { Size = "small", Class = "formDialog" });
+
+    protected override void OnInitialized() => _state = DashboardLibraries.LoadImageOptions(Options, AvailableOptions);
+
+    // The original saves when the dialog closes, however it is closed (back button, Escape, backdrop).
+    public void Dispose() => DashboardLibraries.SaveImageOptions(_state, Options);
+
+    private void Close()
+    {
+        DashboardLibraries.SaveImageOptions(_state, Options);
+        Dialog.Close();
+    }
+}

@@ -1,0 +1,246 @@
+@namespace Jellyfin.Web.Components
+@* The "manage library" dialog: the folders of a library and its options.
+   Port of components/mediaLibraryEditor (template and logic). *@
+@inject JellyfinApi Api
+@inject AppDialogs Dialogs
+@inject LoadingService Loading
+@inject ToastService Toasts
+@inject Globalize Globalize
+
+<div class="formDialogHeader">
+    <IconButton Icon="arrow_back" Class="btnCancel autoSize" Title="@Globalize["ButtonBack"]" tabindex="-1" OnClick="() => Dialog.Close()" />
+    <h3 class="formDialogHeaderTitle">@_library.Name</h3>
+</div>
+
+<div class="formDialogContent scrollY" style="padding-top:2em;">
+    <div class="dialogContentInner dialog-content-centered">
+        <div class="infoBanner" style="margin-bottom:1.8em;">
+            @Globalize["ChangingMetadataImageSettingsNewContent"]
+        </div>
+
+        <div class="@("folders" + (CollectionType == "boxsets" ? " hide" : null))">
+            <div style="display: flex; align-items: center;">
+                <h1 style="margin: .5em 0;">@Globalize["Folders"]</h1>
+                <button type="button" class="emby-button fab btnAddFolder submit" title="@Globalize["Add"]" @onclick="AddFolderAsync">
+                    <span class="material-icons add" aria-hidden="true"></span>
+                </button>
+            </div>
+            <div class="paperList folderList" style="margin-bottom:2em;">
+                @for (var i = 0; i < _paths.Count; i++)
+                {
+                    var path = _paths[i];
+                    <div class="listItem listItem-border lnkPath" data-index="@i" @key="path" @onclick="() => ShowFolderAsync(path)">
+                        <div class="listItemBody">
+                            <h3 class="listItemBodyText">@path</h3>
+                        </div>
+                        <IconButton Icon="remove_circle" Class="listItemButton btnRemovePath" data-index="@i" StopPropagation="true"
+                                    OnClick="() => RemoveFolderAsync(path)" />
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="libraryOptions">
+            <LibraryOptionsEditor @ref="_optionsEditor" ContentType="@CollectionType" LibraryOptions="@_library.LibraryOptions" />
+        </div>
+    </div>
+</div>
+
+<div class="formDialogFooter">
+    <button type="button" class="emby-button raised btnSubmit button-submit block formDialogFooterItem" @onclick="SubmitAsync">
+        <span>@Globalize["ButtonOk"]</span>
+    </button>
+</div>
+
+@code {
+    private VirtualFolderInfo _library = new();
+    private List<string> _paths = [];
+    private LibraryOptionsEditor? _optionsEditor;
+    private bool _isSaving;
+
+    [CascadingParameter]
+    public DialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The library to edit.</summary>
+    [Parameter, EditorRequired]
+    public VirtualFolderInfo Library { get; set; } = default!;
+
+    /// <summary>Whether the server scans the library after a folder was added or removed.</summary>
+    [Parameter]
+    public bool Refresh { get; set; }
+
+    /// <summary>Told whether the library was changed, however the dialog is closed.</summary>
+    [Parameter]
+    public DialogChanges Changes { get; set; } = new();
+
+    private string? CollectionType => _library.CollectionType.ToApiString();
+
+    /// <summary>
+    /// Opens the editor (<c>new MediaLibraryEditor({ library, refresh })</c>). True when the library's
+    /// folders or options were changed.
+    /// </summary>
+    public static async Task<bool> ShowAsync(AppDialogs dialogs, VirtualFolderInfo library, bool refresh)
+    {
+        var changes = new DialogChanges();
+        await dialogs.ShowAsync<MediaLibraryEditor>(
+            new Dictionary<string, object?>
+            {
+                [nameof(Library)] = library,
+                [nameof(Refresh)] = refresh,
+                [nameof(Changes)] = changes
+            },
+            new AppDialogOptions { Size = "small", Class = "dlg-libraryeditor ui-body-a background-theme-a formDialog" });
+        return changes.HasChanges;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        SetLibrary(Library);
+        await RefreshLibraryFromServerAsync();
+    }
+
+    private void SetLibrary(VirtualFolderInfo library)
+    {
+        _library = library;
+        _paths = DashboardLibraries.PathsOf(library);
+    }
+
+    // Port of refreshLibraryFromServer: the library as the server has it now, found by its name.
+    private async Task RefreshLibraryFromServerAsync()
+    {
+        try
+        {
+            var folders = await Api.Client.Library.VirtualFolders.GetAsync() ?? [];
+            if (folders.FirstOrDefault(folder => folder.Name == _library.Name) is { } library)
+            {
+                SetLibrary(library);
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[MediaLibraryEditor] unable to load the library: " + ex.Message);
+        }
+    }
+
+    // Port of onAddButtonClick and addMediaLocation.
+    private async Task AddFolderAsync()
+    {
+        var path = await DirectoryBrowser.ShowAsync(Dialogs);
+        if (string.IsNullOrEmpty(path) || (_library.Locations ?? []).Contains(path))
+        {
+            // A folder the library already has is not added again.
+            return;
+        }
+
+        try
+        {
+            await Api.Client.Library.VirtualFolders.Paths.PostAsync(
+                new MediaPathDto { Name = _library.Name, PathInfo = new MediaPathInfo { Path = path } },
+                request => request.QueryParameters.RefreshLibrary = Refresh);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Toasts.Show(Globalize["ErrorAddingMediaPathToVirtualFolder"]);
+            return;
+        }
+
+        Changes.HasChanges = true;
+        await RefreshLibraryFromServerAsync();
+    }
+
+    // Port of the list item click and updateMediaLocation: the folder shows in the directory
+    // picker, where it cannot be changed; confirming stores the same path again.
+    private async Task ShowFolderAsync(string originalPath)
+    {
+        var path = await DirectoryBrowser.ShowAsync(Dialogs, path: originalPath, pathReadOnly: true);
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.Library.VirtualFolders.Paths.Update.PostAsync(
+                new UpdateMediaPathRequestDto { Name = _library.Name, PathInfo = new MediaPathInfo { Path = originalPath } });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Toasts.Show(Globalize["ErrorAddingMediaPathToVirtualFolder"]);
+            return;
+        }
+
+        Changes.HasChanges = true;
+        await RefreshLibraryFromServerAsync();
+    }
+
+    // Port of onRemoveClick.
+    private async Task RemoveFolderAsync(string location)
+    {
+        var confirmed = await Dialogs.ConfirmAsync(
+            Globalize["MessageConfirmRemoveMediaLocation"],
+            Globalize["HeaderRemoveMediaLocation"],
+            confirmText: Globalize["Delete"],
+            destructive: true);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            await Api.Client.Library.VirtualFolders.Paths.DeleteAsync(request =>
+            {
+                request.QueryParameters.Name = _library.Name;
+                request.QueryParameters.Path = location;
+                request.QueryParameters.RefreshLibrary = Refresh;
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Toasts.Show(Globalize["ErrorDefault"]);
+            return;
+        }
+
+        Changes.HasChanges = true;
+        await RefreshLibraryFromServerAsync();
+    }
+
+    // Port of onEditLibrary.
+    private async Task SubmitAsync()
+    {
+        if (_isSaving || _optionsEditor is null)
+        {
+            return;
+        }
+
+        // When the library has moved or is a symbolic link, it has no item id any more and its
+        // options cannot be stored.
+        if (!Guid.TryParse(_library.ItemId, out var itemId))
+        {
+            Dialog.Close();
+            await Dialogs.AlertAsync(Globalize["LibraryInvalidItemIdError"]);
+            return;
+        }
+
+        _isSaving = true;
+        Loading.Show();
+        try
+        {
+            var options = DashboardLibraries.MergeOptions(_library.LibraryOptions, _optionsEditor.GetLibraryOptions());
+            await Api.Client.Library.VirtualFolders.LibraryOptions.PostAsync(
+                new UpdateLibraryOptionsDto { Id = itemId, LibraryOptions = options });
+            Changes.HasChanges = true;
+            Dialog.Close();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Toasts.Show(Globalize["ErrorDefault"]);
+        }
+        finally
+        {
+            _isSaving = false;
+            Loading.Hide();
+        }
+    }
+}

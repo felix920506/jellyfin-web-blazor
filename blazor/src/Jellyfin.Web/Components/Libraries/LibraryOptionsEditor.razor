@@ -1,6 +1,7 @@
 @namespace Jellyfin.Web.Components
 @* The options of a media library. Port of components/libraryoptionseditor (template and logic). *@
 @inject JellyfinApi Api
+@inject AppDialogs Dialogs
 @inject Globalize Globalize
 
 <h2>@Globalize["HeaderLibrarySettings"]</h2>
@@ -100,8 +101,12 @@
         <div class="imageFetcher" data-type="@section.Type" @key="section">
             <div class="flex align-items-center" style="margin:1.5em 0 .5em;">
                 <h3 class="checkboxListLabel" style="margin:0;">@Globalize.Translate("HeaderTypeImageFetchers", Globalize["TypeOptionPlural" + section.Type])</h3>
-                @* PORT-TODO(session): the "Fetcher settings" button (.btnImageOptionsForType) opens components/imageOptionsEditor,
-                   which is not ported. Image options of an edited library are kept as they are. *@
+                @if (DashboardLibraries.HasImageOptions(AvailableTypeOptions(section.Type)))
+                {
+                    <button type="button" class="emby-button raised btnImageOptionsForType" style="font-size:90%;" @onclick="() => ShowImageOptionsForTypeAsync(section.Type)">
+                        <span>@Globalize["HeaderFetcherSettings"]</span>
+                    </button>
+                }
             </div>
             <LibraryPluginList Rows="section.Rows" ItemClass="imageFetcherItem" CheckboxClass="chkImageFetcher" />
             <div class="fieldDescription">@Globalize["LabelImageFetchersHelp"]</div>
@@ -386,7 +391,8 @@
             typeOptions.SimilarItemProviderOrder = Names(section.Rows);
         }
 
-        // setImageOptionsIntoOptions: image options are not edited here; keep the library's.
+        // setImageOptionsIntoOptions: the image options are edited by the "Fetcher settings" dialog,
+        // which writes them into the current options; they are taken from there.
         foreach (var original in _currentLibraryOptions.TypeOptions ?? [])
         {
             var typeOptions = TypeOptionsOf(options, original.Type, create: true)!;
@@ -489,6 +495,13 @@
             <EmbyCheckbox Id="@id" Class="@checkboxClass" Label="@Globalize[labelKey]" Value="value" ValueChanged="set" />
             <div class="fieldDescription checkboxFieldDescription">@Globalize[helpKey]</div>
         </div>;
+
+    private LibraryTypeOptionsDto? AvailableTypeOptions(string? type) =>
+        _availableOptions?.TypeOptions?.FirstOrDefault(typeOptions => typeOptions.Type == type);
+
+    // Port of showImageOptionsForType: the image options of a content type, edited in their own dialog.
+    private Task ShowImageOptionsForTypeAsync(string type) =>
+        ImageOptionsEditor.ShowAsync(Dialogs, type, TypeOptionsOf(_currentLibraryOptions, type, create: true)!, AvailableTypeOptions(type));
 
     private void SetSubtitleLanguage(string language, bool selected)
     {

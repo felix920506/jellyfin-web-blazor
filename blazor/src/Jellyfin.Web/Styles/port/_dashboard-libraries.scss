@@ -1,0 +1,172 @@
+// The dashboard's libraries, playback and networking pages (Pages/Dashboard/Libraries,
+// Pages/Dashboard/Playback, Pages/Dashboard/Networking and the Components/Dashboard/DashboardLibrar*
+// components). What the original's MUI "sx" styles come to; the breakpoints are MUI's.
+$jf-dashboard-libraries-sm: 600px;
+$jf-dashboard-libraries-md: 900px;
+$jf-dashboard-libraries-lg: 1200px;
+
+// ---- Libraries: port of routes/libraries/index.tsx (Stack spacing 3, mt 2) ----
+
+.jf-dashboard-libraries {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    margin-top: 16px;
+}
+
+.jf-dashboard-libraries-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+// The spinner a running scan shows in place of the button's icon.
+.jf-dashboard-libraries-scanning {
+    margin-inline-end: 8px;
+}
+
+// Grid with spacing 2: one card a row, then two (sm), four (md) and five (lg).
+.jf-dashboard-libraries-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+
+    @media (min-width: $jf-dashboard-libraries-sm) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    @media (min-width: $jf-dashboard-libraries-md) {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    @media (min-width: $jf-dashboard-libraries-lg) {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+}
+
+// ---- A library: port of components/BaseCard.tsx as LibraryCard.tsx uses it ----
+
+.mud-card.jf-dashboard-library-card {
+    display: flex;
+    flex-direction: column;
+    height: 260px;
+}
+
+// CardActionArea: the picture is one button that opens the library.
+.jf-dashboard-library-action {
+    display: flex;
+    flex-grow: 1;
+    align-items: stretch;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: inherit;
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    cursor: pointer;
+    overflow: hidden;
+
+    &:hover .jf-dashboard-library-media,
+    &:focus-visible .jf-dashboard-library-media {
+        filter: brightness(1.08);
+    }
+}
+
+.jf-dashboard-library-media {
+    flex-grow: 1;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: cover;
+}
+
+.jf-dashboard-library-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    .material-icons {
+        font-size: 70px;
+    }
+}
+
+.jf-dashboard-library-content {
+    display: flex;
+    flex-direction: row;
+    min-height: 50px;
+    padding: 16px;
+    padding-inline-end: 8px;
+}
+
+.jf-dashboard-library-texts {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.jf-dashboard-library-name {
+    margin-bottom: 0.35em;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.jf-dashboard-library-type {
+    color: var(--mud-palette-text-secondary);
+    line-break: anywhere;
+}
+
+.jf-dashboard-library-menu {
+    flex-shrink: 0;
+    align-self: flex-start;
+}
+
+// ---- Settings forms ----
+
+// FormControl with a FormControlLabel and a FormHelperText.
+.jf-dashboard-check-field {
+    .mud-checkbox,
+    .mud-switch {
+        margin: 0;
+    }
+}
+
+// FormGroup: checkboxes below each other without the form's gap.
+.jf-dashboard-check-group {
+    display: flex;
+    flex-direction: column;
+
+    .mud-checkbox {
+        margin: 0;
+    }
+}
+
+// ---- Networking: Stack with spacing 6 of sections with spacing 3 ----
+
+.jf-dashboard-networking {
+    display: flex;
+    flex-direction: column;
+    gap: 48px;
+
+    > .mud-button-root {
+        align-self: stretch;
+    }
+}
+
+// The address for the local network and the one for the internet, side by side.
+.jf-dashboard-networking-uris {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+
+    > .mud-input-control {
+        flex-grow: 1;
+        margin: 0;
+    }
+}

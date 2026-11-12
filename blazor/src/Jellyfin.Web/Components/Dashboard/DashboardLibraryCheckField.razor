@@ -1,0 +1,38 @@
+@* A checkbox of the dashboard's settings forms with the help text below it: MUI's FormControl
+   with a FormControlLabel and a FormHelperText, as the library, playback and networking pages use it. *@
+@namespace Jellyfin.Web.Components
+
+<div class="jf-dashboard-field jf-dashboard-check-field">
+    <MudCheckBox T="bool" Value="Value" ValueChanged="ValueChanged" Color="Color.Primary" Label="@Label" Class="@Class" />
+    @if (ChildContent is not null)
+    {
+        <div class="jf-dashboard-field-help">@ChildContent</div>
+    }
+    else if (!string.IsNullOrEmpty(Help))
+    {
+        <div class="jf-dashboard-field-help">@Help</div>
+    }
+</div>
+
+@code {
+    /// <summary>The class of the checkbox, which names the setting.</summary>
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? Label { get; set; }
+
+    /// <summary>The help text below the checkbox.</summary>
+    [Parameter]
+    public string? Help { get; set; }
+
+    [Parameter]
+    public bool Value { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> ValueChanged { get; set; }
+
+    /// <summary>A help text with markup (a link), instead of <see cref="Help"/>.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

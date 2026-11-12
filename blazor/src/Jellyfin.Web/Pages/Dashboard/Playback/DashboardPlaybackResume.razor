@@ -1,0 +1,115 @@
+@* When playback resumes. Port of apps/dashboard/routes/playback/resume.tsx. *@
+@namespace Jellyfin.Web.Pages.Dashboard
+@attribute [Route("/dashboard/playback/resume")]
+@attribute [Access(AccessLevel.Admin)]
+@layout DashboardLayout
+@inject JellyfinApi Api
+@inject Globalize Globalize
+
+<Page Id="playbackConfigurationPage" Title="@Globalize["ButtonResume"]" Class="mainAnimatedPage type-interior">
+    @if (_loading)
+    {
+        <DashboardLoading />
+    }
+    else
+    {
+        <div class="content-primary">
+            @if (_failed)
+            {
+                <MudAlert Severity="Severity.Error">@Globalize["ResumeLoadError"]</MudAlert>
+            }
+            else
+            {
+                <form class="jf-dashboard-form" @onsubmit="SaveAsync" @onsubmit:preventDefault="true">
+                    <MudText Typo="Typo.h1">@Globalize["ButtonResume"]</MudText>
+
+                    @if (_saved)
+                    {
+                        <MudAlert Severity="Severity.Success" Class="jf-dashboard-saved">@Globalize["SettingsSaved"]</MudAlert>
+                    }
+
+                    <MudNumericField T="int?" @bind-Value="_minResumePct" Variant="Variant.Filled" Min="0" Max="100" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelMinResumePercentage"]" HelperText="@Globalize["LabelMinResumePercentageHelp"]"
+                                     InputId="jf-dashboard-resume-minpct" />
+
+                    <MudNumericField T="int?" @bind-Value="_maxResumePct" Variant="Variant.Filled" Min="1" Max="100" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelMaxResumePercentage"]" HelperText="@Globalize["LabelMaxResumePercentageHelp"]"
+                                     InputId="jf-dashboard-resume-maxpct" />
+
+                    <MudNumericField T="int?" @bind-Value="_minAudiobookResume" Variant="Variant.Filled" Min="0" Max="100" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelMinAudiobookResume"]" HelperText="@Globalize["LabelMinAudiobookResumeHelp"]"
+                                     InputId="jf-dashboard-resume-minaudiobook" />
+
+                    <MudNumericField T="int?" @bind-Value="_maxAudiobookResume" Variant="Variant.Filled" Min="1" Max="100" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelMaxAudiobookResume"]" HelperText="@Globalize["LabelMaxAudiobookResumeHelp"]"
+                                     InputId="jf-dashboard-resume-maxaudiobook" />
+
+                    <MudNumericField T="int?" @bind-Value="_minResumeDuration" Variant="Variant.Filled" Min="0" UserAttributes="@(new() { ["required"] = true })"
+                                     Label="@Globalize["LabelMinResumeDuration"]" HelperText="@Globalize["LabelMinResumeDurationHelp"]"
+                                     InputId="jf-dashboard-resume-minduration" />
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               Disabled="_saving" Class="jf-dashboard-submit">@Globalize["Save"]</MudButton>
+                </form>
+            }
+        </div>
+    }
+</Page>
+
+@code {
+    private bool _loading = true;
+    private bool _failed;
+    private bool _saving;
+    private bool _saved;
+    private int? _minResumePct;
+    private int? _maxResumePct;
+    private int? _minAudiobookResume;
+    private int? _maxAudiobookResume;
+    private int? _minResumeDuration;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            _minResumePct = configuration.MinResumePct;
+            _maxResumePct = configuration.MaxResumePct;
+            _minAudiobookResume = configuration.MinAudiobookResume;
+            _maxAudiobookResume = configuration.MaxAudiobookResume;
+            _minResumeDuration = configuration.MinResumeDurationSeconds;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Resume] unable to load the settings: " + ex.Message);
+            _failed = true;
+        }
+
+        _loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _saved = false;
+        try
+        {
+            // The settings as they are now; a field that is empty leaves its setting as it is.
+            var configuration = await Api.Client.System.Configuration.GetAsync() ?? new ServerConfiguration();
+            configuration.MinResumePct = _minResumePct ?? configuration.MinResumePct;
+            configuration.MaxResumePct = _maxResumePct ?? configuration.MaxResumePct;
+            configuration.MinAudiobookResume = _minAudiobookResume ?? configuration.MinAudiobookResume;
+            configuration.MaxAudiobookResume = _maxAudiobookResume ?? configuration.MaxAudiobookResume;
+            configuration.MinResumeDurationSeconds = _minResumeDuration ?? configuration.MinResumeDurationSeconds;
+            await Api.Client.System.Configuration.PostAsync(configuration);
+            _saved = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Warn("[Resume] saving the settings failed: " + ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}
