@@ -58,7 +58,8 @@ public static class NamedConfiguration
 
         return value.GetValueKind() switch
         {
-            JsonValueKind.Number => value.GetValue<double>(),
+            // Through the JSON text: a node built in .NET holds an int or long, which GetValue<double> rejects.
+            JsonValueKind.Number => double.Parse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture),
             JsonValueKind.String when double.TryParse(value.GetValue<string>(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) => number,
             _ => null,
         };
