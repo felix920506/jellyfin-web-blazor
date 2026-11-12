@@ -13,7 +13,14 @@
          (InvariantTimezone would need a native relink, i.e. the wasm-tools workload.) -->
     <InvariantGlobalization>true</InvariantGlobalization>
     <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+    <!-- RouteTable, Composition and ShellSlots discover Razor types by reflection. Rooting this
+         application assembly keeps those contracts and Kiota's reflection-based JSON models
+         available in the trimmed publish without disabling trimming for framework assemblies. -->
   </PropertyGroup>
+
+  <ItemGroup>
+    <TrimmerRootAssembly Include="$(AssemblyName)" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
