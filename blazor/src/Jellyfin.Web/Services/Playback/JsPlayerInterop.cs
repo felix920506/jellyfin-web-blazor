@@ -66,6 +66,10 @@ public sealed class JsPlayerInterop(IServiceProvider services) : IPlayerInterop,
 
     public void SetSecondarySubtitleCues(IReadOnlyList<SubtitleCue>? cues) => Send("setSecondarySubtitleCues", cues);
 
+    public void SetSubtitleRenderer(SubtitleRendererRequest? request, bool secondary) => Send("setSubtitleRenderer", request, secondary);
+
+    public void SetSubtitleRendererOffset(double seconds, bool secondary) => Send("setSubtitleRendererOffset", seconds, secondary);
+
     public void ToggleFullscreen() => Send("toggleFullscreen");
 
     public void SetPictureInPicture(bool enabled) => Send("setPictureInPicture", enabled);

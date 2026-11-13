@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Jellyfin.Sdk.Generated.Models;
 using Jellyfin.Web.Interop;
+using Jellyfin.Web.Pages.User;
 
 namespace Jellyfin.Web.Services.Playback;
 
@@ -131,7 +132,7 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
     public async Task<JsonObject> GetDeviceProfileAsync(BaseItemDto? item, bool isRetry = false)
     {
         var caps = await Probe.GetAsync();
-        var profile = Profiles.GetDeviceProfile(caps, item?.RunTimeTicks, item?.MediaType.ToApiString(), item is not null);
+        var profile = Profiles.GetDeviceProfile(caps, item?.RunTimeTicks, item?.MediaType.ToApiString(), item is not null, isRetry);
         LastProfile = profile;
         return profile;
     }
@@ -284,11 +285,7 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
 }
 
 /// <summary>The HTML video player. Port of plugins/htmlVideoPlayer/plugin.js.</summary>
-/// <remarks>
-/// Subtitles: text tracks the server delivers externally (converted to WebVTT) are fetched as track
-/// events and shown through a native text track. ASS/SSA, PGS and VobSub renderers are not ported;
-/// those formats are not advertised in the device profile, so the server burns them into a transcode.
-/// </remarks>
+/// <remarks>Subtitle format selection is kept in C#; the video module only owns browser renderer objects.</remarks>
 [AppService(typeof(IMediaPlayer))]
 public sealed class HtmlVideoPlayer(
     IPlayerInterop interop,
@@ -299,7 +296,8 @@ public sealed class HtmlVideoPlayer(
     IBrowser browser,
     JellyfinApi api,
     AppRouter router,
-    LoadingService loading)
+    LoadingService loading,
+    UserSettings userSettings)
     : HtmlMediaPlayer("video", interop, probe, profiles, appSettings, appHost, browser)
 {
     private int _subtitleTrackIndexToSetOnPlaying = -1;
@@ -343,6 +341,8 @@ public sealed class HtmlVideoPlayer(
         base.SetSubtitleOffset(seconds);
         _ = SetCurrentTrackElementAsync(_subtitleTrackIndexToSetOnPlaying, secondary: false);
         _ = SetCurrentTrackElementAsync(_secondarySubtitleTrackIndex ?? -1, secondary: true);
+        Interop.SetSubtitleRendererOffset(seconds, secondary: false);
+        Interop.SetSubtitleRendererOffset(seconds, secondary: true);
     }
 
     public override void SetAspectRatio(string value)
@@ -508,12 +508,20 @@ public sealed class HtmlVideoPlayer(
             {
                 Interop.SetSubtitleCues(null);
             }
+            Interop.SetSubtitleRenderer(null, secondary);
             return;
         }
 
         try
         {
-            var url = track.IsExternalUrl == true ? track.DeliveryUrl : api.GetUrl(track.DeliveryUrl);
+            var url = track.IsExternalUrl == true ? track.DeliveryUrl : api.GetUrl(track.DeliveryUrl, ("ApiKey", api.AccessToken));
+            if (IsComplexSubtitle(track.Codec))
+            {
+                Interop.SetSubtitleCues(null);
+                Interop.SetSubtitleRenderer(await BuildRendererRequestAsync(options, track, url, secondary), secondary);
+                return;
+            }
+
             using var response = await api.SendAsync(HttpMethod.Get, url.Replace(".vtt", ".js", StringComparison.Ordinal));
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -562,6 +570,36 @@ public sealed class HtmlVideoPlayer(
             }
         }
     }
+
+    private async Task<SubtitleRendererRequest> BuildRendererRequestAsync(StreamInfo options, MediaStream track, string url, bool secondary)
+    {
+        var source = options.MediaSource;
+        var attachments = (source?.MediaAttachments ?? [])
+            .Where(a => a.MimeType is "application/vnd.ms-opentype" or "application/x-truetype-font" or "font/otf" or "font/ttf" or "font/woff" or "font/woff2")
+            .Where(a => !string.IsNullOrEmpty(a.DeliveryUrl))
+            .Select(a => a.DeliveryUrl!.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? a.DeliveryUrl : api.GetUrl(a.DeliveryUrl!, ("ApiKey", api.AccessToken)))
+            .ToArray();
+
+        var appearance = SubtitleAppearance.Load(userSettings);
+        var fallbackConfigUrl = api.GetUrl("System/Configuration/encoding", ("ApiKey", api.AccessToken));
+        var fallbackFontsUrl = api.GetUrl("FallbackFont/Fonts", ("ApiKey", api.AccessToken));
+        var fallbackFontUrl = api.GetUrl("FallbackFont/Fonts", ("ApiKey", api.AccessToken));
+
+        return new SubtitleRendererRequest
+        {
+            Codec = (track.Codec ?? string.Empty).ToLowerInvariant(),
+            Url = url,
+            Secondary = secondary,
+            TimeOffset = options.TranscodingOffsetTicks / 10000000d + SubtitleOffset,
+            Attachments = attachments,
+            FallbackConfigUrl = fallbackConfigUrl,
+            FallbackFontsUrl = fallbackFontsUrl,
+            FallbackFontUrl = fallbackFontUrl,
+            AspectMode = appearance.AspectMode is "stretch" or "contain" or "cover" ? appearance.AspectMode : "contain",
+        };
+    }
+
+    private static bool IsComplexSubtitle(string? codec) => (codec ?? string.Empty).ToLowerInvariant() is "ass" or "ssa" or "pgssub";
 
     /// <summary>Port of normalizeTrackEventText(text, false).</summary>
     internal static string NormalizeTrackEventText(string text)

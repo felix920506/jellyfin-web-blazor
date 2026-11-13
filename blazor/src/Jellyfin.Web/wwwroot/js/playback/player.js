@@ -14,7 +14,7 @@ let mediaSessionBound = false;
 const players = { video: null, audio: null };
 
 function newPlayer(kind) {
-    return { kind, elem: null, container: null, hls: null, src: null, started: false, fading: false, options: null, onError: null, gainNode: null, normalizationGain: 1 };
+    return { kind, elem: null, container: null, hls: null, src: null, started: false, fading: false, options: null, onError: null, gainNode: null, normalizationGain: 1, subtitleRenderer: null, secondarySubtitleRenderer: null, subtitleRendererGeneration: 0, secondarySubtitleRendererGeneration: 0 };
 }
 
 function getPlayer(kind) {
@@ -134,7 +134,141 @@ function resetSrc(elem) {
 
 function onErrorInternal(player, type) {
     setSubtitleCues(null);
+    disposeSubtitleRenderer(player, false);
+    disposeSubtitleRenderer(player, true);
     emit(player, 'error', type);
+}
+
+function disposeSubtitleRenderer(player, secondary) {
+    const property = secondary ? 'secondarySubtitleRenderer' : 'subtitleRenderer';
+    const renderer = player[property];
+    if (renderer && renderer.dispose) {
+        renderer.dispose();
+    }
+    player[property] = null;
+}
+
+let octopusPromise = null;
+function requireOctopus() {
+    if (window.SubtitlesOctopus) {
+        return Promise.resolve(window.SubtitlesOctopus);
+    }
+    if (!octopusPromise) {
+        octopusPromise = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'generated/lib/subtitles-octopus/dist/js/subtitles-octopus.js';
+            script.onload = () => window.SubtitlesOctopus ? resolve(window.SubtitlesOctopus) : reject(new Error('libass did not expose SubtitlesOctopus'));
+            script.onerror = () => reject(new Error('libass could not be loaded'));
+            document.head.appendChild(script);
+        });
+    }
+    return octopusPromise;
+}
+
+function rendererDisplaySettings(request) {
+    return { aspectMode: request.aspectMode || 'contain' };
+}
+
+async function fallbackFonts(request) {
+    try {
+        const config = await fetch(request.fallbackConfigUrl).then(response => response.ok ? response.json() : null);
+        if (!config || !config.EnableFallbackFont) {
+            return [];
+        }
+        const files = await fetch(request.fallbackFontsUrl).then(response => response.ok ? response.json() : []);
+        return files.map(font => {
+            const url = new URL(request.fallbackFontUrl);
+            url.pathname = url.pathname.replace(/\/$/, '') + '/' + encodeURIComponent(font.Name);
+            return url.href;
+        });
+    } catch (err) {
+        return [];
+    }
+}
+
+export async function setSubtitleRenderer(request, secondary) {
+    const player = players.video;
+    if (!player || !player.elem) {
+        return;
+    }
+    const property = secondary ? 'secondarySubtitleRenderer' : 'subtitleRenderer';
+    const generationProperty = secondary ? 'secondarySubtitleRendererGeneration' : 'subtitleRendererGeneration';
+    const generation = ++player[generationProperty];
+    disposeSubtitleRenderer(player, secondary);
+    setTrackCues(secondary ? 'manualSecondaryTrack' : 'manualTrack', null);
+    if (!request) {
+        return;
+    }
+
+    const error = () => {
+        if (player[generationProperty] === generation) {
+            disposeSubtitleRenderer(player, secondary);
+            emit(player, 'error', request.codec === 'pgssub' ? 'PGS_RENDER_ERROR' : 'ASS_RENDER_ERROR');
+        }
+    };
+    try {
+        if (request.codec === 'ass' || request.codec === 'ssa') {
+            const SubtitlesOctopus = await requireOctopus();
+            const fonts = [...(request.attachments || []), ...(await fallbackFonts(request))];
+            if (player[generationProperty] !== generation) {
+                return;
+            }
+            player[property] = new SubtitlesOctopus({
+                video: player.elem,
+                subUrl: request.url,
+                fonts,
+                workerUrl: 'generated/lib/subtitles-octopus/dist/js/subtitles-octopus-worker.js',
+                legacyWorkerUrl: 'generated/lib/subtitles-octopus/dist/js/subtitles-octopus-worker-legacy.js',
+                timeOffset: request.timeOffset || 0,
+                renderMode: 'wasm-blend',
+                dropAllAnimations: false,
+                libassMemoryLimit: 40,
+                libassGlyphLimit: 40,
+                targetFps: 24,
+                prescaleFactor: 0.8,
+                prescaleHeightLimit: 1080,
+                maxRenderHeight: 2160,
+                resizeVariation: 0.2,
+                renderAhead: 90,
+                onError: error
+            });
+        } else if (request.codec === 'pgssub') {
+            const libbitsub = await import('/generated/lib/libbitsub/dist/index.js');
+            if (player[generationProperty] !== generation) {
+                return;
+            }
+            player[property] = new libbitsub.PgsRenderer({
+                video: player.elem,
+                container: player.container,
+                subUrl: request.url,
+                timeOffset: request.timeOffset || 0,
+                streamingLoad: true,
+                rangeRequests: true,
+                prefetchWindow: { before: 1, after: 2 },
+                displaySettings: {
+                    scale: 1,
+                    aspectMode: request.aspectMode || 'contain',
+                    verticalOffset: 0,
+                    horizontalOffset: 0,
+                    horizontalAlign: 'center',
+                    bottomPadding: 0,
+                    safeArea: 0,
+                    opacity: 1
+                },
+                onError: error
+            });
+        }
+    } catch (err) {
+        error();
+    }
+}
+
+export function setSubtitleRendererOffset(seconds, secondary) {
+    const player = players.video;
+    const renderer = player && player[secondary ? 'secondarySubtitleRenderer' : 'subtitleRenderer'];
+    if (renderer) {
+        renderer.timeOffset = (player.options && player.options.transcodingOffsetSeconds || 0) + seconds;
+    }
 }
 
 function handleHlsJsMediaError(player, reject) {
@@ -588,6 +722,8 @@ export function destroy(kind) {
     }
 
     destroyHls(player);
+    disposeSubtitleRenderer(player, false);
+    disposeSubtitleRenderer(player, true);
     if (kind === 'video') {
         setTransparency(false);
         document.body.classList.remove('hide-scroll');

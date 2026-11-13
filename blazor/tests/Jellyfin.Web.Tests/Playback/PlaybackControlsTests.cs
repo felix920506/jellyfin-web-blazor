@@ -356,6 +356,32 @@ public class PlaybackControlsTests
         Assert.Equal(-1, (int?)requests[2]["SubtitleStreamIndex"]);
     }
 
+    [Fact]
+    public async Task An_external_ass_track_uses_the_client_renderer_and_offset()
+    {
+        await using var harness = await PlaybackHarness.WithMediaAsync();
+        var source = PlaybackServer.MediaSource(PlaybackServer.MovieId, directPlay: true, directStream: true, transcodingUrl: null);
+        source["MediaStreams"]!.AsArray().Add(new JsonObject
+        {
+            ["Index"] = 4,
+            ["Type"] = "Subtitle",
+            ["Codec"] = "ass",
+            ["Language"] = "eng",
+            ["IsExternal"] = false,
+            ["DeliveryMethod"] = "External",
+            ["DeliveryUrl"] = "/Videos/movie/Subtitles/4/0/Stream.ass",
+        });
+        PlaybackServer.ScriptPlaybackInfo(harness.Server, direct: source);
+
+        await harness.PlayMovieAsync();
+        await harness.Manager.SetSubtitleStreamIndexAsync(4);
+
+        Assert.Contains("renderer primary ass", harness.Player.Calls);
+        Assert.DoesNotContain(harness.Player.Loads, load => load.Request.Url.Contains("transcode", StringComparison.OrdinalIgnoreCase));
+        harness.Manager.SetSubtitleOffset(1.5);
+        Assert.Contains(harness.Player.Calls, call => call.StartsWith("renderer offset primary", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(@"{\an8}Hello\Nworld", "‎Hello\n‎world")]
     [InlineData("One\r\nTwo", "‎One\n‎Two")]

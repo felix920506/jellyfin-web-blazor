@@ -29,11 +29,18 @@ function speakerCount() {
 export function probe(videoTypes, audioTypes) {
     const video = document.createElement('video');
     const audio = document.createElement('audio');
+    let canvas2d = false;
+    try {
+        canvas2d = !!document.createElement('canvas').getContext('2d');
+    } catch (err) {
+        canvas2d = false;
+    }
     return {
         videoTypes: videoTypes.filter(t => canPlay(video, t)),
         audioTypes: audioTypes.filter(t => canPlay(audio, t)),
         mediaSource: window.MediaSource != null,
         textTracks: video.textTracks != null,
+        canvas2D: canvas2d,
         audioTracks: video.audioTracks != null,
         speakerCount: speakerCount(),
         pictureInPicture: !!(document.pictureInPictureEnabled

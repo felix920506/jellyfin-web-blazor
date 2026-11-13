@@ -14,6 +14,8 @@ public static class PlayMethods
 /// <summary>Port of utils/mediaError.ts: the values are the suffixes of the "PlaybackError.*" strings.</summary>
 public static class MediaErrors
 {
+    public const string AssRenderError = "ASS_RENDER_ERROR";
+    public const string PgsRenderError = "PGS_RENDER_ERROR";
     public const string FatalHlsError = "FATAL_HLS_ERROR";
     public const string MediaDecodeError = "MEDIA_DECODE_ERROR";
     public const string MediaNotSupported = "MEDIA_NOT_SUPPORTED";
@@ -163,6 +165,20 @@ public sealed record PlayerLoadResult
 /// <summary>A cue of a text subtitle track (seconds).</summary>
 public sealed record SubtitleCue(double Start, double End, string Text);
 
+/// <summary>Configuration for a client-rendered graphical subtitle track.</summary>
+public sealed record SubtitleRendererRequest
+{
+    public string Codec { get; init; } = string.Empty;
+    public string Url { get; init; } = string.Empty;
+    public bool Secondary { get; init; }
+    public double TimeOffset { get; init; }
+    public IReadOnlyList<string> Attachments { get; init; } = [];
+    public string? FallbackConfigUrl { get; init; }
+    public string? FallbackFontsUrl { get; init; }
+    public string? FallbackFontUrl { get; init; }
+    public string AspectMode { get; init; } = "contain";
+}
+
 /// <summary>One line of the stats overlay.</summary>
 public sealed record PlayerStat(string Label, string Value);
 
@@ -298,6 +314,8 @@ public interface IPlayerInterop
     void SetAudioTrack(int position);
     void SetSubtitleCues(IReadOnlyList<SubtitleCue>? cues);
     void SetSecondarySubtitleCues(IReadOnlyList<SubtitleCue>? cues);
+    void SetSubtitleRenderer(SubtitleRendererRequest? request, bool secondary);
+    void SetSubtitleRendererOffset(double seconds, bool secondary);
     void ToggleFullscreen();
     void SetPictureInPicture(bool enabled);
     void NavigatedToOsd();

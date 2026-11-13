@@ -133,6 +133,12 @@ internal sealed class FakePlayerInterop : IPlayerInterop
         SecondarySubtitleCues.Add(cues);
     }
 
+    public void SetSubtitleRenderer(SubtitleRendererRequest? request, bool secondary) =>
+        Calls.Add($"renderer {(secondary ? "secondary" : "primary")} {request?.Codec ?? "none"}");
+
+    public void SetSubtitleRendererOffset(double seconds, bool secondary) =>
+        Calls.Add(FormattableString.Invariant($"renderer offset {(secondary ? "secondary" : "primary")} {seconds}"));
+
     public void ToggleFullscreen()
     {
         Calls.Add("fullscreen");

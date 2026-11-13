@@ -26,6 +26,18 @@ SendKey, PageUp/Down and ToggleContextMenu). Navigation focus scopes use the top
 or popover rather than legacy focuscontainer classes, which ported pages do not consistently have.
 DisplayMessage with TimeoutMs uses the existing toast duration, not a custom timeout.
 
+## Delivered: graphical subtitles
+
+The local HTML video player advertises and renders externally delivered ASS/SSA subtitles with the
+vendored `@jellyfin/libass-wasm` 4.2.4 package. Embedded font attachments are filtered by font MIME
+type and passed to the renderer; when the server's fallback-font setting is enabled, its font list is
+fetched and added as well. PGS is rendered with vendored `libbitsub` 1.13.0 when the browser has a
+2D canvas, `subtitlerenderpgs` is enabled, and the subtitle burn-in policy permits external image
+tracks. Both renderers support the current transcoding offset and user subtitle offset. Renderer
+errors use the existing playback retry path, causing the server to negotiate a burned-in fallback.
+Graphical tracks are not offered as secondary subtitle pairs, matching the original client's overlap
+avoidance policy.
+
 ## Delivered: synced lyrics
 
 `/lyrics` loads the current audio item's lyrics from `/Audio/{id}/Lyrics`. Plain lyrics remain

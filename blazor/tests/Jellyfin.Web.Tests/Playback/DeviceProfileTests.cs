@@ -67,11 +67,27 @@ public class DeviceProfileTests
         Assert.True((bool)audio["EnableAudioVbrEncoding"]!);
 
         var subtitles = Of(profile, "SubtitleProfiles").ToList();
-        Assert.Equal("vtt", (string?)Assert.Single(subtitles)["Format"]);
-        Assert.Equal("External", (string?)subtitles[0]["Method"]);
+        Assert.Contains(subtitles, p => (string?)p["Format"] == "vtt" && (string?)p["Method"] == "External");
+        Assert.Contains(subtitles, p => (string?)p["Format"] == "ass" && (string?)p["Method"] == "External");
+        Assert.Contains(subtitles, p => (string?)p["Format"] == "ssa" && (string?)p["Method"] == "External");
+        Assert.DoesNotContain(subtitles, p => (string?)p["Format"] == "pgssub");
 
         var codecProfiles = Of(profile, "CodecProfiles").Where(p => (string?)p["Type"] == "Video").Select(p => (string?)p["Codec"]).ToList();
         Assert.All(new[] { "h264", "hevc", "vp9", "av1" }, codec => Assert.Contains(codec, codecProfiles));
+    }
+
+    [Fact]
+    public async Task Pgs_is_advertised_only_when_image_rendering_is_enabled()
+    {
+        await using var harness = await PlaybackHarness.CreateAsync();
+        var settings = harness.Get<AppSettings>();
+        settings.Set("subtitlerenderpgs", true);
+
+        var profile = harness.Get<DeviceProfileBuilder>().GetDeviceProfile(FakeCapabilityProbe.Chrome, Ticks, "Video");
+        Assert.Contains(Of(profile, "SubtitleProfiles"), p => (string?)p["Format"] == "pgssub" && (string?)p["Method"] == "External");
+
+        var retry = harness.Get<DeviceProfileBuilder>().GetDeviceProfile(FakeCapabilityProbe.Chrome, Ticks, "Video", isRetry: true);
+        Assert.DoesNotContain(Of(retry, "SubtitleProfiles"), p => (string?)p["Format"] is "ass" or "ssa" or "pgssub");
     }
 
     [Fact]
