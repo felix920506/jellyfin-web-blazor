@@ -4,7 +4,7 @@
 # Uses the ffmpeg that ships in the Jellyfin image; skipped when the collection already exists.
 set -euo pipefail
 MEDIA="$1"; IMAGE="$2"
-STAMP="$MEDIA/.seeded-v3-subtitles"
+STAMP="$MEDIA/.seeded-v2"
 [ -f "$STAMP" ] && exit 0
 mkdir -p "$MEDIA"
 
@@ -60,60 +60,6 @@ mkdir -p "$MEDIA/movies/Second Feature (2021)"
 } > "$MEDIA/movies/Second Feature (2021)/Second Feature (2021).en.srt"
 image "movies/Second Feature (2021)/poster.jpg" 400x600 0xaa5cc3
 image "movies/Second Feature (2021)/backdrop.jpg" 1280x720 0xaa5cc3
-
-# ASS is a sidecar so the playback e2e can verify libass without changing the video stream.
-cat > "$MEDIA/movies/Second Feature (2021)/Second Feature (2021).en.ass" <<'EOF'
-[Script Info]
-ScriptType: v4.00+
-PlayResX: 640
-PlayResY: 360
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,30,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,30,30,24,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:02.00,0:00:12.00,Default,,0,0,24,,ASS renderer subtitle
-EOF
-
-# A tiny valid PGS/SUP stream: a white rectangle is displayed from 2 to 12 seconds.
-# Keeping this generated here avoids adding binary fixtures to the repository.
-python3 - "$MEDIA/movies/Second Feature (2021)/Second Feature (2021).en.sup" <<'PY'
-import struct
-import sys
-
-out = open(sys.argv[1], "wb")
-
-def segment(pts, kind, payload):
-    out.write(b"PG" + struct.pack(">IIBH", pts * 90, 0, kind, len(payload)) + payload)
-
-def display(pts, end, number):
-    # 640x360 epoch, one object at (220, 285), 200x40 pixels.
-    pcs = struct.pack(">HHBHB BBB", 640, 360, 0x10, number, 0x80, 0, 0, 1)
-    pcs += struct.pack(">HBBHH", 1, 0, 0, 220, 285)
-    segment(pts, 0x16, pcs)
-
-    wds = struct.pack(">BHHHH", 1, 0, 0, 640, 360)
-    segment(pts, 0x17, wds)
-
-    # Palette 0: transparent index 0, opaque white index 1.
-    pds = bytes([0, 0, 0, 16, 128, 128, 0, 1, 235, 128, 128, 255])
-    segment(pts, 0x14, pds)
-
-    width, height = 200, 40
-    # Each line is a long run of palette index 1 followed by end-of-line. PGS uses a two-byte
-    # length for runs longer than 63 pixels: 00 C0 00 <length> <palette-index>.
-    rle = b"".join(bytes([0, 0xC0, 0, width, 1, 0, 0]) for _ in range(height))
-    object_length = len(rle) + 4
-    body = struct.pack(">HBB", 1, 0, 0xC0) + object_length.to_bytes(3, "big") + struct.pack(">HH", width, height) + rle
-    segment(pts, 0x15, body)
-    segment(pts, 0x80, b"")
-
-display(2, 12, 1)
-display(12, 20, 2)
-out.close()
-PY
 
 video "movies/Third Film (2008)/Third Film (2008).mp4" 45 rgbtestsrc 550
 image "movies/Third Film (2008)/poster.jpg" 400x600 0xcc7a00

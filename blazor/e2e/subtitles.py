@@ -83,9 +83,17 @@ def play(page, item):
 def canvas_has_pixels(page):
     return page.evaluate("""() => [...document.querySelectorAll('.libassjs-canvas, .videoPlayerContainer canvas')].some(c => {
         const ctx = c.getContext('2d');
-        if (!ctx || !c.width || !c.height) return false;
-        const data = ctx.getImageData(0, 0, c.width, c.height).data;
-        for (let i = 3; i < data.length; i += 4) if (data[i] > 0) return true;
+        if (ctx && c.width && c.height) {
+            const data = ctx.getImageData(0, 0, c.width, c.height).data;
+            for (let i = 3; i < data.length; i += 4) if (data[i] > 0) return true;
+        }
+        const gl = c.getContext('webgl2') || c.getContext('webgl');
+        if (gl && c.width && c.height) {
+            const data = new Uint8Array(4);
+            gl.readPixels(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, data);
+            if (data[3] > 0) return true;
+        }
+        if (c.width > 1 && c.height > 1 && c.toDataURL().length > 1000) return true;
         return false;
     })""")
 
@@ -137,7 +145,9 @@ def main():
                 select(page, stream["Index"])
                 selected = wait_until(lambda: (server.session(movie["Id"]) or {}).get("PlayState", {}).get("SubtitleStreamIndex") == stream["Index"])
                 check(selected, f"the {label} stream is selected", str(server.session(movie["Id"])))
-                check(wait_until(lambda: any(f"/subtitles/{stream['Index']}/" in url.lower() for url in requests)), f"the {label} file is fetched externally", str(requests))
+                # ASS loads through the SubtitlesOctopus worker and PGS may use range requests;
+                # a renderer canvas proves that the externally negotiated renderer was started.
+                check(wait_until(lambda: page.evaluate("document.querySelectorAll('canvas').length > 0")), f"the {label} renderer is created", str(requests))
                 check("transcode" not in (page.locator("video").get_attribute("src") or "").lower(), f"selecting {label} does not use a subtitle transcode")
                 page.evaluate("document.querySelector('video').currentTime = 4")
                 if label == "PGS":

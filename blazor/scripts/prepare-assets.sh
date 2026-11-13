@@ -51,7 +51,7 @@ vendor libarchive.js 2.0.2 libarchive 'package/dist/libarchive.js' 'package/dist
 vendor swiper 12.2.0 swiper 'package/swiper-bundle.min.js' 'package/swiper-bundle.min.css'
 vendor @jellyfin/libass-wasm 4.2.4 subtitles-octopus 'package/dist/js/*'
 vendor libbitsub 1.13.0 libbitsub 'package/dist/**' 'package/pkg/**'
-# libbitsub is published for bundlers; browsers require the extension on this dynamic import.
+# libbitsub is published for bundlers; browsers require extensions on these relative ESM imports.
 sed -i "s#../../pkg/libbitsub')#../../pkg/libbitsub.js')#" "$OUT/lib/libbitsub/dist/ts/wasm.js"
 # Its ESM build likewise omits extensions on internal relative imports, which bundlers normally add.
 while IFS= read -r file; do

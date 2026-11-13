@@ -177,6 +177,7 @@ public sealed record SubtitleRendererRequest
     public string? FallbackFontsUrl { get; init; }
     public string? FallbackFontUrl { get; init; }
     public string AspectMode { get; init; } = "contain";
+    public double TargetFps { get; init; } = 24;
 }
 
 /// <summary>One line of the stats overlay.</summary>

@@ -142,8 +142,12 @@ function onErrorInternal(player, type) {
 function disposeSubtitleRenderer(player, secondary) {
     const property = secondary ? 'secondarySubtitleRenderer' : 'subtitleRenderer';
     const renderer = player[property];
-    if (renderer && renderer.dispose) {
-        renderer.dispose();
+    if (renderer) {
+        if (renderer.dispose) {
+            renderer.dispose();
+        } else if (renderer.destroy) {
+            renderer.destroy();
+        }
     }
     player[property] = null;
 }
@@ -156,7 +160,7 @@ function requireOctopus() {
     if (!octopusPromise) {
         octopusPromise = new Promise((resolve, reject) => {
             const script = document.createElement('script');
-            script.src = 'generated/lib/subtitles-octopus/dist/js/subtitles-octopus.js';
+            script.src = assetUrl('generated/lib/subtitles-octopus/dist/js/subtitles-octopus.js');
             script.onload = () => window.SubtitlesOctopus ? resolve(window.SubtitlesOctopus) : reject(new Error('libass did not expose SubtitlesOctopus'));
             script.onerror = () => reject(new Error('libass could not be loaded'));
             document.head.appendChild(script);
@@ -165,25 +169,33 @@ function requireOctopus() {
     return octopusPromise;
 }
 
+function assetUrl(path) {
+    return new URL(path, document.baseURI).href;
+}
+
 function rendererDisplaySettings(request) {
     return { aspectMode: request.aspectMode || 'contain' };
 }
 
 async function fallbackFonts(request) {
-    try {
-        const config = await fetch(request.fallbackConfigUrl).then(response => response.ok ? response.json() : null);
-        if (!config || !config.EnableFallbackFont) {
-            return [];
-        }
-        const files = await fetch(request.fallbackFontsUrl).then(response => response.ok ? response.json() : []);
-        return files.map(font => {
-            const url = new URL(request.fallbackFontUrl);
-            url.pathname = url.pathname.replace(/\/$/, '') + '/' + encodeURIComponent(font.Name);
-            return url.href;
-        });
-    } catch (err) {
+    const configResponse = await fetch(request.fallbackConfigUrl);
+    if (!configResponse.ok) {
+        throw new Error('fallback font configuration could not be loaded');
+    }
+    const config = await configResponse.json();
+    if (!config.EnableFallbackFont) {
         return [];
     }
+    const filesResponse = await fetch(request.fallbackFontsUrl);
+    if (!filesResponse.ok) {
+        throw new Error('fallback font list could not be loaded');
+    }
+    const files = await filesResponse.json();
+    return files.map(font => {
+        const url = new URL(request.fallbackFontUrl);
+        url.pathname = url.pathname.replace(/\/$/, '') + '/' + encodeURIComponent(font.Name);
+        return url.href;
+    });
 }
 
 export async function setSubtitleRenderer(request, secondary) {
@@ -209,7 +221,15 @@ export async function setSubtitleRenderer(request, secondary) {
     try {
         if (request.codec === 'ass' || request.codec === 'ssa') {
             const SubtitlesOctopus = await requireOctopus();
-            const fonts = [...(request.attachments || []), ...(await fallbackFonts(request))];
+            // Keep the bundled fallback available under a visible filename as well as the
+            // worker's hidden .fallback-* name. Fontconfig ignores hidden files while scanning
+            // /fonts, which otherwise makes libass report a failed font scan even though its
+            // direct fallback font works.
+            const fonts = [
+                assetUrl('generated/lib/subtitles-octopus/dist/js/default.woff2'),
+                ...(request.attachments || []),
+                ...(await fallbackFonts(request))
+            ];
             if (player[generationProperty] !== generation) {
                 return;
             }
@@ -217,14 +237,14 @@ export async function setSubtitleRenderer(request, secondary) {
                 video: player.elem,
                 subUrl: request.url,
                 fonts,
-                workerUrl: 'generated/lib/subtitles-octopus/dist/js/subtitles-octopus-worker.js',
-                legacyWorkerUrl: 'generated/lib/subtitles-octopus/dist/js/subtitles-octopus-worker-legacy.js',
+                workerUrl: assetUrl('generated/lib/subtitles-octopus/dist/js/subtitles-octopus-worker.js'),
+                legacyWorkerUrl: assetUrl('generated/lib/subtitles-octopus/dist/js/subtitles-octopus-worker-legacy.js'),
                 timeOffset: request.timeOffset || 0,
                 renderMode: 'wasm-blend',
                 dropAllAnimations: false,
                 libassMemoryLimit: 40,
                 libassGlyphLimit: 40,
-                targetFps: 24,
+                targetFps: request.targetFps || 24,
                 prescaleFactor: 0.8,
                 prescaleHeightLimit: 1080,
                 maxRenderHeight: 2160,
@@ -233,7 +253,7 @@ export async function setSubtitleRenderer(request, secondary) {
                 onError: error
             });
         } else if (request.codec === 'pgssub') {
-            const libbitsub = await import('/generated/lib/libbitsub/dist/index.js');
+            const libbitsub = await import(assetUrl('generated/lib/libbitsub/dist/index.js'));
             if (player[generationProperty] !== generation) {
                 return;
             }

@@ -574,6 +574,7 @@ public sealed class HtmlVideoPlayer(
     private async Task<SubtitleRendererRequest> BuildRendererRequestAsync(StreamInfo options, MediaStream track, string url, bool secondary)
     {
         var source = options.MediaSource;
+        var video = source?.MediaStreams?.FirstOrDefault(s => s.Type == MediaStream_Type.Video);
         var attachments = (source?.MediaAttachments ?? [])
             .Where(a => a.MimeType is "application/vnd.ms-opentype" or "application/x-truetype-font" or "font/otf" or "font/ttf" or "font/woff" or "font/woff2")
             .Where(a => !string.IsNullOrEmpty(a.DeliveryUrl))
@@ -596,6 +597,7 @@ public sealed class HtmlVideoPlayer(
             FallbackFontsUrl = fallbackFontsUrl,
             FallbackFontUrl = fallbackFontUrl,
             AspectMode = appearance.AspectMode is "stretch" or "contain" or "cover" ? appearance.AspectMode : "contain",
+            TargetFps = video?.ReferenceFrameRate is > 0 and var fps ? fps : 24d,
         };
     }
 

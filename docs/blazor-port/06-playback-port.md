@@ -190,3 +190,10 @@ Marked in the code with `// PORT-TODO(playback): …`.
   negotiation and UI checks pass.
 - The test media are shorter than the server's minimum resume duration, so the server never keeps a
   resume position for them; the resume position is verified on the client's stop report.
+- Subtitle renderer fixtures are private-server-only. Keep `seed-media.sh` unchanged because its
+  inventory is shared by unrelated tests. To run the renderer test, use:
+  `JELLYFIN_INSTANCE=subtitles JELLYFIN_PORT=18106 scripts/test-server.sh up`, then
+  `JELLYFIN_INSTANCE=subtitles JELLYFIN_PORT=18106 scripts/seed-subtitles.sh`, and run
+  `JELLYFIN_URL=http://localhost:18106 ./dev e2e subtitles.py`. The script generates the SUP file
+  through the Jellyfin image's Perl runtime; no host Python is required. Finish with
+  `JELLYFIN_INSTANCE=subtitles JELLYFIN_PORT=18106 scripts/test-server.sh reset`.

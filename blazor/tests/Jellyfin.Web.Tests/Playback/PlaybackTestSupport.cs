@@ -42,6 +42,8 @@ internal sealed class FakePlayerInterop : IPlayerInterop
 
     public List<IReadOnlyList<SubtitleCue>?> SecondarySubtitleCues { get; } = [];
 
+    public List<(SubtitleRendererRequest? Request, bool Secondary)> SubtitleRenderers { get; } = [];
+
     public List<MediaSessionInfo?> MediaSessions { get; } = [];
 
     public PlayerStats? Stats { get; set; } = new() { VideoWidth = 1280, VideoHeight = 720, ViewWidth = 1366, ViewHeight = 768, DroppedFrames = 2 };
@@ -133,8 +135,11 @@ internal sealed class FakePlayerInterop : IPlayerInterop
         SecondarySubtitleCues.Add(cues);
     }
 
-    public void SetSubtitleRenderer(SubtitleRendererRequest? request, bool secondary) =>
+    public void SetSubtitleRenderer(SubtitleRendererRequest? request, bool secondary)
+    {
         Calls.Add($"renderer {(secondary ? "secondary" : "primary")} {request?.Codec ?? "none"}");
+        SubtitleRenderers.Add((request, secondary));
+    }
 
     public void SetSubtitleRendererOffset(double seconds, bool secondary) =>
         Calls.Add(FormattableString.Invariant($"renderer offset {(secondary ? "secondary" : "primary")} {seconds}"));
