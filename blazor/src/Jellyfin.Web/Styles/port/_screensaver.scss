@@ -1,0 +1,46 @@
+// Screensavers retain the original client markup and fixed-layer classes.
+.screensaver-noScroll {
+    overflow: hidden !important;
+}
+
+.logoScreenSaver {
+    background: #101010;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    text-align: center;
+}
+
+.logoScreenSaverImage {
+    height: 120px;
+    position: absolute;
+    top: 50%;
+    margin-top: -60px;
+    margin-left: -197px;
+}
+
+.jf-screensaver-backdrop {
+    background: #000;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    color: #fff;
+}
+
+.jf-screensaver-backdrop .slideshowImage {
+    position: absolute;
+    inset: 0;
+    background-position: center center;
+    background-size: cover;
+    background-repeat: no-repeat;
+}
+
+.jf-screensaver-backdrop .slideshowImageText {
+    position: absolute;
+    bottom: .25em;
+    right: .5em;
+    z-index: 1001;
+    color: #fff;
+    font-weight: normal;
+    text-shadow: 3px 3px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+}

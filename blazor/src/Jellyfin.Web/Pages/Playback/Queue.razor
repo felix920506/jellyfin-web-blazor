@@ -3,8 +3,9 @@
    with the original markup, so that remotecontrol.scss applies.
 
    Differences from the original:
-   - the playlist is reordered with an "Up" and a "Down" button per entry instead of by dragging;
-   With a remote play target (see RemotePlayButton) the same page is the remote control: the state
+   - the playlist keeps "Up" and "Down" buttons for keyboard and touch users and also supports
+    native HTML drag/drop reordering;
+    With a remote play target (see RemotePlayButton) the same page is the remote control: the state
    and the queue are those of the target, and the navigation, message and text sections appear.
    AirPlay, recording controls and the TV layout remain outside this port. *@
 @attribute [Route("/queue")]
@@ -304,7 +305,7 @@
                     var current = playlistItemId is not null && playlistItemId == Playback.CurrentPlaylistItemId;
                     var entryImage = Text.ImageUrl(entry, maxHeight: 80);
                     var indicator = current ? (paused ? " playlistIndexIndicatorImage playlistIndexIndicatorPausedImage" : " playlistIndexIndicatorImage") : null;
-                    <div class="listItem listItem-border" @key="playlistItemId" data-playlistitemid="@playlistItemId" data-action="setplaylistindex"
+                    <div class="listItem listItem-border" @key="playlistItemId" draggable="true" @ondragstart="() => BeginDrag(playlistItemId)" @ondragover:preventDefault="true" @ondrop="() => Drop(playlistItemId)" data-playlistitemid="@playlistItemId" data-action="setplaylistindex"
                          data-id="@(entry.Id?.ToString("N"))" data-type="@entry.Type.ToApiString()">
                         @if (entryImage is not null)
                         {
@@ -372,6 +373,7 @@
     private string? _messageTitle;
     private string? _messageText;
     private string? _typeText;
+    private string? _draggedPlaylistItemId;
 
     private long? RuntimeTicks => Playback.DurationTicks is { } duration && duration > 0 ? duration : null;
 
@@ -567,6 +569,24 @@
                 Playback.MovePlaylistItem(playlistItemId, newIndex);
             }
         }
+    }
+
+    private void BeginDrag(string? playlistItemId) => _draggedPlaylistItemId = playlistItemId;
+
+    private void Drop(string? targetPlaylistItemId)
+    {
+        if (_draggedPlaylistItemId is null || targetPlaylistItemId is null || _draggedPlaylistItemId == targetPlaylistItemId)
+        {
+            return;
+        }
+
+        var targetIndex = Playback.GetPlaylist().ToList().FindIndex(item => item.PlaylistItemId == targetPlaylistItemId);
+        if (targetIndex >= 0)
+        {
+            Move(_draggedPlaylistItemId, targetIndex);
+        }
+
+        _draggedPlaylistItemId = null;
     }
 
     private Task NextTrackAsync() => SyncPlay.IsEnabled ? SyncPlay.NextItemAsync() : Playback.NextTrackAsync();

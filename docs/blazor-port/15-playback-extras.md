@@ -73,7 +73,9 @@ now-playing bar and `/queue` expose the lyrics action for audio items with lyric
 
 - Live TV-specific controls, additional
   settings entries and the requested Playing/Ping policy (the original itself sends no such ping).
-- SyncPlay is not started. `PORT-TODO(syncplay)` belongs at its future integration points.
+- Pre-play access validation, weekly experimental media warnings and still-watching episode prompts
+  are implemented by `PlaybackInterceptors` at the playback boundary. The remaining playback gaps
+  are Live TV-specific controls, additional settings entries and the requested Playing/Ping policy.
 
 ### SyncPlay design (not implemented)
 

@@ -1,0 +1,97 @@
+@namespace Jellyfin.Web.Components
+@implements IAsyncDisposable
+@attribute [ShellSlot(ShellSlot.Overlay, -100)]
+@inject ScreensaverService Screensaver
+@inject IJSRuntime Js
+@inject IBrowser Browser
+
+@if (Screensaver.Active == "logoscreensaver")
+{
+    <div class="logoScreenSaver" data-screensaver="logoscreensaver" @onclick="Wake">
+        <img class="logoScreenSaverImage" src="generated/lib/jellyfin-ux-web/icon-transparent.png" alt="Jellyfin" />
+    </div>
+}
+else if (Screensaver.Active == "backdropscreensaver" && Screensaver.Slides.Count > 0)
+{
+    var slide = Screensaver.Slides[Screensaver.ActiveSlide];
+    <div class="slideshowDialog jf-screensaver-backdrop" data-screensaver="backdropscreensaver" @onclick="Wake">
+        <div class="slideshowImage slideshowImage-cover" style="background-image:url('@slide.Url')"></div>
+        @if (!string.IsNullOrEmpty(slide.Title))
+        {
+            <h1 class="slideshowImageText">@slide.Title</h1>
+        }
+    </div>
+}
+
+@code {
+    private CancellationTokenSource? _stop;
+    private DotNetObjectReference<ScreensaverHost>? _reference;
+    private IJSObjectReference? _module;
+
+    protected override void OnInitialized()
+    {
+        Screensaver.Changed += StateChanged;
+        UpdateDocumentState();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _reference = DotNetObjectReference.Create(this);
+        _module = await Js.InvokeAsync<IJSObjectReference>("import", "./js/screensaver.js");
+        await _module.InvokeVoidAsync("attach", _reference);
+        _stop = new CancellationTokenSource();
+        _ = IdleLoopAsync(_stop.Token);
+    }
+
+    [JSInvokable]
+    public void OnInput() => Screensaver.Input();
+
+    public async ValueTask DisposeAsync()
+    {
+        Screensaver.Changed -= StateChanged;
+        Browser.ToggleClass(DocumentTarget.Body, "screensaver-noScroll", false);
+        _stop?.Cancel();
+        if (_module is not null)
+        {
+            await _module.InvokeVoidAsync("detach");
+            await _module.DisposeAsync();
+        }
+
+        _reference?.Dispose();
+    }
+
+    private void StateChanged()
+    {
+        UpdateDocumentState();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdateDocumentState() => Browser.ToggleClass(DocumentTarget.Body, "screensaver-noScroll", Screensaver.IsShowing);
+
+    private void Wake() => Screensaver.Input();
+
+    private async Task IdleLoopAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
+        while (await timer.WaitForNextTickAsync(cancellationToken))
+        {
+            Screensaver.Tick();
+            if (Screensaver.IsShowing && Screensaver.Slides.Count > 1)
+            {
+                var interval = TimeSpan.FromSeconds(Math.Max(1, Screensaver.Selected == "backdropscreensaver" ?
+                    Screensaver.BackdropIntervalSeconds : 3));
+                // The loop is deliberately coarse; the JS slideshow used the same user-facing seconds.
+                await Task.Delay(interval, cancellationToken);
+                if (Screensaver.IsShowing)
+                {
+                    Screensaver.NextSlide();
+                }
+            }
+        }
+    }
+}
