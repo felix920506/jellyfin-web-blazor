@@ -362,10 +362,14 @@ to build items from server-style JSON.
 
 ## 6. Known gaps
 
-- Scrolling rows scroll natively (`overflow-x`), not with the original's transform-based scroller:
-  no `scrollToElement`, no centre-focus, no mouse-wheel-to-horizontal translation.
+- Scrolling rows use native horizontal scrolling. The port deliberately does not reproduce the
+  original's transform fallback or centre-focus/mouse-wheel gesture path: modern browsers provide
+  stable native scrolling, while transform scrolling would make the existing IntersectionObserver
+  lazy-image coordinates and the home/library/details browser coverage disagree. The visible page
+  buttons still page by item and preserve RTL behavior.
 - No TV layout: no `<button>` cards, no focus handling, no TV values in `GetPostersPerRow`.
-- Lazy images are not unloaded again when they leave the viewport.
+- Lazy images are unloaded again when they leave the 50% IntersectionObserver root margin, matching
+  the original lazy loader's unveil/unload behavior.
 - Ctrl / middle click on a card image opens the item in the same tab (the click is intercepted).
 - List-row overviews are rendered as Markdown through `markdown-it` and DOMPurify. If the browser
   module is unavailable, the component safely falls back to HTML-encoded text.

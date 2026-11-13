@@ -56,6 +56,10 @@ public sealed class UserSettings(AppSettings appSettings, JellyfinApi api)
         set => Set("screensaver", value, false);
     }
 
+    public int ScreensaverTime => Math.Max(1, GetInt("screensaverTime", 180, false));
+
+    public int BackdropScreensaverInterval => Math.Max(1, GetInt("backdropScreensaverInterval", 5, false));
+
     public string? CustomCss
     {
         get => Get("customCss", false);

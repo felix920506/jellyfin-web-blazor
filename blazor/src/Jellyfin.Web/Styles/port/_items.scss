@@ -1,5 +1,34 @@
 // Item components (Components/Items): the pieces the original builds in script rather than in CSS.
 
+.emby-scroller-container {
+    position: relative;
+}
+
+.emby-scroller {
+    padding-left: 3.3%;
+    padding-right: 3.3%;
+}
+
+.emby-scroller.scrollX {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-behavior: smooth;
+}
+
+.emby-scroller.hiddenScrollX {
+    scrollbar-width: none;
+}
+
+.emby-scroller.hiddenScrollX::-webkit-scrollbar {
+    display: none;
+}
+
+.emby-scroller > .scrollSlider {
+    display: flex;
+    width: max-content;
+    min-width: 100%;
+}
+
 // --- Page tabs in the app bar (PageTabs / AppBarTabs) -------------------------------------------
 // The tabs form a second row of the fixed app bar and follow its see-through/solid switch.
 $jf-tabs-height: 40px;
