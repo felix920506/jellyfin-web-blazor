@@ -86,8 +86,8 @@ public sealed class DeviceProfileBuilder(AppSettings appSettings, UserSettings u
     }
 
     /// <summary>Port of apphost.getDeviceProfile(item): the browser profile adjusted by the user's settings.</summary>
-    public JsonObject GetDeviceProfile(MediaCapabilities caps, long? runTimeTicks, string? mediaType, bool hasItem = true) =>
-        ApplySettings(Build(caps, GetBaseProfileOptions(caps, runTimeTicks, mediaType, hasItem)));
+    public JsonObject GetDeviceProfile(MediaCapabilities caps, long? runTimeTicks, string? mediaType, bool hasItem = true, bool isRetry = false) =>
+        ApplySettings(Build(caps, GetBaseProfileOptions(caps, runTimeTicks, mediaType, hasItem) with { IsRetry = isRetry }));
 
     /// <summary>Port of the second half of apphost.getDeviceProfile().</summary>
     public JsonObject ApplySettings(JsonObject profile)
@@ -752,13 +752,29 @@ public sealed class DeviceProfileBuilder(AppSettings appSettings, UserSettings u
         codecProfiles.Add(new JsonObject { ["Type"] = "Video", ["Codec"] = "vp9", ["Conditions"] = vp9Conditions });
         codecProfiles.Add(new JsonObject { ["Type"] = "Video", ["Codec"] = "av1", ["Conditions"] = av1Conditions });
 
-        // Subtitle profiles: external vtt or burn in. ASS/SSA and PGS/VobSub would need the libass and
-        // libpgs renderers, which the port does not ship, so they are left to the server (burn-in).
+        // Subtitle profiles: mirror browserDeviceProfile.js. Complex formats are external when their
+        // client renderer is enabled; otherwise the server burns them into the video.
         var subtitleProfiles = new JsonArray();
         profile["SubtitleProfiles"] = subtitleProfiles;
-        if (appSettings.Get("subtitleburnin") != "all" && caps.TextTracks)
+        var subtitleBurnIn = appSettings.Get("subtitleburnin");
+        if (subtitleBurnIn != "all")
         {
-            subtitleProfiles.Add(new JsonObject { ["Format"] = "vtt", ["Method"] = "External" });
+            if (caps.TextTracks)
+            {
+                subtitleProfiles.Add(new JsonObject { ["Format"] = "vtt", ["Method"] = "External" });
+            }
+
+            if (!options.IsRetry && subtitleBurnIn != "allcomplexformats")
+            {
+                subtitleProfiles.Add(new JsonObject { ["Format"] = "ass", ["Method"] = "External" });
+                subtitleProfiles.Add(new JsonObject { ["Format"] = "ssa", ["Method"] = "External" });
+            }
+
+            if (caps.Canvas2D && !options.IsRetry && appSettings.Get("subtitlerenderpgs") == "true"
+                && subtitleBurnIn is not "allcomplexformats" and not "onlyimageformats")
+            {
+                subtitleProfiles.Add(new JsonObject { ["Format"] = "pgssub", ["Method"] = "External" });
+            }
         }
 
         profile["ResponseProfiles"] = new JsonArray(new JsonObject { ["Type"] = "Video", ["Container"] = "m4v", ["MimeType"] = "video/mp4" });

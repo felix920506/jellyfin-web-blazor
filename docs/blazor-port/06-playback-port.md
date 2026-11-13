@@ -66,7 +66,7 @@ All decisions are C#. JavaScript owns only what C# cannot do, behind three inter
 
 | Interface | Module | Contents |
 | --- | --- | --- |
-| `IPlayerInterop` (`JsPlayerInterop`) | `js/playback/player.js` | Creates the `<video>` (`.videoPlayerContainer > video.htmlvideoplayer`) and `<audio>` (`.mediaPlayerAudio`) elements outside of the Blazor tree, loads a source (direct, hls.js loaded on demand from `generated/lib/hls.js`, native HLS where the element supports it), start position, pause, seek, volume, mute, rate, aspect ratio, audio track of the element, subtitle cues of a text track, fullscreen, picture in picture, fade out, audio normalisation gain, statistics, Media Session. Element events are sent back as `(kind, name, snapshot, errorType)`. |
+| `IPlayerInterop` (`JsPlayerInterop`) | `js/playback/player.js` | Creates the `<video>` (`.videoPlayerContainer > video.htmlvideoplayer`) and `<audio>` (`.mediaPlayerAudio`) elements outside of the Blazor tree, loads a source (direct, hls.js loaded on demand from `generated/lib/hls.js`, native HLS where the element supports it), start position, pause, seek, volume, mute, rate, aspect ratio, audio track of the element, native text cues, libass ASS/SSA and libbitsub PGS renderers, renderer offsets, fullscreen, picture in picture, fade out, audio normalisation gain, statistics, Media Session. Element events are sent back as `(kind, name, snapshot, errorType)`. |
 | `IMediaCapabilityProbe` (`JsMediaCapabilityProbe`) | `js/playback/capabilities.js` | One call that answers all `canPlayType` / `MediaSource.isTypeSupported` questions the device profile needs. `DeviceProfileBuilder` works on the resulting `MediaCapabilities` record and is pure C#. |
 | `IPlaybackUiInterop` (`JsPlaybackUiInterop`) | `js/playback/ui.js` | Document-level listeners of the OSD (pointer movement, keys, wheel) and the hover position of sliders. |
 
@@ -119,9 +119,10 @@ Remove the hook once item pages have play buttons and the script can click them.
 
   | Format | How |
   | --- | --- |
-  | Text formats the server converts to WebVTT (SubRip, WebVTT, MOV text and the like), external files or embedded | The device profile advertises exactly one subtitle profile, `vtt` / `External`. The server delivers such streams as `External`; the player fetches them as track events (`….js` instead of `….vtt`) and shows them as cues of a native text track. Switching does not restart the stream. |
-  | ASS/SSA | No client renderer (libass is not shipped) and not advertised, so the server decides: it burns them into a transcode (`Encode`). Switching restarts the stream. |
-  | PGS, VobSub, DVB and other image formats | No client renderer, not advertised: burned in by the server (`Encode`). |
+  | Text formats the server converts to WebVTT (SubRip, WebVTT, MOV text and the like), external files or embedded | The device profile advertises `vtt` / `External` when browser text tracks are available. The server delivers such streams as `External`; the player fetches them as track events (`….js` instead of `….vtt`) and shows them as cues of a native text track. Switching does not restart the stream. |
+  | ASS/SSA | `@jellyfin/libass-wasm` 4.2.4 (`SubtitlesOctopus`) renders externally delivered tracks, including attached and server fallback fonts. Offset and renderer appearance settings are applied without restarting the video. A renderer failure reports `ASS_RENDER_ERROR` and retries server-side rendering. |
+  | PGS | `libbitsub` 1.13.0 (`PgsRenderer`) renders externally delivered tracks when canvas support, `subtitlerenderpgs` and the burn-in policy allow it. Offset and contain/stretch/cover mapping are applied without restarting the video; `PGS_RENDER_ERROR` falls back to server rendering. |
+  | VobSub, DVB and other image formats | Not advertised by this port and therefore burned in by the server (`Encode`). |
   | `subtitleburnin = all` | Everything is burned in, as in the original. |
 
 - Reporting: `Sessions/Playing`, `Sessions/Playing/Progress`, `Sessions/Playing/Stopped` with the
@@ -138,8 +139,7 @@ Marked in the code with `// PORT-TODO(playback): …`.
 
 - Session remote control and synced lyrics are now ported; see `15-playback-extras.md`. Cast/AirPlay, SyncPlay (also its OSD icon and statistics category),
   live TV specifics of the OSD (programme info, record button), photo/book/PDF/YouTube players and with them remote trailers and items that are plain URLs.
-- ASS/SSA and PGS renderers,
-  subtitle appearance settings.
+- VobSub/DVB client renderers and some advanced bitmap appearance controls remain unported.
 - Brightness gestures, TV-layout key handling, iOS forced-fullscreen back navigation, iOS HLS live
   prefetch, flv.js, playback interceptors.
 - Queue page: drag reordering (replaced by Up/Down buttons), remote backdrop. Remote control sections
@@ -190,3 +190,10 @@ Marked in the code with `// PORT-TODO(playback): …`.
   negotiation and UI checks pass.
 - The test media are shorter than the server's minimum resume duration, so the server never keeps a
   resume position for them; the resume position is verified on the client's stop report.
+- Subtitle renderer fixtures are private-server-only. Keep `seed-media.sh` unchanged because its
+  inventory is shared by unrelated tests. To run the renderer test, use:
+  `JELLYFIN_INSTANCE=subtitles JELLYFIN_PORT=18106 scripts/test-server.sh up`, then
+  `JELLYFIN_INSTANCE=subtitles JELLYFIN_PORT=18106 scripts/seed-subtitles.sh`, and run
+  `JELLYFIN_URL=http://localhost:18106 ./dev e2e subtitles.py`. The script generates the SUP file
+  through the Jellyfin image's Perl runtime; no host Python is required. Finish with
+  `JELLYFIN_INSTANCE=subtitles JELLYFIN_PORT=18106 scripts/test-server.sh reset`.

@@ -14,7 +14,7 @@ let mediaSessionBound = false;
 const players = { video: null, audio: null };
 
 function newPlayer(kind) {
-    return { kind, elem: null, container: null, hls: null, src: null, started: false, fading: false, options: null, onError: null, gainNode: null, normalizationGain: 1 };
+    return { kind, elem: null, container: null, hls: null, src: null, started: false, fading: false, options: null, onError: null, gainNode: null, normalizationGain: 1, subtitleRenderer: null, secondarySubtitleRenderer: null, subtitleRendererGeneration: 0, secondarySubtitleRendererGeneration: 0 };
 }
 
 function getPlayer(kind) {
@@ -134,7 +134,161 @@ function resetSrc(elem) {
 
 function onErrorInternal(player, type) {
     setSubtitleCues(null);
+    disposeSubtitleRenderer(player, false);
+    disposeSubtitleRenderer(player, true);
     emit(player, 'error', type);
+}
+
+function disposeSubtitleRenderer(player, secondary) {
+    const property = secondary ? 'secondarySubtitleRenderer' : 'subtitleRenderer';
+    const renderer = player[property];
+    if (renderer) {
+        if (renderer.dispose) {
+            renderer.dispose();
+        } else if (renderer.destroy) {
+            renderer.destroy();
+        }
+    }
+    player[property] = null;
+}
+
+let octopusPromise = null;
+function requireOctopus() {
+    if (window.SubtitlesOctopus) {
+        return Promise.resolve(window.SubtitlesOctopus);
+    }
+    if (!octopusPromise) {
+        octopusPromise = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = assetUrl('generated/lib/subtitles-octopus/dist/js/subtitles-octopus.js');
+            script.onload = () => window.SubtitlesOctopus ? resolve(window.SubtitlesOctopus) : reject(new Error('libass did not expose SubtitlesOctopus'));
+            script.onerror = () => reject(new Error('libass could not be loaded'));
+            document.head.appendChild(script);
+        });
+    }
+    return octopusPromise;
+}
+
+function assetUrl(path) {
+    return new URL(path, document.baseURI).href;
+}
+
+function rendererDisplaySettings(request) {
+    return { aspectMode: request.aspectMode || 'contain' };
+}
+
+async function fallbackFonts(request) {
+    const configResponse = await fetch(request.fallbackConfigUrl);
+    if (!configResponse.ok) {
+        throw new Error('fallback font configuration could not be loaded');
+    }
+    const config = await configResponse.json();
+    if (!config.EnableFallbackFont) {
+        return [];
+    }
+    const filesResponse = await fetch(request.fallbackFontsUrl);
+    if (!filesResponse.ok) {
+        throw new Error('fallback font list could not be loaded');
+    }
+    const files = await filesResponse.json();
+    return files.map(font => {
+        const url = new URL(request.fallbackFontUrl);
+        url.pathname = url.pathname.replace(/\/$/, '') + '/' + encodeURIComponent(font.Name);
+        return url.href;
+    });
+}
+
+export async function setSubtitleRenderer(request, secondary) {
+    const player = players.video;
+    if (!player || !player.elem) {
+        return;
+    }
+    const property = secondary ? 'secondarySubtitleRenderer' : 'subtitleRenderer';
+    const generationProperty = secondary ? 'secondarySubtitleRendererGeneration' : 'subtitleRendererGeneration';
+    const generation = ++player[generationProperty];
+    disposeSubtitleRenderer(player, secondary);
+    setTrackCues(secondary ? 'manualSecondaryTrack' : 'manualTrack', null);
+    if (!request) {
+        return;
+    }
+
+    const error = () => {
+        if (player[generationProperty] === generation) {
+            disposeSubtitleRenderer(player, secondary);
+            emit(player, 'error', request.codec === 'pgssub' ? 'PGS_RENDER_ERROR' : 'ASS_RENDER_ERROR');
+        }
+    };
+    try {
+        if (request.codec === 'ass' || request.codec === 'ssa') {
+            const SubtitlesOctopus = await requireOctopus();
+            // Keep the bundled fallback available under a visible filename as well as the
+            // worker's hidden .fallback-* name. Fontconfig ignores hidden files while scanning
+            // /fonts, which otherwise makes libass report a failed font scan even though its
+            // direct fallback font works.
+            const fonts = [
+                assetUrl('generated/lib/subtitles-octopus/dist/js/default.woff2'),
+                ...(request.attachments || []),
+                ...(await fallbackFonts(request))
+            ];
+            if (player[generationProperty] !== generation) {
+                return;
+            }
+            player[property] = new SubtitlesOctopus({
+                video: player.elem,
+                subUrl: request.url,
+                fonts,
+                workerUrl: assetUrl('generated/lib/subtitles-octopus/dist/js/subtitles-octopus-worker.js'),
+                legacyWorkerUrl: assetUrl('generated/lib/subtitles-octopus/dist/js/subtitles-octopus-worker-legacy.js'),
+                timeOffset: request.timeOffset || 0,
+                renderMode: 'wasm-blend',
+                dropAllAnimations: false,
+                libassMemoryLimit: 40,
+                libassGlyphLimit: 40,
+                targetFps: request.targetFps || 24,
+                prescaleFactor: 0.8,
+                prescaleHeightLimit: 1080,
+                maxRenderHeight: 2160,
+                resizeVariation: 0.2,
+                renderAhead: 90,
+                onError: error
+            });
+        } else if (request.codec === 'pgssub') {
+            const libbitsub = await import(assetUrl('generated/lib/libbitsub/dist/index.js'));
+            if (player[generationProperty] !== generation) {
+                return;
+            }
+            player[property] = new libbitsub.PgsRenderer({
+                video: player.elem,
+                container: player.container,
+                subUrl: request.url,
+                timeOffset: request.timeOffset || 0,
+                streamingLoad: true,
+                rangeRequests: true,
+                prefetchWindow: { before: 1, after: 2 },
+                displaySettings: {
+                    scale: 1,
+                    aspectMode: request.aspectMode || 'contain',
+                    verticalOffset: 0,
+                    horizontalOffset: 0,
+                    horizontalAlign: 'center',
+                    bottomPadding: 0,
+                    safeArea: 0,
+                    opacity: 1
+                },
+                onError: error
+            });
+        }
+    } catch (err) {
+        error();
+    }
+}
+
+export function setSubtitleRendererOffset(seconds, secondary) {
+    const player = players.video;
+    const renderer = player && player[secondary ? 'secondarySubtitleRenderer' : 'subtitleRenderer'];
+    if (renderer) {
+        renderer.timeOffset = (player.options && player.options.transcodingOffsetSeconds || 0) + seconds;
+    }
 }
 
 function handleHlsJsMediaError(player, reject) {
@@ -588,6 +742,8 @@ export function destroy(kind) {
     }
 
     destroyHls(player);
+    disposeSubtitleRenderer(player, false);
+    disposeSubtitleRenderer(player, true);
     if (kind === 'video') {
         setTransparency(false);
         document.body.classList.remove('hide-scroll');

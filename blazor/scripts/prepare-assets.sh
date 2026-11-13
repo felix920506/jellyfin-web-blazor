@@ -49,6 +49,14 @@ vendor jszip 3.10.1 jszip 'package/dist/jszip.min.js'
 vendor pdfjs-dist 3.11.174 pdfjs 'package/build/pdf.min.js' 'package/build/pdf.worker.min.js'
 vendor libarchive.js 2.0.2 libarchive 'package/dist/libarchive.js' 'package/dist/worker-bundle.js' 'package/dist/libarchive.wasm'
 vendor swiper 12.2.0 swiper 'package/swiper-bundle.min.js' 'package/swiper-bundle.min.css'
+vendor @jellyfin/libass-wasm 4.2.4 subtitles-octopus 'package/dist/js/*'
+vendor libbitsub 1.13.0 libbitsub 'package/dist/**' 'package/pkg/**'
+# libbitsub is published for bundlers; browsers require extensions on these relative ESM imports.
+sed -i "s#../../pkg/libbitsub')#../../pkg/libbitsub.js')#" "$OUT/lib/libbitsub/dist/ts/wasm.js"
+# Its ESM build likewise omits extensions on internal relative imports, which bundlers normally add.
+while IFS= read -r file; do
+    perl -pi -e "s{((?:from\\s+|import\\s*\\(\\s*)['\"]\\.?\\.?/[^'\"]+?)(?<!\\.js)(['\"])}{\$1.js\$2}g" "$file"
+done < <(find "$OUT/lib/libbitsub" -type f -name '*.js')
 for font in noto-sans noto-sans-hk noto-sans-jp noto-sans-kr noto-sans-sc noto-sans-tc; do
     vendor "@fontsource/$font" 5.3.0 "fontsource/$font" \
         'package/files/*-400-normal.woff2' 'package/files/*-700-normal.woff2'

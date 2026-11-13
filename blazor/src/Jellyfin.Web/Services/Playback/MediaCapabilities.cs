@@ -22,6 +22,9 @@ public sealed record MediaCapabilities
     /// <summary>Video elements have <c>textTracks</c>.</summary>
     public bool TextTracks { get; init; }
 
+    /// <summary>A 2D canvas is available for graphical subtitle rendering.</summary>
+    public bool Canvas2D { get; init; } = true;
+
     /// <summary>Video elements have <c>audioTracks</c>.</summary>
     public bool AudioTracks { get; init; }
 

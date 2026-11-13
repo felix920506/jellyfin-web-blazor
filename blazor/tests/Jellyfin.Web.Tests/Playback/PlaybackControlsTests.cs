@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Jellyfin.Web.Services;
 using Jellyfin.Web.Services.Playback;
 using Jellyfin.Web.Tests.Support;
 
@@ -354,6 +355,60 @@ public class PlaybackControlsTests
         requests = PlaybackServer.PlaybackInfoRequests(harness.Server);
         Assert.Equal(3, requests.Count);
         Assert.Equal(-1, (int?)requests[2]["SubtitleStreamIndex"]);
+    }
+
+    [Fact]
+    public async Task An_external_ass_track_uses_the_client_renderer_and_offset()
+    {
+        await using var harness = await PlaybackHarness.WithMediaAsync();
+        var source = PlaybackServer.MediaSource(PlaybackServer.MovieId, directPlay: true, directStream: true, transcodingUrl: null);
+        source["MediaStreams"]!.AsArray().Add(new JsonObject
+        {
+            ["Index"] = 4,
+            ["Type"] = "Subtitle",
+            ["Codec"] = "ass",
+            ["Language"] = "eng",
+            ["IsExternal"] = false,
+            ["DeliveryMethod"] = "External",
+            ["DeliveryUrl"] = "/Videos/movie/Subtitles/4/0/Stream.ass",
+        });
+        PlaybackServer.ScriptPlaybackInfo(harness.Server, direct: source);
+
+        await harness.PlayMovieAsync();
+        await harness.Manager.SetSubtitleStreamIndexAsync(4);
+
+        Assert.Contains("renderer primary ass", harness.Player.Calls);
+        var renderer = harness.Player.SubtitleRenderers.Last(entry => entry.Request is not null).Request;
+        Assert.EndsWith("/Videos/movie/Subtitles/4/0/Stream.ass?ApiKey=test-token", renderer?.Url, StringComparison.Ordinal);
+        Assert.Equal(24, renderer?.TargetFps);
+        Assert.DoesNotContain(harness.Player.Loads, load => load.Request.Url.Contains("transcode", StringComparison.OrdinalIgnoreCase));
+        harness.Manager.SetSubtitleOffset(1.5);
+        Assert.Contains(harness.Player.Calls, call => call.StartsWith("renderer offset primary", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_external_pgs_track_uses_the_client_renderer_when_enabled()
+    {
+        await using var harness = await PlaybackHarness.WithMediaAsync();
+        harness.Get<AppSettings>().Set("subtitlerenderpgs", true);
+        var source = PlaybackServer.MediaSource(PlaybackServer.MovieId, directPlay: true, directStream: true, transcodingUrl: null);
+        source["MediaStreams"]!.AsArray().Add(new JsonObject
+        {
+            ["Index"] = 4,
+            ["Type"] = "Subtitle",
+            ["Codec"] = "pgssub",
+            ["Language"] = "eng",
+            ["IsExternal"] = false,
+            ["DeliveryMethod"] = "External",
+            ["DeliveryUrl"] = "/Videos/movie/Subtitles/4/0/Stream.sup",
+        });
+        PlaybackServer.ScriptPlaybackInfo(harness.Server, direct: source);
+
+        await harness.PlayMovieAsync();
+        await harness.Manager.SetSubtitleStreamIndexAsync(4);
+
+        Assert.Contains("renderer primary pgssub", harness.Player.Calls);
+        Assert.DoesNotContain(harness.Player.Loads, load => load.Request.Url.Contains("transcode", StringComparison.OrdinalIgnoreCase));
     }
 
     [Theory]

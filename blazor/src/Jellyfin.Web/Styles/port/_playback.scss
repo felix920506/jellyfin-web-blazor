@@ -1,5 +1,29 @@
 // Playback glue: what the original gets from its view container and custom elements.
 
+.videoPlayerContainer {
+    position: fixed !important;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    background: #000 !important;
+}
+
+.videoPlayerContainer-onTop {
+    z-index: 1000;
+}
+
+.videoPlayerContainer .libassjs-canvas-parent {
+    order: -1;
+}
+
+.htmlvideoplayer {
+    width: 100%;
+    height: 100%;
+}
+
 // The original video page is a .mainAnimatedPage that fills the viewport; the port's page must do
 // the same so that presses anywhere over the video reach it.
 .jf-videoOsdPage {
