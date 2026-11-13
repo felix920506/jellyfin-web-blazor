@@ -87,12 +87,12 @@ if [ ! -f "$OUT/css/.stamp" ] || [ -n "$(css_inputs_hash)" ] || [ "${BASH_SOURCE
               ! -path 'styles/ios.scss' ! -path 'styles/rtl.scss' | LC_ALL=C sort ) |
             while read -r f; do emit "${f%.scss}"; done
         # This port's own styles (every partial in Styles/port) come last so they can override.
-        ( cd "$PWD/Styles/port" && ls _*.scss | LC_ALL=C sort ) |
+        ( cd "$APP/Styles/port" && ls _*.scss | LC_ALL=C sort ) |
             while read -r f; do f="${f#_}"; f="${f%.scss}"; echo "@use \"port/$f\" as port-$f;"; done
     } > "$entry"
 
     sass_opts=(--no-source-map --style=compressed --quiet-deps
-               --load-path="$SRC" --load-path="$SRC/styles" --load-path="$APP/Styles" --load-path="$PWD/Styles")
+               --load-path="$SRC" --load-path="$SRC/styles" --load-path="$APP/Styles")
     # URL rewrites: webpack resolved these; here they point into generated/.
     rewrite() {
         sed -i -E \
