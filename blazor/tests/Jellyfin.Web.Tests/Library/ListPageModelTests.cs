@@ -402,6 +402,19 @@ public class ListPageModelTests
     }
 
     [Fact]
+    public void A_folder_filter_is_recursive_so_user_data_filters_reach_children()
+    {
+        var request = ListPageModel.Request(
+            Parameters("/list?parentId=p1"), Item("Folder"), NameSort,
+            new ListFilters { IsFavorite = true }, null, true, UserId, false, null, 0, 100, out var recursive);
+
+        Assert.True(recursive);
+        var query = Query(request);
+        Assert.Equal("true", query["Recursive"]);
+        Assert.Equal("IsFavorite", query["Filters"]);
+    }
+
+    [Fact]
     public void Standard_definition_wins_and_a_saved_genre_replaces_the_one_of_the_url()
     {
         var filters = new ListFilters { IsSD = true, IsHD = true, IsUnplayed = true, GenreIds = "g2" };

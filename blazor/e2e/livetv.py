@@ -55,9 +55,9 @@ def main() -> int:
         # The seeded programmes begin at midnight, so the current day's first row has already
         # aired; use the next available guide day for the recording flow.
         page.locator(".guide-date-tab-button").nth(1).click()
-        page.wait_for_selector(".programCell", timeout=30_000)
         series_cell = page.locator(".programCell").filter(has_text="Jellyfin Test Series")
-        (series_cell.first if series_cell.count() else page.locator(".programCell").first).click()
+        series_cell.first.wait_for(state="visible", timeout=30_000)
+        series_cell.first.click()
         stage = "opening programme details"
         try:
             page.wait_for_selector("#itemDetailPage", timeout=10_000)

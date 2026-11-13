@@ -33,6 +33,17 @@ public class LiveTvDataTests
     }
 
     [Fact]
+    public async Task A_series_programme_keeps_the_series_flag_for_recording_fields()
+    {
+        Server.OnGet("/LiveTv/Programs/program1", """{"Id":"program1","Type":"Program","Name":"Series","IsSeries":true}""");
+
+        var program = await Data.GetProgramAsync("program1");
+
+        Assert.NotNull(program);
+        Assert.True(program.IsSeries);
+    }
+
+    [Fact]
     public async Task The_on_now_row_uses_the_recommended_programmes()
     {
         Server.OnGet("/LiveTv/Programs/Recommended", """{"Items":[]}""");

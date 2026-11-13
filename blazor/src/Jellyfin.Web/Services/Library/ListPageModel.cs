@@ -464,6 +464,15 @@ public static class ListPageModel
                 Add("IncludeItemTypes", "Video,Movie,Series,Music,MusicVideo");
                 Add("Recursive", true);
             }
+
+            // User-data filters are evaluated on descendants only for a recursive folder query.
+            // This is also how the legacy list controller's query state behaves after a filter is
+            // selected; without it Filters=IsFavorite returns an empty library folder.
+            if (filters.HasAny && !recursive)
+            {
+                recursive = true;
+                Add("Recursive", true);
+            }
         }
 
         // modifyQueryWithFilters
