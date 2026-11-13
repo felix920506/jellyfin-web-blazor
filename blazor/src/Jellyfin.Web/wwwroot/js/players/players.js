@@ -1,5 +1,19 @@
 let dotnet;
 const players = new Map();
+const scripts = new Map();
+
+function loadScript(url) {
+    if (scripts.has(url)) return scripts.get(url);
+    const promise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = url;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`Unable to load ${url}`));
+        document.head.append(script);
+    });
+    scripts.set(url, promise);
+    return promise;
+}
 
 export function init(callback) {
     dotnet = callback;
@@ -81,7 +95,9 @@ function openPhoto(state, request) {
 
 function showPhoto(state) {
     state.dialog.querySelectorAll('.swiper-slide').forEach((node, index) => node.classList.toggle('swiper-slide-active', index === state.index));
-    state.dialog.querySelector('.swiper-wrapper').style.transform = `translate3d(${-state.index * 100}%, 0, 0)`;
+    const wrapper = state.dialog.querySelector('.swiper-wrapper');
+    wrapper.dataset.index = state.index;
+    wrapper.style.transform = 'none';
     emit('photo', 'timeupdate', { currentTime: state.index, duration: state.items.length, paused: !state.autoplay });
 }
 
@@ -106,13 +122,14 @@ async function openBook(state, request) {
     const item = request.items[0];
     const root = document.createElement('div');
     root.id = state.kind === 'pdf' ? 'pdfPlayer' : state.kind === 'comics' ? 'comicsPlayer' : 'bookPlayer';
-    root.className = state.kind === 'comics' ? 'slideshowDialog' : '';
+    root.className = 'slideshowDialog';
     state.root = root;
+    document.body.prepend(root);
     if (state.kind === 'epub') {
         root.innerHTML = '<div id="bookOsdMount"></div><div id="bookPlayerContainer" class="bookPlayerContainer"></div>';
-        document.body.prepend(root);
-         const epub = await import('/generated/lib/epubjs/dist/epub.min.js');
-        const book = (epub.default || epub)(item.downloadUrl || item.url);
+         await loadScript('/generated/lib/jszip/dist/jszip.min.js');
+         await loadScript('/generated/lib/epubjs/dist/epub.min.js');
+         const book = window.ePub(item.downloadUrl || item.url, { openAs: 'epub' });
         const rendition = book.renderTo('bookPlayerContainer', { width: '100%', height: '100%', flow: 'paginated' });
          await rendition.display();
          await book.locations.generate(1024);
@@ -124,26 +141,28 @@ async function openBook(state, request) {
         state.pages = 1;
     } else if (state.kind === 'pdf') {
         root.innerHTML = '<div id="bookOsdMount"></div><div id="container"><canvas id="canvas"></canvas></div>';
-        document.body.prepend(root);
-         const pdfjs = await import('/generated/lib/pdfjs/build/pdf.min.js');
-        const pdf = await pdfjs.getDocument({ url: item.downloadUrl || item.url, isEvalSupported: false }).promise;
+         await loadScript('/generated/lib/pdfjs/build/pdf.min.js');
+         window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/generated/lib/pdfjs/build/pdf.worker.min.js';
+         const pdf = await window.pdfjsLib.getDocument({ url: item.downloadUrl || item.url, isEvalSupported: false }).promise;
         state.pdf = pdf;
         state.pages = pdf.numPages;
          await renderPdfPage(state, Math.max(1, Math.floor(request.startPositionTicks / 10000) + 1));
     } else {
         root.innerHTML = '<div id="bookOsdMount"></div><div dir="ltr" class="slideshowSwiperContainer"><div class="swiper-wrapper"></div><div class="swiper-pagination"></div></div>';
-        document.body.prepend(root);
         const response = await fetch(item.downloadUrl || item.url);
          const archive = await import('/generated/lib/libarchive/dist/libarchive.js');
          archive.Archive.init({ workerUrl: '/generated/lib/libarchive/dist/worker-bundle.js' });
         const opened = await archive.Archive.open(await response.blob());
-        const files = (await opened.extractFiles()).filter(file => /\.(jpe?g|png|gif|webp|avif)$/i.test(file.file.name)).sort((a, b) => a.file.name.localeCompare(b.file.name));
+         await opened.getFilesArray();
+         await opened.extractFiles();
+         const files = (await opened.getFilesArray()).filter(file => /\.(jpe?g|png|gif|webp|avif)$/i.test(file.file.name)).sort((a, b) => a.file.name.localeCompare(b.file.name));
         state.items = files.map(file => URL.createObjectURL(file.file));
         state.pages = state.items.length;
          state.index = Math.max(0, Math.floor(request.startPositionTicks / 10000));
          state.items.forEach((url, index) => {
             const slide = document.createElement('div');
             slide.className = 'swiper-slide';
+            slide.dataset.index = index;
             const zoom = document.createElement('div');
             zoom.className = 'slider-zoom-container';
             const image = document.createElement('img');
@@ -152,9 +171,10 @@ async function openBook(state, request) {
             image.alt = `${item.name || 'Comic'} page ${index + 1}`;
             zoom.append(image);
             slide.append(zoom);
-            root.querySelector('.swiper-wrapper').append(slide);
-        });
-        showBookPage(state);
+             root.querySelector('.swiper-wrapper').append(slide);
+         });
+         root.querySelector('.swiper-slide')?.classList.add('swiper-slide-active');
+         showBookPage(state);
     }
     addBookControls(state, request.items[0]);
     return snapshot({ duration: state.pages, currentTime: state.index || 0 });
@@ -192,6 +212,9 @@ async function renderPdfPage(state, pageNumber) {
 
 function showBookPage(state) {
     state.root.querySelectorAll('.swiper-slide').forEach((slide, index) => slide.classList.toggle('swiper-slide-active', index === state.index));
+    const wrapper = state.root.querySelector('.swiper-wrapper');
+    wrapper.dataset.index = state.index;
+    wrapper.style.transform = 'none';
     emit(state.kind, 'timeupdate', { currentTime: state.index, duration: state.pages, paused: true });
 }
 

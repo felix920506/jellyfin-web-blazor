@@ -45,6 +45,7 @@ vendor hls.js 1.7.4 hls.js 'package/dist/hls.min.js'
 vendor markdown-it 14.3.3 markdown-it 'package/dist/markdown-it.min.js'
 vendor dompurify 2.5.9 dompurify 'package/dist/purify.min.js'
 vendor epubjs 0.3.93 epubjs 'package/dist/epub.min.js'
+vendor jszip 3.10.1 jszip 'package/dist/jszip.min.js'
 vendor pdfjs-dist 3.11.174 pdfjs 'package/build/pdf.min.js' 'package/build/pdf.worker.min.js'
 vendor libarchive.js 2.0.2 libarchive 'package/dist/libarchive.js' 'package/dist/worker-bundle.js' 'package/dist/libarchive.wasm'
 vendor swiper 12.2.0 swiper 'package/swiper-bundle.min.js' 'package/swiper-bundle.min.css'
@@ -86,12 +87,12 @@ if [ ! -f "$OUT/css/.stamp" ] || [ -n "$(css_inputs_hash)" ] || [ "${BASH_SOURCE
               ! -path 'styles/ios.scss' ! -path 'styles/rtl.scss' | LC_ALL=C sort ) |
             while read -r f; do emit "${f%.scss}"; done
         # This port's own styles (every partial in Styles/port) come last so they can override.
-        ( cd "$APP/Styles/port" && ls _*.scss | LC_ALL=C sort ) |
+        ( cd "$PWD/Styles/port" && ls _*.scss | LC_ALL=C sort ) |
             while read -r f; do f="${f#_}"; f="${f%.scss}"; echo "@use \"port/$f\" as port-$f;"; done
     } > "$entry"
 
     sass_opts=(--no-source-map --style=compressed --quiet-deps
-               --load-path="$SRC" --load-path="$SRC/styles" --load-path="$APP/Styles")
+               --load-path="$SRC" --load-path="$SRC/styles" --load-path="$APP/Styles" --load-path="$PWD/Styles")
     # URL rewrites: webpack resolved these; here they point into generated/.
     rewrite() {
         sed -i -E \
