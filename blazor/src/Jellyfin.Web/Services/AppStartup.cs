@@ -102,6 +102,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ServerEvents>();
         services.AddSingleton<UserViews>();
         services.AddSingleton<ShellState>();
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IPlaybackManager, NullPlaybackManager>();
         services.AddSingleton<AppStartup>();
         Composition.AddAttributedServices(services, typeof(ServiceCollectionExtensions).Assembly);

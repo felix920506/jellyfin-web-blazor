@@ -147,23 +147,38 @@ function fillImage(elem) {
     preloader.src = url;
 }
 
-// PORT-TODO(items): the original unloads images again when they leave the viewport (lazyLoader unveil/unload);
-// here an image stays loaded once it was shown.
+function unloadImage(elem) {
+    const url = loadedSource.get(elem);
+    if (!url) return;
+    const canvas = elem.previousElementSibling;
+    if (canvas && canvas.tagName === 'CANVAS') canvas.classList.remove('lazy-hidden');
+    const padder = elem.parentNode ? elem.parentNode.querySelector('.cardPadder') : null;
+    if (padder) padder.classList.remove('lazy-hidden-children');
+    elem.removeEventListener('animationend', onAnimationEnd);
+    if (elem.tagName === 'IMG') elem.setAttribute('src', '');
+    else elem.style.backgroundImage = 'none';
+    elem.setAttribute('data-src', url);
+    elem.classList.remove('lazy-image-fadein', 'lazy-image-fadein-fast');
+    elem.classList.add('lazy-hidden');
+    loadedSource.delete(elem);
+}
+
 const imageObserver = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver((entries) => {
     for (const entry of entries) {
         if (entry.isIntersecting) {
-            imageObserver.unobserve(entry.target);
             fillImage(entry.target);
+        } else {
+            unloadImage(entry.target);
         }
     }
-}, { rootMargin: '25%' });
+}, { rootMargin: '50%' });
 
 export function loadImages(container, blurhash, fast) {
     if (!container || !container.querySelectorAll) return;
     fastFadein = !!fast;
     if (blurhash) drawBlurhashes(container);
     for (const elem of container.querySelectorAll('.lazy[data-src]')) {
-        if (loadedSource.get(elem) === elem.getAttribute('data-src')) continue;
+        if (loadedSource.get(elem) === elem.getAttribute('data-src') && !elem.classList.contains('lazy-hidden')) continue;
         if (imageObserver) imageObserver.observe(elem);
         else fillImage(elem);
     }
