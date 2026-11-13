@@ -220,6 +220,10 @@ Deviations and limits:
 - As in the original there is no "Download" in the multi-select menu (it is commented out there); ctrl/meta-click
   to start a selection is an addition.
 - Shuffle of a filtered library view plays the fetched items with `SortBy=Random`.
+- The list page (`/list`) adds `Recursive=true` when a filter is set (`ListPageModel`). The original sends the
+  filtered query non-recursively, and Jellyfin 12.4 then applies user-data filters such as `IsFavorite` to nothing:
+  `ParentId=<library>&Filters=IsFavorite` returns 0 items, the recursive query returns the favourites. So the
+  original shows an empty list here.
 - The list page stores the `SeriesStatus` filter but does not send it (as the original), and its view settings
   dialog offers image type and "show title" only.
 - The TV layout's on-screen alphabet of the search field is not ported.
