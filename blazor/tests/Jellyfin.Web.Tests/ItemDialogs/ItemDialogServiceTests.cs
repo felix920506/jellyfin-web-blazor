@@ -247,6 +247,80 @@ public class ItemDialogCommandTests : ItemDialogsTestContext
     }
 
     [Fact]
+    public async Task Adding_a_selection_to_a_collection_passes_every_selected_item()
+    {
+        SignIn();
+        var secondId = TestItems.Id(2);
+        var thirdId = TestItems.Id(3);
+        Server.OnGet($"/Users/{UserId}/Items", new { Items = new[] { new { Id = TestItems.Id(5), Name = "Favourites" } } });
+        Server.OnPost($"/Collections/{TestItems.Id(5)}/Items");
+
+        var pending = Open(() => Handlers.ExecuteAsync(
+            ItemCommand.AddToCollection,
+            Movie(),
+            new ItemActionContext
+            {
+                SelectedItems = [Movie(), Of("Movie", 2), Of("Movie", 3)]
+            }));
+        Eventually(() => Assert.Contains(TestItems.Id(5), Options("#selectCollectionToAddTo")));
+        Pick("#selectCollectionToAddTo", TestItems.Id(5));
+        await Submit("form.newCollectionForm");
+
+        Assert.Equal(new ItemCommandResult(Updated: true), await pending);
+        Assert.Equal(
+            string.Join(',', MovieId, secondId, thirdId),
+            Server.RequestsTo($"/Collections/{TestItems.Id(5)}/Items").Single().Query("Ids"));
+    }
+
+    [Fact]
+    public async Task Adding_a_selection_to_a_playlist_passes_every_selected_item()
+    {
+        SignIn();
+        var secondId = TestItems.Id(2);
+        var thirdId = TestItems.Id(3);
+        Server.OnGet("/Items", new { Items = new[] { new { Id = TestItems.Id(5), Name = "Favourites" } } });
+        Server.OnGet($"/Playlists/{TestItems.Id(5)}/Users/{UserId}", new { CanEdit = true });
+        Server.OnPost($"/Playlists/{TestItems.Id(5)}/Items");
+
+        var pending = Open(() => Handlers.ExecuteAsync(
+            ItemCommand.AddToPlaylist,
+            Movie(),
+            new ItemActionContext
+            {
+                SelectedItems = [Movie(), Of("Movie", 2), Of("Movie", 3)]
+            }));
+        Eventually(() => Assert.Contains(TestItems.Id(5), Options("#selectPlaylistToAddTo")));
+        Pick("#selectPlaylistToAddTo", TestItems.Id(5));
+        await Submit("form");
+
+        Assert.Equal(new ItemCommandResult(Updated: true), await pending);
+        Assert.Equal(
+            string.Join(',', MovieId, secondId, thirdId),
+            Server.RequestsTo($"/Playlists/{TestItems.Id(5)}/Items").Single().Query("Ids"));
+    }
+
+    [Fact]
+    public async Task Refreshing_a_selection_queues_one_refresh_for_each_selected_item()
+    {
+        SignIn(admin: true);
+        Server.OnPost("/Refresh");
+        var selected = new[] { Movie(), Of("Movie", 2), Of("Movie", 3) };
+
+        var pending = Open(() => Handlers.ExecuteAsync(
+            ItemCommand.Refresh,
+            selected[0],
+            new ItemActionContext { SelectedItems = selected }));
+        Eventually(() => Assert.NotNull(Find("#selectMetadataRefreshMode")));
+        await Submit("form");
+
+        Assert.Equal(ItemCommandResult.None, await pending);
+        Eventually(() => Assert.Equal(3, Writes.Count(write => write.StartsWith("POST /Items/", StringComparison.Ordinal))));
+        Assert.Equal(
+            selected.Select(item => $"POST /Items/{item.IdText()}/Refresh").OrderBy(path => path),
+            Writes.Where(write => write.StartsWith("POST /Items/", StringComparison.Ordinal)).OrderBy(path => path));
+    }
+
+    [Fact]
     public async Task A_dialog_that_was_closed_changes_nothing()
     {
         SignIn();

@@ -56,6 +56,7 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
     private readonly BitrateDetector _bitrateDetector;
     private readonly IPlaybackTimers _timers;
     private readonly Interop.IBrowser _browser;
+    private readonly PlaybackInterceptors _interceptors;
     private readonly List<IMediaPlayer> _players = [];
     private readonly Dictionary<IMediaPlayer, PlayerData> _playerData = [];
     private readonly ConditionalWeakTable<BaseItemDto, ItemPlayOptions> _itemOptions = [];
@@ -76,7 +77,8 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
         BitrateDetector bitrateDetector,
         IPlaybackTimers timers,
         Interop.IBrowser browser,
-        IEnumerable<IMediaPlayer> players)
+        IEnumerable<IMediaPlayer> players,
+        PlaybackInterceptors interceptors)
     {
         _api = api;
         _appSettings = appSettings;
@@ -87,6 +89,7 @@ public sealed partial class PlaybackManager : IPlaybackManager, IStartupTask
         _bitrateDetector = bitrateDetector;
         _timers = timers;
         _browser = browser;
+        _interceptors = interceptors;
         _startingPlaySession = timers.NowMs;
         foreach (var player in players)
         {

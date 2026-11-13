@@ -24,6 +24,7 @@
 @inject LoadingService Loading
 @inject IPlaybackTimers Timers
 @inject IPlaybackUiInterop Ui
+@inject PlaybackActivity Activity
 @inject MediaSegmentService MediaSegments
 @inject SyncPlayService SyncPlay
 
@@ -359,16 +360,25 @@
 
     /// <summary>Any key was pressed.</summary>
     [JSInvokable]
-    public Task OnActivity() => InvokeAsync(ResetIdle);
+    public Task OnActivity() => InvokeAsync(() =>
+    {
+        Activity.NotifyActivity();
+        ResetIdle();
+    });
 
     /// <summary>The mouse moved noticeably.</summary>
     [JSInvokable]
-    public Task OnPointerMoved() => InvokeAsync(ShowOsd);
+    public Task OnPointerMoved() => InvokeAsync(() =>
+    {
+        Activity.NotifyActivity();
+        ShowOsd();
+    });
 
     [JSInvokable]
     public Task OnMouseDownChanged(bool down) => InvokeAsync(() =>
     {
         _mouseIsDown = down;
+        Activity.NotifyActivity();
         ResetIdle();
     });
 

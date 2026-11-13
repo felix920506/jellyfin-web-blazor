@@ -199,12 +199,15 @@ public sealed class ItemDialogCommandHandler(ItemDialogService itemDialogs) : II
     public async Task<ItemCommandResult> ExecuteAsync(string command, BaseItemDto item, ItemActionContext context)
     {
         var itemId = item.IdText();
+        var selectedItemIds = context.SelectedItems is { Count: > 0 } selected
+            ? selected.Select(selectedItem => selectedItem.IdText()).Where(id => id.Length > 0).ToList()
+            : [itemId];
         switch (command)
         {
             case ItemCommand.AddToCollection:
-                return Updated(await itemDialogs.AddToCollectionAsync([itemId]));
+                return Updated(await itemDialogs.AddToCollectionAsync(selectedItemIds));
             case ItemCommand.AddToPlaylist:
-                return Updated(await itemDialogs.AddToPlaylistAsync([itemId]));
+                return Updated(await itemDialogs.AddToPlaylistAsync(selectedItemIds));
             case ItemCommand.EditPlaylist:
                 return Updated(await itemDialogs.EditPlaylistAsync(itemId));
             case ItemCommand.Edit:
@@ -223,7 +226,7 @@ public sealed class ItemDialogCommandHandler(ItemDialogService itemDialogs) : II
                 await itemDialogs.ShowMediaInfoAsync(itemId);
                 return ItemCommandResult.None;
             case ItemCommand.Refresh:
-                await itemDialogs.RefreshAsync([itemId], item.TypeName() == "CollectionFolder" ? "scan" : null);
+                await itemDialogs.RefreshAsync(selectedItemIds, item.TypeName() == "CollectionFolder" ? "scan" : null);
                 return ItemCommandResult.None;
             case ItemCommand.Download:
                 await itemDialogs.DownloadAsync(itemId);

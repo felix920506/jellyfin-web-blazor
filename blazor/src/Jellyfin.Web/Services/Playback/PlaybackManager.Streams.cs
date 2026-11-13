@@ -527,6 +527,16 @@ public sealed partial class PlaybackManager
         // Normalize defaults to simplify checks throughout the process.
         playOptions.IsFirstItem = playOptions.IsFirstItem || prevSource is null;
 
+        try
+        {
+            await _interceptors.BeforePlayAsync(item, playOptions);
+        }
+        catch (PlaybackInterceptException exception)
+        {
+            OnPlaybackRejection(exception, playOptions.Fullscreen);
+            return;
+        }
+
         if (playOptions.Fullscreen)
         {
             _loading.Show();
@@ -648,10 +658,21 @@ public sealed partial class PlaybackManager
             _loading.Hide();
         }
 
-        if (exception is PlaybackRejectedException { Reported: true })
+        if (exception is PlaybackInterceptException { SuppressError: true })
+        {
+            return;
+        }
+
+        if (exception is PlaybackInterceptException { Reported: true })
         {
             // The specific message has been shown already. The original shows "ErrorDefault" on top
             // of it; the port leaves it at the one that says what is wrong.
+            return;
+        }
+
+        if (exception is PlaybackRejectedException { Reported: true })
+        {
+            // A negotiation helper has already shown the server's specific error.
             return;
         }
 
@@ -1291,9 +1312,4 @@ public sealed partial class PlaybackManager
     [GeneratedRegex("[?&]playSessionId=([^&#]*)", RegexOptions.IgnoreCase)]
     private static partial Regex PlaySessionIdRegex();
 
-    /// <summary>Playback could not start; <see cref="Reported"/> when the user has been told why.</summary>
-    private sealed class PlaybackRejectedException(bool reported, string reason = "playback rejected") : Exception(reason)
-    {
-        public bool Reported { get; } = reported;
-    }
 }
