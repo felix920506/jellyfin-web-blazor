@@ -584,6 +584,23 @@ public class PlaybackUiTests : PlaybackTestContext
     }
 
     [Fact]
+    public async Task The_queue_can_be_reordered_with_native_drag_and_drop()
+    {
+        StartRouter("/queue");
+        await PlaySongsAsync();
+        var cut = Render<Jellyfin.Web.Pages.Playback.Queue>();
+        cut.FindAll("#playlist .listItem")[2].TriggerEvent("ondragstart", new Microsoft.AspNetCore.Components.Web.DragEventArgs());
+        cut.FindAll("#playlist .listItem")[0].TriggerEvent("ondrop", new Microsoft.AspNetCore.Components.Web.DragEventArgs());
+
+        cut.WaitForAssertion(
+            () => Assert.Equal(
+                new[] { "Closing", "Opening", "Middle" },
+                cut.FindAll("#playlist .listItem").Select(e => e.QuerySelector(".listItemBodyText")!.TextContent)),
+            Timeout);
+        Assert.Equal(new[] { "Closing", "Opening", "Middle" }, Manager.GetPlaylist().Select(i => i.Name));
+    }
+
+    [Fact]
     public async Task The_buttons_of_the_queue_page_control_playback_and_the_page_closes_with_it()
     {
         StartRouter("/home").Navigate("/queue");

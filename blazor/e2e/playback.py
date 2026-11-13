@@ -357,15 +357,24 @@ def audio(page, server, songs):
     check(route(page).startswith("#/queue"), "the bar opens the queue page", route(page))
     check(page.locator("#nowPlayingPage .playlist .listItem").count() == 3, "the queue lists three songs")
     check(page.locator("#nowPlayingPage .listItem").nth(2).locator(".playlistIndexIndicatorImage").count() == 1,
-          "the playing song is marked in the queue")
+           "the playing song is marked in the queue")
     check(songs[2]["Name"] in page.locator(".nowPlayingSongName").inner_text(), "the page shows the playing song")
 
-    page.locator("#nowPlayingPage .listItem").nth(0).locator(".listItemBody").click()
+    # Native drag/drop is the primary desktop reorder path; the buttons below remain the
+    # keyboard/touch fallback.  Move the last entry before the first one.
+    queue_rows = page.locator("#nowPlayingPage .listItem")
+    queue_rows.nth(2).drag_to(queue_rows.nth(0))
+    check(wait_until(lambda: songs[2]["Name"] in page.locator("#nowPlayingPage .listItem").nth(0).inner_text(), timeout=5),
+          "a queue entry can be reordered by dragging")
+    page.wait_for_timeout(500)
+    shot(page, "playback-queue-dragged")
+
+    page.locator("#nowPlayingPage .listItem").nth(1).locator(".listItemBody").click()
     check(wait_until(lambda: songs[0]["Name"] in page.locator(".nowPlayingSongName").inner_text()
                      and current_time(page, "audio") > 0.3), "a queue entry jumps to its song")
 
     page.locator("#nowPlayingPage .listItem").nth(0).locator(".jf-playlistMoveDown").click()
-    moved = wait_until(lambda: songs[0]["Name"] in page.locator("#nowPlayingPage .listItem").nth(1).inner_text(), timeout=5)
+    moved = wait_until(lambda: songs[0]["Name"] in page.locator("#nowPlayingPage .listItem").nth(0).inner_text(), timeout=5)
     check(moved, "a queue entry is moved down")
     page.locator("#nowPlayingPage .listItem").nth(2).locator("button[data-customaction=remove]").click()
     check(wait_until(lambda: page.locator("#nowPlayingPage .playlist .listItem").count() == 2, timeout=5), "a queue entry is removed")

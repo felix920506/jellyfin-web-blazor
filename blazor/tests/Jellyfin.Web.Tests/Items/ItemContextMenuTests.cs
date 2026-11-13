@@ -512,14 +512,14 @@ public class ItemContextMenuExecutionTests : ItemsTestContext
     }
 
     [Fact]
-    public async Task Commands_of_other_workstreams_say_that_they_are_not_available()
+    public async Task Playback_commands_are_claimed_by_the_playback_handler()
     {
         SignIn(admin: true);
 
         var result = await Menu.ExecuteAsync("playmenu", new ItemMenuOptions { Item = Movie() });
 
         Assert.Equal(new ItemMenuResult("playmenu"), result);
-        Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);
+        Assert.Empty(Toasts);
     }
 
     [Fact]
@@ -593,16 +593,16 @@ public class ItemCommandHandlerTests : ItemsTestContext
     }
 
     [Fact]
-    public async Task Handlers_answer_for_their_own_commands_only()
+    public void Handlers_answer_for_their_own_commands_only()
     {
         var handlers = Get<ItemCommandHandlers>();
         var item = TestItems.Item(TestItems.Movie(1, "Movie"));
 
         Assert.True(handlers.CanHandle("edit", item));
         Assert.True(handlers.CanHandle("share", item));
-        Assert.False(handlers.CanHandle("playmenu", item));
-        Assert.Equal(ItemCommandResult.None, await handlers.ExecuteAsync("playmenu", item));
-        Assert.Equal(new[] { ItemCommandHandlers.NotAvailableText }, Toasts);
+        Assert.True(handlers.CanHandle("playmenu", item));
+        Assert.False(handlers.CanHandle("programdialog", item));
+        Assert.Empty(Toasts);
     }
 
     private sealed class RecordingHandler(string command, ItemCommandResult result) : IItemCommandHandler

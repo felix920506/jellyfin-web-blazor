@@ -193,8 +193,6 @@ public class ItemActionsTests : ItemsTestContext
 
     [Theory]
     [InlineData("programdialog")]
-    [InlineData("setplaylistindex")]
-    [InlineData("playmenu")]
     public async Task Actions_of_other_workstreams_say_that_they_are_not_available(string action)
     {
         SignIn();

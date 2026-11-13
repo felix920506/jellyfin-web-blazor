@@ -22,28 +22,24 @@ playback/plugin behaviors, not an unrepresented route.
    navigation. These are visible regressions for users with those capabilities.
 2. **Several original playback plugins have no functional counterpart.** The backdrop and
    logo screensaver plugins are exposed as preference choices but have no screensaver
-   implementation. `stillWatching`, `experimentalWarnings` and `playAccessValidation`
-   likewise have no corresponding runtime implementation. The original behavior should be
-   either ported or the options/hooks should be removed or clearly disabled.
+   implementation. The playback-boundary portions of `stillWatching`, `experimentalWarnings`
+   and `playAccessValidation` are now implemented; the remaining screensaver behavior is still
+   open.
 3. **Plugin configuration pages are only a warning page.** `/configurationpage` keeps the
    route and validates the resource, but deliberately does not render server HTML or run
    plugin JavaScript. This is safe and intentional, but plugin settings cannot be edited
    from the Blazor client.
-4. **Unclaimed item commands fall through to a misleading unavailable toast.** The
-   original `clearQueue`, `playmenu` and `setplaylistindex` actions are user-reachable,
-   while no registered `IItemCommandHandler` claims them. They therefore produce
-   `ItemCommandHandlers.NotAvailableText` (`This feature is not available yet.`). Queue
-   next is not in this gap: it is implemented directly by `ItemContextMenu` and
-   `PlaybackManager`.
-5. **Multi-select passes a selection but some handlers use only the first item.**
-   `MultiSelectCommands` supplies `ItemActionContext.SelectedItems` for add-to-collection,
-   add-to-playlist and refresh, but `ItemDialogCommandHandler` currently constructs a
-   one-item list from `item`. The UI therefore does not preserve the original multi-item
-   operation for those commands.
+4. **Queue drag/drop and item commands were previously incomplete.** `clearQueue`, `playmenu`
+   and `setplaylistindex` now have a playback-owned `IItemCommandHandler`; the queue retains
+   Up/Down controls and also supports native drag/drop. Remaining transport-target limitations
+   are listed in the playback extras document.
+5. **Multi-select now preserves the full selection.** `ItemDialogCommandHandler` derives its
+   operation IDs from `ItemActionContext.SelectedItems`, with a single-item fallback for direct
+   item actions.
 6. **Playback format and interaction gaps remain.** There is no client ASS/SSA, PGS or
-   VobSub renderer; brightness gestures, TV key handling, playback interceptors and
-   several original player integrations are absent. The port also intentionally replaces
-   queue drag-reordering with up/down buttons.
+    VobSub renderer; brightness gestures and TV key handling remain open, while playback
+    interceptors are implemented. Queue drag-reordering is now supported alongside the
+    accessible up/down buttons.
 7. **Small but observable library/image differences.** The port uses native scrolling
    instead of the original transform-based desktop scroller, and loaded lazy images are
    not unloaded when they leave the viewport. These are documented limitations rather
@@ -199,16 +195,16 @@ shows `This feature is not available yet.` when no handler claims it.
 | `copy-stream` | `ItemContextMenu.cs`, `ItemDialogService` | `ported` | Copies/download URL according to the port UI. |
 | `delete`, `removefromplaylist`, `movetotop`, `movetobottom`, `removefromcollection` | `ItemContextMenu.cs`, item/playlist services | `ported` | Confirmation and list refresh behavior are retained. |
 | `album`, `artist`, `lyrics` | `ItemContextMenu.cs`, routing/playback services | `ported` | Direct navigation/action implementations. |
-| `addtocollection`, `addtoplaylist`, `editplaylist` | `ItemDialogCommandHandler`, collection/playlist editors | `partial` | Single-item operation works; multi-select forwards `SelectedItems` but handler uses only the first item. |
+| `addtocollection`, `addtoplaylist`, `editplaylist` | `ItemDialogCommandHandler`, collection/playlist editors | `ported` | Multi-select forwards every selected id; direct item actions fall back to the clicked item. |
 | `edit`, `editimages`, `editsubtitles`, `editlyrics`, `identify`, `moremediainfo`, `refresh` | `ItemDialogCommandHandler` and item dialogs | `ported` | `refresh` has the same collection-folder scan mode; multi-select refresh is the exception noted above. |
 | `download`, `downloadall`, `share` | `ItemDialogCommandHandler`, `ItemDialogService` | `ported` | Download support remains browser/native-shell dependent as documented. |
 | `record`, `programdialog`, `togglerecording`, `canceltimer`, `cancelseriestimer` | `LiveTvCommandHandler`, recording services | `ported` | Programme/timer type rules are represented. |
 | `multiSelect` | `MultiSelectCommandHandler`, `MultiSelectCommands` | `ported` | Selection mode, select-all, delete, grouping, played state and refresh menu are present. |
-| `clearQueue` | Menu entry in `ItemContextMenu.cs`; no handler | `missing` | Original clears playback directly; port falls through to `NotAvailableText`. |
-| `playmenu` | Shortcut action in `ItemActions.cs`; no handler | `missing` | Original opens the play menu; port has no claimed command implementation. |
-| `setplaylistindex` | Shortcut action in `ItemActions.cs`; no handler | `missing` | Original jumps to a queue entry; port has no claimed command implementation. |
+| `clearQueue` | `Services/Playback/PlaybackItemCommands.cs` | `ported` | Clears the queue through `PlaybackManager.ClearQueue()`. |
+| `playmenu` | `Services/Playback/PlaybackItemCommands.cs` | `ported` | Opens resume/start choices and passes the selected start position to playback. |
+| `setplaylistindex` | `Services/Playback/PlaybackItemCommands.cs` | `ported` | Jumps by `PlaylistItemId`, preserving duplicate queue entries. |
 | Multi-select `selectall`, `delete`, `groupvideos`, `markplayed`, `markunplayed` | `MultiSelectCommands` | `ported` | Per-item played updates and group-version operations are implemented. |
-| Multi-select `addtocollection`, `playlist`, `refresh` | `MultiSelectCommands` → `IItemCommandHandler` | `partial` | Selection is passed in `ItemActionContext.SelectedItems`, but the item-dialog handler currently uses `[itemId]`. |
+| Multi-select `addtocollection`, `playlist`, `refresh` | `MultiSelectCommands` → `IItemCommandHandler` | `ported` | The dialog handlers receive all selected item ids; browser coverage checks the payload. |
 
 ## 3. Original plugin inventory and port counterparts
 
@@ -229,9 +225,9 @@ service/component, not merely a copied preference string.
 | `chromecastPlayer` | Chromecast target | No functional counterpart; remote menu explicitly reports unsupported | `missing` |
 | `backdropScreensaver` | Backdrop slideshow screensaver | `Pages/User/DisplayOptions.cs` only lists the option; no player/screensaver runtime | `missing` |
 | `logoScreensaver` | Bouncing-logo screensaver | `Pages/User/DisplayOptions.cs` only lists the option; no player/screensaver runtime | `missing` |
-| `stillWatching` | “Still watching?” episode prompt | `Pages/User/PlaybackOptions.cs` preserves option values only; no prompt/interceptor | `missing` |
-| `experimentalWarnings` | Experimental playback warnings | No counterpart found | `missing` |
-| `playAccessValidation` | Pre-play access validation | No counterpart found | `missing` |
+| `stillWatching` | `Services/Playback/PlaybackInterceptors.cs`, `PlaybackActivity` | `ported` | Episode-count/time/idle thresholds and Continue/Stop dialog are enforced before negotiation. |
+| `experimentalWarnings` | `Services/Playback/PlaybackInterceptors.cs` | `ported` | ISO/Blu-ray/DVD warnings are keyed once per ISO week. |
+| `playAccessValidation` | `Services/Playback/PlaybackInterceptors.cs` | `ported` | Fullscreen access shows the restriction alert; non-fullscreen rejection is silent. |
 
 PDF, comics and YouTube each have a registered player counterpart, while ordinary URL
 playback is handled by `UrlPlayer` in the same file. SyncPlay is functional for local transport and has
@@ -251,7 +247,7 @@ work that has since been completed.
 | `blazor/src/Jellyfin.Web/Components/Items/Scroller.razor:7` (`PORT-TODO(items)`) | Original desktop scroller moves the slider with transforms; port uses native scrolling. | Open, low priority. |
 | `blazor/src/Jellyfin.Web/Components/Playback/NowPlayingBar.razor:85` (`PORT-TODO(playback)`) | AirPlay button is hidden because AirPlay is not implemented. | Open, high priority for Safari/iOS. |
 | `blazor/src/Jellyfin.Web/Pages/Playback/VideoOsd.razor:9-10,228` (`PORT-TODO(playback)`) | Video OSD lacks recording controls, AirPlay, TV key handling and iOS forced-fullscreen back navigation. | Open; TV portion is out of scope, AirPlay/iOS are real gaps. |
-| `docs/blazor-port/06-playback-port.md` | Missing cast/AirPlay, Live TV OSD details, special players, ASS/SSA and image subtitles, gestures, interceptors and several queue/OSD details. | Open; TV layout excluded separately. |
+| `docs/blazor-port/06-playback-port.md` | Missing cast/AirPlay, Live TV OSD details, ASS/SSA and image subtitles, gestures and several queue/OSD details. | Open; TV layout excluded separately; playback interceptors are now implemented. |
 | `docs/blazor-port/15-playback-extras.md` | Chromecast unsupported; remote queue clearing is a no-op; SyncPlay and live-TV-specific extras were previously listed as future work. | Chromecast remains open; SyncPlay is now ported and its old “not started” text is stale. |
 | `docs/blazor-port/07-library-pages.md` | Recursive list filtering differs; TV on-screen alphabet is not ported; shared shell typography/visual details differ. | Recursive filter and visual differences open; TV alphabet out of scope. |
 | `docs/blazor-port/05-item-components.md` | Item scroller and image lazy-unload limitations; minor card/list indicator and styling differences. | Scroller/image items open; other differences are minor. |
@@ -263,8 +259,10 @@ work that has since been completed.
 | `docs/blazor-port/13-livetv.md` | Legacy widget styling is replaced by Razor/MudBlazor controls; shared shell gaps remain. | Intentional partial/visual difference. |
 | `docs/blazor-port/14-dashboard-livetv-metadata.md` | jstree is replaced by an accessible Razor tree; no dashboard `AppTabs` event is emitted. | Ported behavior with intentional implementation differences. |
 | `docs/blazor-port/17-syncplay.md` | Compact modern menu and local player media-ready timing differ from the legacy UI. | Current limitation; the old “not ported” claim elsewhere is stale. |
-| `blazor/src/Jellyfin.Web/Services/ItemDialogs/ItemDialogService.cs:204-226` | Handler ignores `SelectedItems` for add-to-collection, add-to-playlist and refresh. | Open functional multi-select gap. |
-| `blazor/src/Jellyfin.Web/Services/Items/ItemCommands.cs:131-146` | Any visible command without a handler produces the fixed unavailable toast. | Exposes the three unclaimed shortcut/queue commands above. |
+| `blazor/src/Jellyfin.Web/Services/ItemDialogs/ItemDialogService.cs` | Multi-item dialog commands derive ids from `SelectedItems`. | Closed; direct and multi-select tests cover the fallback and collection. |
+| `blazor/src/Jellyfin.Web/Services/Playback/PlaybackInterceptors.cs` | Playback-boundary validation, warnings and still-watching checks. | Closed for the three pre-play plugins; screensavers remain open. |
+| `blazor/src/Jellyfin.Web/Services/Playback/PlaybackItemCommands.cs` | Playback-owned implementations for queue/play commands. | Closed; focused command tests cover clear, jump and resume. |
+| `blazor/src/Jellyfin.Web/Pages/Playback/Queue.razor` | Queue supports native drag/drop as well as accessible move buttons. | Closed; bUnit and browser coverage exercise both paths. |
 | `blazor/src/Jellyfin.Web/Pages/User/DisplayOptions.cs:87-118` | Screensaver names/options are preserved without runtime screensaver implementations. | Open plugin gap; preference exposure should be revisited. |
 | `blazor/src/Jellyfin.Web/Pages/User/PlaybackOptions.cs:12-54` | Still-watching option values are preserved without the original prompt plugin. | Open plugin gap; preference exposure should be revisited. |
 
@@ -296,7 +294,6 @@ this exception and remain real gaps where marked above.
 The Blazor port is route-complete against the audited original inventory and has broad
 coverage of library, dashboard, wizard, metadata, Live TV, dialogs, local playback,
 remote session playback, synced lyrics and SyncPlay. The highest-value follow-up work is
-to close the unclaimed commands and multi-select handler bug, decide how unsupported
-plugin settings should be represented, and add the missing cast/AirPlay and playback
+to decide how unsupported screensaver settings should be represented and add the missing cast/AirPlay and playback
 interactions. The remaining route-level `partial` statuses are intentional UI/control
 substitutions or feature subsets and should not be mistaken for absent pages.

@@ -250,6 +250,7 @@ def movies_page(page, api, media):
 
     def multi_select():
         saved = api.user_data([movie["Id"] for movie in media.movies[:2]])
+        selected_ids = [movie["Id"] for movie in media.movies[:2]]
         try:
             cards = page.locator(f"{scope} .itemsContainer .card")
             cards.nth(0).click(modifiers=["Control"])
@@ -269,6 +270,35 @@ def movies_page(page, api, media):
             for expected in ("Add to collection", "Add to playlist", "Mark played", "Mark unplayed", "Refresh metadata"):
                 check(page, any(expected in entry for entry in entries), f"the selection menu offers '{expected}'")
             shot(page, "library-multiselect-menu")
+
+            # The three item-dialog commands must retain the complete selection, not just the
+            # first card.  The hidden field is the same itemIds payload sent by each editor.
+            for command, dialog_selector, label in (
+                ("addtocollection", ".fldSelectedItemIds", "collection"),
+                ("playlist", ".fldSelectedItemIds", "playlist"),
+                ("refresh", ".fldSelectedItemIds", "refresh"),
+            ):
+                if command != "addtocollection":
+                    cards = page.locator(f"{scope} .itemsContainer .card")
+                    cards.nth(0).click(modifiers=["Control"])
+                    cards.nth(1).click()
+                    page.click(".btnSelectionPanelOptions")
+                    page.wait_for_selector(".actionSheetMenuItem", timeout=10_000)
+                page.click(f".actionSheetMenuItem[data-id='{command}']")
+                page.wait_for_selector(dialog_selector, state="attached", timeout=10_000)
+                ids = page.input_value(dialog_selector).split(",")
+                check(page, ids == selected_ids, f"multi-select forwards both items to {label}")
+                dialog_count = page.locator(".dialogContainer").count()
+                page.locator(".dialogContainer").last.locator(".btnCancel").first.click()
+                page.wait_for_function("n => document.querySelectorAll('.dialogContainer').length < n", arg=dialog_count,
+                                       timeout=10_000)
+
+            cards = page.locator(f"{scope} .itemsContainer .card")
+            cards.nth(0).click(modifiers=["Control"])
+            cards.nth(1).click()
+            page.click(".btnSelectionPanelOptions")
+            page.wait_for_selector(".actionSheetMenuItem", timeout=10_000)
+
             page.locator(".actionSheetMenuItem", has_text="Mark played").first.click()
             page.wait_for_selector(".selectionCommandsPanel", state="detached", timeout=15_000)
             played = wait_until(lambda: all(api.item(item_id)["UserData"].get("Played") for item_id in saved), timeout=15)
