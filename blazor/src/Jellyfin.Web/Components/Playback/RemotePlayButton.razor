@@ -3,11 +3,13 @@
     The "cast" button of the app bar and its menus. Port of
     apps/modern/components/AppToolbar/RemotePlayButton.tsx with its menus RemotePlayMenu.tsx (the
     play targets) and RemotePlayActiveMenu.tsx (shown while a remote target is active).
-    The Google Cast entry is the "unsupported" one: the Chromecast player is not ported.
+    The Google Cast entry follows the Chromecast player (Services/Playback/Cast): "unsupported" while
+    the Cast sender SDK is not available, the Cast target among the others when it is.
 *@
 @attribute [ShellSlot(ShellSlot.Toolbar, 10)]
 @implements IDisposable
 @inject PlaybackManager Playback
+@inject CastPlayer Cast
 @inject JellyfinApi Api
 @inject AppDialogs Dialogs
 @inject Globalize Globalize
@@ -60,11 +62,14 @@
                 </MudTooltip>
             </ActivatorContent>
             <ChildContent>
-                @* The Chromecast player is not ported, so this is the original's menu without that plugin. *@
-                <MudMenuItem Disabled="true" Icon="@MdIcon.Of("warning")" Label="@Globalize["GoogleCastUnsupported"]" Class="jf-remote-play-nocast" />
-                @if (_targets.Count > 0)
+                @* Without the Cast API this is the original's menu without the chromecast plugin. *@
+                @if (!Cast.IsAvailable)
                 {
-                    <MudDivider />
+                    <MudMenuItem Disabled="true" Icon="@MdIcon.Of("warning")" Label="@Globalize["GoogleCastUnsupported"]" Class="jf-remote-play-nocast" />
+                    @if (_targets.Count > 0)
+                    {
+                        <MudDivider />
+                    }
                 }
                 @foreach (var target in _targets)
                 {
@@ -80,6 +85,10 @@
                         </span>
                     </MudMenuItem>
                 }
+                @if (Cast.IsAvailable && _targets.Count == 0)
+                {
+                    <MudMenuItem Disabled="true" Label="@Globalize["NoCastTargets"]" Class="jf-remote-play-notargets" />
+                }
             </ChildContent>
         </MudMenu>
     }
@@ -93,6 +102,7 @@
     protected override void OnInitialized()
     {
         Playback.Event += OnPlaybackEvent;
+        Cast.AvailabilityChanged += Refresh;
         Api.Changed += Refresh;
         Globalize.LanguageChanged += Refresh;
     }
@@ -100,6 +110,7 @@
     public void Dispose()
     {
         Playback.Event -= OnPlaybackEvent;
+        Cast.AvailabilityChanged -= Refresh;
         Api.Changed -= Refresh;
         Globalize.LanguageChanged -= Refresh;
     }
