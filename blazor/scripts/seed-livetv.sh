@@ -62,14 +62,23 @@ cat > "$XML" <<'EOF'
 EOF
 
 for day in -2 -1 0 1 2 3 4 5; do
-    base="$(date -u -d "$day day" '+%Y%m%d')"
+    # Keep the six one-hour programmes around the current time of day. A midnight-only
+    # fixture vanishes from the guide's visible window for most of the day, and cannot
+    # reliably supply a current programme for Live TV playback.
+    base="$(date -u -d "$day day -4 hours" '+%Y%m%d%H%M%S')"
+    next1="$(date -u -d "$day day -3 hours" '+%Y%m%d%H%M%S')"
+    next2="$(date -u -d "$day day -2 hours" '+%Y%m%d%H%M%S')"
+    next3="$(date -u -d "$day day -1 hour" '+%Y%m%d%H%M%S')"
+    next4="$(date -u -d "$day day" '+%Y%m%d%H%M%S')"
+    next5="$(date -u -d "$day day +1 hour" '+%Y%m%d%H%M%S')"
+    next6="$(date -u -d "$day day +2 hours" '+%Y%m%d%H%M%S')"
     cat >> "$XML" <<EOF
-  <programme start="${base}000000 +0000" stop="${base}010000 +0000" channel="jf-movie"><title>Jellyfin Feature</title><desc>A movie in the Live TV guide.</desc><category>Movie</category><video><quality>HDTV</quality></video><premiere /></programme>
-  <programme start="${base}010000 +0000" stop="${base}020000 +0000" channel="jf-sports"><title>Jellyfin Sports Live</title><desc>Live sports coverage.</desc><category>Sports</category><video><quality>HDTV</quality></video><live /></programme>
-  <programme start="${base}020000 +0000" stop="${base}030000 +0000" channel="jf-kids"><title>Jellyfin Kids Club</title><desc>A kids programme.</desc><category>Kids</category><video><quality>HDTV</quality></video><new /></programme>
-  <programme start="${base}030000 +0000" stop="${base}040000 +0000" channel="jf-news"><title>Jellyfin News Today</title><desc>News from the test guide.</desc><category>News</category><video><quality>HDTV</quality></video></programme>
-  <programme start="${base}040000 +0000" stop="${base}050000 +0000" channel="jf-series"><title>Jellyfin Test Series</title><sub-title>Episode ${day#-}: The Test</sub-title><desc>A series episode.</desc><category>Series</category><episode-num system="xmltv_ns">${day#-}.0.0/1</episode-num><video><quality>HDTV</quality></video><premiere /><new /></programme>
-  <programme start="${base}050000 +0000" stop="${base}060000 +0000" channel="jf-extra"><title>Jellyfin Repeat</title><desc>A repeat programme.</desc><category>Entertainment</category><video><quality>HDTV</quality></video><previously-shown /></programme>
+  <programme start="${base} +0000" stop="${next1} +0000" channel="jf-movie"><title>Jellyfin Feature</title><desc>A movie in the Live TV guide.</desc><category>Movie</category><video><quality>HDTV</quality></video><premiere /></programme>
+  <programme start="${next1} +0000" stop="${next2} +0000" channel="jf-sports"><title>Jellyfin Sports Live</title><desc>Live sports coverage.</desc><category>Sports</category><video><quality>HDTV</quality></video><live /></programme>
+  <programme start="${next2} +0000" stop="${next3} +0000" channel="jf-kids"><title>Jellyfin Kids Club</title><desc>A kids programme.</desc><category>Kids</category><video><quality>HDTV</quality></video><new /></programme>
+  <programme start="${next3} +0000" stop="${next4} +0000" channel="jf-news"><title>Jellyfin News Today</title><desc>News from the test guide.</desc><category>News</category><video><quality>HDTV</quality></video></programme>
+  <programme start="${next4} +0000" stop="${next5} +0000" channel="jf-series"><title>Jellyfin Test Series</title><sub-title>Episode ${day#-}: The Test</sub-title><desc>A series episode.</desc><category>Series</category><episode-num system="xmltv_ns">${day#-}.0.0/1</episode-num><video><quality>HDTV</quality></video><premiere /><new /></programme>
+  <programme start="${next5} +0000" stop="${next6} +0000" channel="jf-extra"><title>Jellyfin Repeat</title><desc>A repeat programme.</desc><category>Entertainment</category><video><quality>HDTV</quality></video><previously-shown /></programme>
 EOF
 done
 echo '</tv>' >> "$XML"
