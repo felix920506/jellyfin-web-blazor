@@ -159,6 +159,18 @@ public sealed class CastPlayer : IRemotePlayer, IStartupTask
 
     public bool IsFullscreen => Bool(PlayState, "IsFullscreen") == true;
 
+    public bool IsAirPlayEnabled => false;
+
+    public int Brightness => 100;
+
+    public void SetAirPlayEnabled(bool enabled)
+    {
+    }
+
+    public void SetBrightness(int value)
+    {
+    }
+
     public bool IsPictureInPictureEnabled => false;
 
     public BaseItemDto? NowPlayingItem => _nowPlayingItem;
