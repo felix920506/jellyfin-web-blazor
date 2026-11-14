@@ -107,6 +107,21 @@ The bUnit suite is in `tests/Jellyfin.Web.Tests/LiveTv/`:
 At completion, the focused Live TV suite contains **68 passing tests** and the Playwright scenario
 finishes with `livetv: ok`.
 
+For isolated OSD validation, use `JELLYFIN_INSTANCE=livetvosd JELLYFIN_PORT=18108` with
+`scripts/test-server.sh reset`, `up`, and `scripts/seed-livetv.sh`, then:
+
+```sh
+PORT=5081 ./dev serve
+# In another terminal:
+APP_URL=http://localhost:5081 JELLYFIN_URL=http://localhost:18108 e2e/run livetv.py
+```
+
+Run the scenario three consecutive times without reseeding, then once after reset/up/seed to
+verify repeatability. Stop only that dev server (`PORT=5081 ./dev stop`) and private instance
+(`down`, then `reset`) afterward. OSD screenshots are `livetv-osd-record.png`,
+`livetv-osd-recording.png` and `livetv-osd-cancelled.png`; Record precedes the transport controls,
+and its circle changes from white to the original `#c33` while recording.
+
 ## 5. Gaps and intentional differences
 
 - Guide programme clicks route to the port's details page rather than opening the legacy programme

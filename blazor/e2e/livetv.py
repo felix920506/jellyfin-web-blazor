@@ -72,7 +72,7 @@ def record_playing_channel(page, api):
     # RecordingHelper displays a toast over the bottom-left controls. Wait for its real lifetime
     # before moving the pointer to reopen the OSD; never force a click through an overlay.
     expect(page.locator(".toastVisible")).to_contain_text("Recording scheduled.")
-    expect(page.locator(".toastVisible")).to_have_count(0)
+    expect(page.locator(".toast")).to_have_count(0)
     show_osd(page)
     shot(page, "livetv-osd-recording")
     with page.expect_response(lambda r: f"/LiveTv/Timers/{timers[0]['Id']}" in r.url and r.request.method == "DELETE") as cancelled:
@@ -83,7 +83,7 @@ def record_playing_channel(page, api):
     expect(record).to_be_enabled()
     assert not [t for t in get(api, "/LiveTv/Timers")["Items"] if t.get("Id") == timers[0]["Id"]]
     expect(page.locator(".toastVisible")).to_contain_text("Recording cancelled.")
-    expect(page.locator(".toastVisible")).to_have_count(0)
+    expect(page.locator(".toast")).to_have_count(0)
     show_osd(page)
     shot(page, "livetv-osd-cancelled")
     with page.expect_response(lambda r: "/Sessions/Playing/Stopped" in r.url and r.request.method == "POST") as stopped:
@@ -104,6 +104,9 @@ def choose_tab(page, index, label):
     page.click(".jf-library-view-button")
     page.click(f".jf-library-view-list [data-tab-index='{index}']")
     wait_page(page, label)
+    if index == 1:
+        expect(page.locator(".guide-channelHeaderCell")).to_have_count(6, timeout=30_000)
+        page.locator(".programCell").first.wait_for(state="visible", timeout=30_000)
     shot(page, f"livetv-{index}-{label.lower()}")
 
 
@@ -224,7 +227,9 @@ def main() -> int:
         page.set_viewport_size({"width": 400, "height": 800})
         go(page, "/livetv?tab=1")
         wait_page(page, "Guide")
-        page.wait_for_selector(".tvguide", timeout=30_000)
+        expect(page.locator(".guide-channelHeaderCell")).to_have_count(6, timeout=30_000)
+        page.locator(".programCell").first.wait_for(state="visible", timeout=30_000)
+        expect(page.locator(".toast")).to_have_count(0)
         shot(page, "livetv-guide-phone")
         code = finish(page, "livetv")
         api.dispose()

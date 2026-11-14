@@ -3,6 +3,8 @@
 # Reuses the tuner/provider on repeated calls, explicitly runs the guide refresh scheduled task,
 # and waits for six channels plus a current programme (GuideInfo alone is not a readiness check).
 # All fixture generation and JSON tooling runs in the dev container; no host Python is required.
+# Usage: JELLYFIN_INSTANCE=livetvosd JELLYFIN_PORT=18108 scripts/seed-livetv.sh
+# --files-only writes separate dashboard fixtures without changing server configuration.
 set -euo pipefail
 
 if [[ "${JF_LIVETV_IN_DOCKER:-}" != 1 ]]; then
@@ -115,9 +117,11 @@ fi
 tuner='{"Type":"m3u","Url":"/media/livetv.m3u","Source":"m3u","DeviceId":"jellyfin-livetv-m3u","FriendlyName":"Jellyfin Live TV M3U","TunerCount":6,"ReadAtNativeFramerate":true}'
 listing='{"Type":"xmltv","Path":"/media/livetv.xml","Enabled":true}'
 
-if ! authed GET /System/Configuration/livetv | grep -q '"Url":"/media/livetv.m3u"'; then
-    authed POST /LiveTv/TunerHosts "$tuner" >/dev/null
+existing_tuner="$(authed GET /System/Configuration/livetv | perl -MJSON::PP -0777 -ne 'for (@{decode_json($_)->{TunerHosts}}) { print $_->{Id} if $_->{Url} eq "/media/livetv.m3u" }')"
+if [[ -n "$existing_tuner" ]]; then
+    tuner="$(echo "$tuner" | TUNER_ID="$existing_tuner" perl -MJSON::PP -0777 -ne '$x=decode_json($_); $x->{Id}=$ENV{TUNER_ID}; print encode_json($x)')"
 fi
+authed POST /LiveTv/TunerHosts "$tuner" >/dev/null
 if ! authed GET /System/Configuration/livetv | grep -q '"Path":"/media/livetv.xml"'; then
     authed POST /LiveTv/ListingProviders "$listing" >/dev/null
 fi
