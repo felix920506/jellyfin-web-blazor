@@ -1,11 +1,13 @@
 # Production image. The SDK stage deliberately repeats the small asset preparation step so this
 # image can be built from a clean checkout, while ./dev image supplies the same publish settings.
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# The publish output is platform independent (static files), so the build stage runs on the
+# builder's own architecture even when the image is built for several platforms.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 
-ARG TARGETARCH
+ARG BUILDARCH
 ARG DART_SASS_VERSION=1.107.0
 RUN set -eux; \
-    case "${TARGETARCH:-$(dpkg --print-architecture)}" in arm64) sass_arch=arm64 ;; amd64) sass_arch=x64 ;; *) exit 1 ;; esac; \
+    case "${BUILDARCH:-$(dpkg --print-architecture)}" in arm64) sass_arch=arm64 ;; amd64) sass_arch=x64 ;; *) exit 1 ;; esac; \
     curl -fsSL "https://github.com/sass/dart-sass/releases/download/${DART_SASS_VERSION}/dart-sass-${DART_SASS_VERSION}-linux-${sass_arch}.tar.gz" | tar -xz -C /opt; \
     ln -s /opt/dart-sass/sass /usr/local/bin/sass
 WORKDIR /work

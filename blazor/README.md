@@ -17,3 +17,14 @@ scripts/test-server.sh up   # a throwaway Jellyfin server with sample media on h
 
 The production image serves the hash-routed static app on port 8080. Only the fingerprinted
 `_framework` files are served with immutable cache headers, everything else is revalidated, and the precompressed Brotli/gzip assets are selected from `Accept-Encoding`.
+
+## Preview builds
+
+`.github/workflows/blazor-preview.yml` builds every push to `blazor-port` (after `./dev check`) and publishes:
+
+- the static site on GitHub Pages;
+- `jellyfin-web-blazor.zip` on the rolling `preview` pre-release;
+- the container image `ghcr.io/<owner>/<repo>:preview` (`docker run -p 8080:8080 …`, amd64 and arm64).
+
+The Pages site is served over HTTPS, so browsers only let it talk to Jellyfin servers that are
+also reachable over HTTPS (or on `localhost`). For a server on plain HTTP use the zip or the image.
