@@ -520,6 +520,9 @@ function bindElementEvents(player, elem) {
         on('webkitpresentationmodechanged', () => emit(player, 'pictureinpicturechange'));
         on('webkitplaybacktargetavailabilitychanged', () => emit(player, 'airplayavailabilitychange'));
         on('webkitcurrentplaybacktargetiswirelesschanged', () => emit(player, 'airplaychange'));
+        // iPhone's native player does not raise document fullscreenchange when the user leaves it.
+        // Keep this separate from regular fullscreen state changes: the OSD must close playback.
+        on('webkitendfullscreen', () => emit(player, 'nativefullscreenended'));
     }
 }
 

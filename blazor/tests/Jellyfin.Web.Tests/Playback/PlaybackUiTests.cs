@@ -162,6 +162,19 @@ public class PlaybackUiTests : PlaybackTestContext
     }
 
     [Fact]
+    public async Task Ending_native_iOS_fullscreen_stops_playback_and_returns_from_the_osd()
+    {
+        StartRouter("/home");
+        await PlayMovieAsync();
+        var cut = Render<VideoOsd>();
+
+        Player.Emit("video", PlaybackEvents.NativeFullscreenEnded);
+
+        cut.WaitForAssertion(() => Assert.Equal("/home", App.Browser.Hash), Timeout);
+        Assert.Contains("stop video destroy=True fade=False", Player.Calls);
+    }
+
+    [Fact]
     public async Task Subtitle_offset_keys_show_the_slider_and_adjust_the_offset()
     {
         StartRouter();

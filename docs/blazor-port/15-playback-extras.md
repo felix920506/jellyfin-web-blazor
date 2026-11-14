@@ -63,6 +63,12 @@ video CSS filter, and presents the original-style orange brightness indicator wh
 active. The input bridge deliberately ignores short movements and controls, so normal taps and
 slider/button gestures retain their existing behavior.
 
+## Delivered: iOS native-fullscreen exit
+
+The HTML video element forwards WebKit's `webkitendfullscreen` event as a distinct playback event.
+When native iOS fullscreen is dismissed, the OSD stops local playback and returns to the previous
+route. This intentionally does not treat ordinary document fullscreen transitions as a stop.
+
 ### Extension points and deviations
 
 - Implement/register `IRemotePlayer` for another self-managing target; session-specific HTTP and

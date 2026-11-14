@@ -140,8 +140,7 @@ Marked in the code with `// PORT-TODO(playback): …`.
 - Session remote control, synced lyrics and native AirPlay target pickers are now ported; see `15-playback-extras.md`. Cast, SyncPlay (also its OSD icon and statistics category),
   live TV specifics of the OSD (programme info, record button), photo/book/PDF/YouTube players and with them remote trailers and items that are plain URLs.
 - VobSub/DVB client renderers and some advanced bitmap appearance controls remain unported.
-- Brightness gestures, TV-layout key handling, iOS forced-fullscreen back navigation, iOS HLS live
-  prefetch, flv.js, playback interceptors.
+- TV-layout key handling, iOS HLS live prefetch and flv.js.
 - Queue page: drag reordering (replaced by Up/Down buttons), remote backdrop. Remote control sections
   are ported.
 - OSD: buttons are not focused when it appears; the slider bubble is not clamped to the track's

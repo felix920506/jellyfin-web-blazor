@@ -779,6 +779,12 @@
 
         switch (name)
         {
+            case PlaybackEvents.NativeFullscreenEnded:
+                // Native iOS fullscreen was dismissed. Match the legacy back-navigation behavior.
+                _leaving = true;
+                _ = Playback.StopAsync();
+                Router.Back();
+                return;
             case PlaybackEvents.TimeUpdate:
                 // Try to avoid hammering the document with changes.
                 var now = Timers.NowMs;
@@ -830,8 +836,12 @@
         Loading.Hide();
         if (info.NextMediaType != "Video")
         {
+            var shouldNavigateBack = !_leaving;
             _leaving = true;
-            Router.Back();
+            if (shouldNavigateBack)
+            {
+                Router.Back();
+            }
         }
 
         StateHasChanged();

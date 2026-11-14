@@ -51,6 +51,7 @@ public static class PlaybackEvents
     public const string DblClick = "dblclick";
     public const string AirPlayChange = "airplaychange";
     public const string BrightnessChange = "brightnesschange";
+    public const string NativeFullscreenEnded = "nativefullscreenended";
 
     /// <summary>Raised by a remote player when its state changed in a way the other events do not cover.</summary>
     public const string StateChange = "statechange";
