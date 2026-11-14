@@ -173,6 +173,10 @@ public sealed class CastPlayer : IRemotePlayer, IStartupTask
 
     public bool IsPictureInPictureEnabled => false;
 
+    public bool IsAirPlayEnabled => false;
+
+    public int Brightness => 100;
+
     public BaseItemDto? NowPlayingItem => _nowPlayingItem;
 
     /// <summary>Port of getPlaylist(): the receiver's queue is not known here.</summary>
@@ -508,6 +512,14 @@ public sealed class CastPlayer : IRemotePlayer, IStartupTask
 
     /// <inheritdoc />
     public void SetPictureInPictureEnabled(bool enabled)
+    {
+    }
+
+    public void SetAirPlayEnabled(bool enabled)
+    {
+    }
+
+    public void SetBrightness(int value)
     {
     }
 

@@ -89,7 +89,9 @@ JELLYFIN_URL=http://localhost:18098 ./dev e2e livetv.py
 
 `e2e/livetv.py` checks all six tabs, guide date switching, guide settings, desktop and phone
 layouts, programme details, single-recording settings, series-recording settings, and cancellation
-of both timer types. Its XMLTV fixture schedules programmes relative to the current UTC hour so
+of both timer types. It also decodes a real M3U channel, shows the video OSD, creates and cancels
+the current programme's timer, verifies both changes through `/LiveTv/Timers`, and stops playback.
+Its XMLTV fixture schedules programmes relative to the current UTC hour so
 the visible guide does not depend on when the test runs. Screenshots are written to
 `blazor/artifacts/e2e/`.
 
@@ -98,9 +100,27 @@ The bUnit suite is in `tests/Jellyfin.Web.Tests/LiveTv/`:
 - `LiveTvPageTests` covers tabs, guide rendering, settings and command ownership;
 - `RecordingDialogTests` covers programme controls, recording and series editors, cancellation,
   embedded series settings and the bare details-page controls.
+- `Playback/VideoOsdRecordingTests` renders the real OSD with a fake player and HTTP API: recording
+  permissions, absent/stale programmes, timer creation/cancellation/failures, active titles and
+  transport-button placement, programme-to-channel playback and live-stream track refresh.
 
 At completion, the focused Live TV suite contains **68 passing tests** and the Playwright scenario
 finishes with `livetv: ok`.
+
+For isolated OSD validation, use `JELLYFIN_INSTANCE=livetvosd JELLYFIN_PORT=18108` with
+`scripts/test-server.sh reset`, `up`, and `scripts/seed-livetv.sh`, then:
+
+```sh
+PORT=5081 ./dev serve
+# In another terminal:
+APP_URL=http://localhost:5081 JELLYFIN_URL=http://localhost:18108 e2e/run livetv.py
+```
+
+Run the scenario three consecutive times without reseeding, then once after reset/up/seed to
+verify repeatability. Stop only that dev server (`PORT=5081 ./dev stop`) and private instance
+(`down`, then `reset`) afterward. OSD screenshots are `livetv-osd-record.png`,
+`livetv-osd-recording.png` and `livetv-osd-cancelled.png`; Record precedes the transport controls,
+and its circle changes from white to the original `#c33` while recording.
 
 ## 5. Gaps and intentional differences
 
@@ -108,9 +128,12 @@ finishes with `livetv: ok`.
   dialog directly; the same recording fields and API operations are available there.
 - The channel guide and schedule use Blazor list containers and local-calendar grouping while
   preserving the original classes, labels and request parameters.
-- Guide refresh is provided by the server's scheduled refresh after the seed script registers the
-  tuner and listing provider; the seed script tolerates servers that do not expose the legacy
-  manual refresh endpoint.
+- The seed runs inside `./dev` and explicitly awaits the `RefreshGuide` scheduled task after
+  registering the tuner and XMLTV provider. `/LiveTv/GuideInfo` alone is not readiness: it can have
+  dates with no channels. Readiness requires six channels and a current programme. M3U entries
+  use unique HTTP URLs to the private server's seeded VP9/Opus movie: local file entries are
+  rejected by modern Jellyfin and identical stream URLs collapse into one channel. The tuner
+  reads at native frame rate so a current-programme recording is not consumed to EOF immediately.
 - Shared port gaps remain outside this workstream: the shell's MudBlazor typography/reset needs a
   general fix, and list/scroller/context-menu implementation differences are documented by their
   respective workstreams.

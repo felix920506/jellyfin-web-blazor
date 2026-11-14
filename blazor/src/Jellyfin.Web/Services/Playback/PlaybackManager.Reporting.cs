@@ -247,9 +247,14 @@ public sealed partial class PlaybackManager
     {
         try
         {
-            using var response = await _api.SendAsync(HttpMethod.Get, _api.GetUrl($"LiveStreams/{liveStreamId}/MediaInfo"));
+            // Modern Jellyfin exposes refreshed live media sources via the item's PlaybackInfo;
+            // the old LiveStreams/{id}/MediaInfo route no longer exists.
+            using var response = await _api.SendAsync(HttpMethod.Get,
+                _api.GetUrl($"Items/{streamInfo.Item.Id:N}/PlaybackInfo", ("userId", _api.UserIdText)));
             response.EnsureSuccessStatusCode();
-            var source = KiotaJson.Parse(await response.Content.ReadAsStringAsync(), MediaSourceInfo.CreateFromDiscriminatorValue);
+            var info = KiotaJson.Parse(await response.Content.ReadAsStringAsync(), PlaybackInfoResponse.CreateFromDiscriminatorValue);
+            var source = info?.MediaSources?.FirstOrDefault(source => source.LiveStreamId == liveStreamId)
+                ?? info?.MediaSources?.FirstOrDefault(source => source.Id == streamInfo.MediaSource?.Id);
             if (source?.MediaStreams is { } streams && streamInfo.MediaSource is { } mediaSource)
             {
                 mediaSource.MediaStreams = streams;
