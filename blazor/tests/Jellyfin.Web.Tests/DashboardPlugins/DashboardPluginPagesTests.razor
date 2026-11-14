@@ -5,6 +5,8 @@
 @using Jellyfin.Web.Tests.Session
 @using Jellyfin.Web.Tests.Support
 @using Microsoft.AspNetCore.Components.Web
+@using Microsoft.JSInterop
+@using Microsoft.Extensions.DependencyInjection
 @inherits DashboardTestContext
 
 @code {
@@ -86,17 +88,78 @@
     }
 
     [Fact]
-    public void Configuration_resolves_resource_but_never_executes_plugin_content()
+    public void Drawer_supports_multiple_main_menu_pages_from_one_plugin()
     {
         Script();
+        App.Server.OnGet("/System/Info", new { ServerName = "Test" });
+        App.Server.OnGet("/web/ConfigurationPages", new[]
+        {
+            new { PluginId = Id, Name = "first", DisplayName = "First page", EnableInMainMenu = true },
+            new { PluginId = Id, Name = "second", DisplayName = "Second page", EnableInMainMenu = true },
+        });
+        var cut = Render<DashboardDrawerContent>();
+        cut.Eventually(() => Assert.Single(cut.FindAll("a[href='#/configurationpage?name=second']")));
+        Assert.Single(cut.FindAll("a[href='#/configurationpage?name=first']"));
+    }
+
+    [Fact]
+    public async Task Configuration_passes_authenticated_resource_to_isolated_host()
+    {
+        Script();
+        var module = JSInterop.SetupModule("./js/plugincompat.js");
+        var session = module.SetupModule("mount", _ => true);
+        session.SetupVoid("dispose").SetVoidResult();
         App.Server.OnGet("/web/ConfigurationPages", new[] { new { Name = "plugin settings", DisplayName = "My Settings", PluginId = Id } });
         App.Server.On(HttpMethod.Get, "/web/configurationpage", _ => PlainText("<script>dangerous()</script><h1>legacy content</h1>"));
         var cut = Render<DashboardPluginConfiguration>(p => p.Add(c => c.Name, "plugin settings"));
-        cut.Eventually(() => Assert.NotEmpty(cut.FindAll(".jf-dashboard-plugin-configuration-notice")));
-        Assert.Contains("not available in this client", cut.Markup, StringComparison.Ordinal);
+        cut.Eventually(() => Assert.Single(module.Invocations["mount"]));
         Assert.Contains("My Settings", cut.Markup, StringComparison.Ordinal);
         Assert.DoesNotContain("dangerous", cut.Markup, StringComparison.Ordinal);
-        Assert.Equal("plugin settings", Assert.Single(App.Server.RequestsTo("/web/configurationpage")).Query("name"));
+        var request = Assert.Single(App.Server.RequestsTo("/web/configurationpage"));
+        Assert.Equal("plugin settings", request.Query("name"));
+        Assert.Contains("Token=", request.Headers["Authorization"], StringComparison.Ordinal);
+        Assert.Equal("<script>dangerous()</script><h1>legacy content</h1>", module.Invocations["mount"][0].Arguments[1]);
+        await cut.InvokeAsync(() => cut.Instance.DisposeAsync().AsTask());
+        Assert.Single(session.Invocations["dispose"]);
+    }
+
+    [Fact]
+    public async Task Configuration_query_change_disposes_old_document_and_mounts_new_one()
+    {
+        Script();
+        var module = JSInterop.SetupModule("./js/plugincompat.js");
+        var session = module.SetupModule("mount", _ => true);
+        session.SetupVoid("dispose").SetVoidResult();
+        App.Server.OnGet("/web/ConfigurationPages", new[] { new { Name = "one" }, new { Name = "two" } });
+        App.Server.On(HttpMethod.Get, "/web/configurationpage", request => PlainText(request.Query("name")!));
+        var cut = Render<DashboardPluginConfiguration>(p => p.Add(c => c.Name, "one"));
+        cut.Eventually(() => Assert.Single(module.Invocations["mount"]));
+        await cut.InvokeAsync(() => cut.Render(p => p.Add(c => c.Name, "two")));
+        cut.Eventually(() => Assert.Equal(2, module.Invocations["mount"].Count));
+        Assert.Single(session.Invocations["dispose"]);
+        Assert.Equal("two", module.Invocations["mount"][1].Arguments[1]);
+    }
+
+    [Fact]
+    public async Task Configuration_interop_failure_is_a_page_error_not_an_app_error()
+    {
+        await using var context = new BunitContext();
+        var app = new TestApp();
+        app.Configure(context.Services);
+        context.Services.AddSingleton<IPluginConfigurationInterop>(new FailingPluginInterop());
+        context.JSInterop.Mode = JSRuntimeMode.Loose;
+        await app.LoadAssetsAsync(context.Services);
+        app.SignIn(admin: true, services: context.Services);
+        app.Server.OnGet("/web/ConfigurationPages", new[] { new { Name = "settings" } });
+        app.Server.On(HttpMethod.Get, "/web/configurationpage", _ => PlainText("plugin"));
+        var cut = context.Render<DashboardPluginConfiguration>(p => p.Add(c => c.Name, "settings"));
+        cut.Eventually(() => Assert.Contains(this.T("PluginLoadConfigError"), cut.Find(".mud-alert").TextContent, StringComparison.Ordinal));
+    }
+
+    private sealed class FailingPluginInterop : IPluginConfigurationInterop
+    {
+        public ValueTask<IJSObjectReference> MountAsync(ElementReference host, string html, string name) =>
+            ValueTask.FromException<IJSObjectReference>(new JSException("host failed"));
     }
 
     [Fact]

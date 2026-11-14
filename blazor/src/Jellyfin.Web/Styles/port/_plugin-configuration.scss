@@ -1,0 +1,33 @@
+.jf-plugin-configuration-host {
+    width: 100%;
+    min-width: 0;
+    iframe { display: block; width: 100%; border: 0; min-height: 28rem; color-scheme: inherit; }
+}
+
+// Applied only to the isolated plugin document, never to native Blazor controls.
+.jf-plugin-document {
+    height: auto;
+    min-height: 0;
+    background: transparent !important;
+    overflow: hidden;
+    .page { position: static !important; padding: 0 !important; contain: none !important; }
+    .content-primary { padding: 1rem; margin: 0 auto; max-width: 70rem; }
+    h1 { font-size: 2rem; margin: 0 0 1rem; }
+    h2 { font-size: 1.5rem; margin: 1rem 0; }
+    .inputContainer, .selectContainer { margin-bottom: 1.5rem; }
+    .emby-input, .emby-textarea, .emby-select { box-sizing: border-box; width: 100%; }
+    .checkboxContainer { display: block; margin-bottom: 1rem; }
+    // Native inputs remain accessible: no dependency on globally registered custom elements.
+    input[is="emby-checkbox"] {
+        appearance: auto; opacity: 1; position: static; width: 1.25rem; height: 1.25rem;
+        margin: .25rem .6rem .25rem 0; vertical-align: middle; accent-color: #00a4dc;
+    }
+    .fieldDescription { opacity: .75; line-height: 1.5; margin-top: .35rem; }
+    .jf-plugin-message { padding: 1rem; margin: 1rem; border: 1px solid currentColor; white-space: pre-wrap; }
+    .jf-plugin-error { color: #ff9898; }
+    .jf-plugin-loading { position: fixed; right: 1rem; top: 1rem; padding: .6rem; background: #242424; z-index: 1000; }
+    .jf-plugin-status:empty { display: none; }
+    dialog { color: inherit; background: #242424; border: 1px solid #666; border-radius: .3rem; max-width: 90%; }
+    dialog::backdrop { background: #0009; }
+    a { overflow-wrap: anywhere; }
+}

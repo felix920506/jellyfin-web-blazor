@@ -1,24 +1,19 @@
-@* Legacy server HTML depends on AMD, ApiClient, Dashboard, viewManager and custom elements.
-   Resolve it, but never inject/execute it in the Blazor application. *@
+@* Server plugins are trusted administrator-installed code, hosted outside Blazor's DOM. *@
 @attribute [Route("/configurationpage")]
 @attribute [Access(AccessLevel.Admin)]
 @layout DashboardLayout
+@implements IAsyncDisposable
+@using Microsoft.JSInterop
 @inject JellyfinApi Api
 @inject Globalize Globalize
+@inject IPluginConfigurationInterop PluginInterop
 
 <Page Id="pluginConfigurationPage" Title="@(_page?.DisplayName ?? Name ?? Globalize["Settings"])" Class="mainAnimatedPage type-interior">
     <div class="content-primary jf-dashboard-plugins">
         @if (_loading) { <DashboardLoading /> }
         else if (_failed) { <MudAlert Severity="Severity.Error">@Globalize["PluginLoadConfigError"]</MudAlert> }
         else if (_page is null) { <MudAlert Severity="Severity.Info">@Globalize["MessageNoPluginConfiguration"]</MudAlert> }
-        else
-        {
-            <MudText Typo="Typo.h1">@(_page.DisplayName ?? _page.Name)</MudText>
-            <MudAlert Severity="Severity.Warning" Class="jf-dashboard-plugin-configuration-notice">
-                This plugin’s settings page is not available in this client. It requires the legacy Jellyfin web client’s JavaScript APIs. Open the original Jellyfin web client to configure this plugin.
-            </MudAlert>
-            <MudButton Href="#/dashboard/plugins">@Globalize["TabPlugins"]</MudButton>
-        }
+        <div @ref="_host" class="jf-plugin-configuration-host"></div>
     </div>
 </Page>
 
@@ -26,22 +21,80 @@
     [Parameter] public string? Name { get; set; }
     private ConfigurationPageInfo? _page;
     private bool _loading = true, _failed;
+    private ElementReference _host;
+    private string? _html;
+    private IJSObjectReference? _session;
+    private int _generation;
+    private bool _disposed;
+
     protected override async Task OnParametersSetAsync()
     {
+        var generation = ++_generation;
+        await UnmountAsync();
+        _html = null;
         _loading = true; _failed = false; _page = null;
         try
         {
             var pages = await Api.Client.Web.ConfigurationPages.GetAsync() ?? [];
+            if (_disposed || generation != _generation) return;
             _page = pages.FirstOrDefault(p => string.Equals(p.Name, Name, StringComparison.OrdinalIgnoreCase));
             if (_page is not null)
             {
-                using var response = await Api.SendAsync(HttpMethod.Get, Api.GetUrl("web/configurationpage", ("name", _page.Name)));
+                using var response = await Api.SendAsync(HttpMethod.Get, Api.GetUrl("web/ConfigurationPage", ("name", _page.Name)));
                 response.EnsureSuccessStatusCode();
-                // Resolve the actual resource so missing/broken settings pages report an error.
-                // Do not execute server-provided legacy scripts or insert their HTML.
+                var html = await response.Content.ReadAsStringAsync();
+                if (!_disposed && generation == _generation) _html = html;
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { AppLog.Warn("[PluginConfiguration] load failed: " + ex.Message); _failed = true; }
-        finally { _loading = false; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (!_disposed && generation == _generation)
+            {
+                AppLog.Warn("[PluginConfiguration] load failed: " + ex.Message);
+                _failed = true;
+            }
+        }
+        finally { if (generation == _generation) _loading = false; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_html is not { } html || _disposed) return;
+        _html = null;
+        var generation = _generation;
+        try
+        {
+            var session = await PluginInterop.MountAsync(_host, html, _page!.Name!);
+            if (_disposed || generation != _generation)
+            {
+                await session.InvokeVoidAsync("dispose");
+                await session.DisposeAsync();
+            }
+            else _session = session;
+        }
+        catch (JSException ex)
+        {
+            AppLog.Warn("[PluginConfiguration] host failed: " + ex.Message);
+            if (!_disposed && generation == _generation)
+            {
+                _failed = true;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async ValueTask UnmountAsync()
+    {
+        if (_session is not { } session) return;
+        _session = null;
+        try { await session.InvokeVoidAsync("dispose"); await session.DisposeAsync(); }
+        catch (JSDisconnectedException) { /* Browser has closed. */ }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        ++_generation;
+        await UnmountAsync();
     }
 }

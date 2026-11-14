@@ -57,7 +57,7 @@
             {
                 foreach (var pluginPage in _pluginPages)
                 {
-                    <DrawerLink @key="pluginPage.PluginId" Href="@("#/" + DashboardNav.PluginPageUrl(pluginPage.Name))" Icon="@(pluginPage.MenuIcon ?? "folder")"
+                    <DrawerLink @key="pluginPage.Name" Href="@("#/" + DashboardNav.PluginPageUrl(pluginPage.Name))" Icon="@(pluginPage.MenuIcon ?? "folder")"
                                 Text="@pluginPage.DisplayName" Selected="@IsPluginPage(pluginPage)" />
                 }
             }
