@@ -33,3 +33,10 @@ LICENSE         text
 .gitignore      export-ignore
 
 *.gitattributes linguist-language=gitattributes
+
+# The original client is kept as the reference and as the source of the port's styles, strings
+# and assets. It is not part of the Blazor port, so GitHub's language statistics skip it.
+/src/**         linguist-vendored
+/*.js           linguist-vendored
+/*.mjs          linguist-vendored
+/*.ts           linguist-vendored
