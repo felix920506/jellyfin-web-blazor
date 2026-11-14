@@ -128,6 +128,12 @@ now-playing bar and `/queue` expose the lyrics action for audio items with lyric
 
 - `./dev check`: 1,890 tests pass, zero build warnings/errors (remote logic, lyrics timeline and bUnit interactions
   live in `tests/Jellyfin.Web.Tests/PlaybackExtras/`).
+- Google Cast: `./dev check` with 2,177 tests, zero warnings. `CastPlayerTests.cs` drives the
+  player and the menu through `FakeCastInterop` (availability, initialisation per sign-in, pairing,
+  joined/ended sessions, every message and its payload, mirrored state, alerts, transfer of local
+  playback, the menu entries and the now-playing bar). `playback_extras.py` opens the cast menu in
+  headless Chromium, where the SDK is unavailable (no `window.chrome`, no request to gstatic), and
+  checks the "unsupported" entry next to the session target without console or request errors.
 - `./dev e2e playback_extras.py`: two isolated browser contexts select a target and start audio
   from the detail page, check remote pause/state, volume/mute, navigation, text and message, then
   stop/disconnect. It then temporarily uploads synced lyrics, checks autoscroll, click/keyboard
