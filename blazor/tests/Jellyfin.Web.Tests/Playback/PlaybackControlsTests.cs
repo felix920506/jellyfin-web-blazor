@@ -165,7 +165,7 @@ public class PlaybackControlsTests
         Assert.Contains("PictureInPicture", video);
         Assert.Contains("SetMaxStreamingBitrate", video);
         Assert.DoesNotContain("AirPlay", video);
-        Assert.DoesNotContain("SetBrightness", video);
+        Assert.Contains("SetBrightness", video);
 
         await harness.Manager.StopAsync();
         await harness.PlaySongsAsync();
@@ -173,6 +173,7 @@ public class PlaybackControlsTests
         Assert.Contains("PlaybackRate", audio);
         Assert.DoesNotContain("SetAspectRatio", audio);
         Assert.DoesNotContain("PictureInPicture", audio);
+        Assert.DoesNotContain("SetBrightness", audio);
     }
 
     [Fact]
