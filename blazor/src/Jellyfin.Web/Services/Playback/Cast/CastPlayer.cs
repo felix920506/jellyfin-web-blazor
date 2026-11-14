@@ -511,6 +511,14 @@ public sealed class CastPlayer : IRemotePlayer, IStartupTask
     public void SetRepeatMode(string value) =>
         _ = SendCommandMessageAsync("SetRepeatMode", new JsonObject { ["RepeatMode"] = value });
 
+    /// <summary>Port of setMaxStreamingBitrate(): the options of the quality menu go to the receiver.</summary>
+    public Task SetMaxStreamingBitrateAsync(bool enableAutomaticBitrateDetection, int? maxBitrate) =>
+        SendCommandMessageAsync("SetMaxStreamingBitrate", new JsonObject
+        {
+            ["enableAutomaticBitrateDetection"] = enableAutomaticBitrateDetection,
+            ["maxBitrate"] = maxBitrate,
+        });
+
     /// <inheritdoc />
     public void SetQueueShuffleMode(string value) =>
         AppLog.Warn("[chromecastPlayer] Setting shuffle queue mode is not supported.");

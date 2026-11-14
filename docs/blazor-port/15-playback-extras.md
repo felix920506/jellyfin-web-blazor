@@ -11,8 +11,8 @@ playback locally. `/Sessions?ControllableByUserId=` supplies targets, excluding 
 with a five-second administrator watchdog for another page stopping the shared subscription.
 
 `RemotePlayButton` fills the toolbar slot, using the modern client's cast/connected menus, target
-icons, auto-cast/display-mirror switches, remote-control link and disconnect. Chromecast is not
-implemented; the menu says it is unsupported. `/queue` displays the remote state and exposes
+icons, auto-cast/display-mirror switches, remote-control link and disconnect. The Google Cast entry
+follows the Chromecast player (below). `/queue` displays the remote state and exposes
 capability-gated navigation, message and text sections using the original markup and translations.
 Transport, volume/mute, track changes, repeat, shuffle, queue jump and queue move send the same
 session endpoints and payloads as the original. Remote queue removal/clearing is a no-op, as in
@@ -25,6 +25,71 @@ file is unchanged. Commands intentionally ignored by the original remain ignored
 SendKey, PageUp/Down and ToggleContextMenu). Navigation focus scopes use the topmost Mud dialog
 or popover rather than legacy focuscontainer classes, which ported pages do not consistently have.
 DisplayMessage with TimeoutMs uses the existing toast duration, not a custom timeout.
+
+## Delivered: Google Cast (Chromecast)
+
+`plugins/chromecastPlayer` is ported as `Services/Playback/Cast/CastPlayer.cs`, a second
+`IRemotePlayer` registered like `SessionPlayer` (`[AppService(typeof(IMediaPlayer))]`, also an
+`IStartupTask`). The SDK is behind `ICastInterop` (`Cast/CastInterop.cs`, `JsCastInterop`) and the
+module `wwwroot/js/playback/cast.js`; all decisions are in C#.
+
+- **Loading.** Only in Chrome, Edge (Chromium) and Opera, as `index.tsx` filters the plugin, and only
+  when `window.chrome` exists (the original's check in `initializeCastPlayer`). The module then adds
+  `https://www.gstatic.com/cv/js/sender/v1/cast_sender.js` and waits for `chrome.cast.isAvailable`
+  (1 s polling like the original; `__onGCastApiAvailable(false)` or a failed script load end it
+  quietly). Afterwards, and again after every sign-in, `GET /Users/{id}` supplies
+  `Configuration.CastReceiverId` for `chrome.cast.initialize` (no initialisation without one).
+- **Menu.** While the SDK is unavailable the menu keeps the disabled "Google Cast Unsupported" entry.
+  Once available, that entry goes, the target "Google Cast" (`deviceType` `cast`) is listed while
+  the receiver listener reports receivers, and "No cast targets available" is shown when there are
+  no targets at all, as `RemotePlayMenu.tsx` does with the plugin loaded.
+- **Pairing.** Choosing the target opens the browser's device picker (`requestSession`); a cancel
+  leaves playback here. A session that survives a reload (`sessionListener`) makes the player active
+  by itself (`PlaybackManager.SetActivePlayer`); a session that ends returns to this device. After
+  connecting the receiver gets `Identify`, and what plays here moves to the receiver
+  (`TransferPlaybackAsync`, as for sessions).
+- **Messages** (`urn:x-cast:com.connectsdk`, JSON text): `PlayNow`, `PlayNext`, `PlayLast`,
+  `Shuffle`, `InstantMix` with the items reduced to `Id, ServerId, Name, Type, MediaType, IsFolder`
+  (one id is loaded with `Users/{u}/Items/{id}`, several with `/Items`, limit 100, no virtual
+  items, sorted like the requested ids); `Pause`, `Unpause`, `PlayPause`, `Stop`, `Seek`
+  (`position` in seconds), `NextTrack`, `PreviousTrack`, `SetAudioStreamIndex` and
+  `SetSubtitleStreamIndex` (`index`), `Mute`, `Unmute`, `ToggleMute`, `SetRepeatMode`
+  (`RepeatMode`), `SetMaxStreamingBitrate`, `DisplayContent` (display mirroring) and `Identify`.
+  Every message carries `userId, deviceId, accessToken, serverAddress` (a localhost address is
+  replaced by the server's local address), `serverId, serverVersion, receiverName`, `maxBitrate`
+  from the Chromecast quality preference (`chromecastBitrate1`), and with items
+  `subtitleAppearance` and `subtitleBurnIn`. Volume (set, up/down by 5 %) is the receiver's own
+  (`setReceiverVolumeLevel`). Queue shuffle and trailers are refused with a warning, as in the
+  original; other general commands are dropped.
+- **Receiver state.** `playbackstart`, `playbackstop`, `playbackprogress` (as `timeupdate`),
+  `timeupdate`, `pause`, `unpause`, `volumechange`, `repeatmodechange`, `shufflequeuemodechange`
+  (only with an `ItemId`) and `playstatechange` (as `pause`) replace the player's state; the first
+  one after connecting also raises `statechange`. Item images are normalised like the original.
+  The manager passes the events on, so the now-playing bar, `/queue` and the toolbar show the
+  receiver's item, position, pause, volume, tracks and repeat mode. `playbackerror` and
+  `connectionerror` are shown as alerts after 300 ms.
+
+Deviations and open points (`PORT-TODO(cast)` in the code):
+
+- The SDK script is not requested without `window.chrome` (the original requests it in every
+  Chromium browser and checks `window.chrome` afterwards). Headless Chromium has no
+  `window.chrome`, so the browser tests never fetch it.
+- The original re-runs `initializeCastPlayer()` on every `playbackstart`; the port initialises on
+  load and sign-in only.
+- Not ported: the Cordova `volumeupbutton`/`volumedownbutton` listeners and the `chromecastloaded`
+  document event for native shells (no native shell in this port); the unused media-session
+  bookkeeping of `CastPlayer` (`currentMediaSession`, `castPlayerState`).
+- `serverVersion` comes from `/System/Info/Public` (fetched once per server address), because the
+  port does not keep the version of the connection.
+- Without a session, commands are logged and dropped instead of failing; a `playbackerror` without
+  a code shows the plain `MessagePlaybackError` text.
+- The play options sent are the port's `PlayOptions` fields (`ids, startPositionTicks, startIndex,
+  mediaSourceId, audioStreamIndex, subtitleStreamIndex, shuffle, fullscreen, serverId, items`);
+  the original forwards whatever object its caller passed.
+- The modern menu labels the target "Google Cast - Google Cast" (`name - appName`), as the original
+  modern menu does. `EndSession` is not among the target's commands, so Disconnect leaves the
+  receiver application running, as in the original.
+- No Cast device was available: the JS module has not been run against the real SDK or a receiver.
 
 ## Delivered: graphical subtitles
 

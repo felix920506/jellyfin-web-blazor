@@ -13,6 +13,7 @@ workstreams extend it, and what is missing. The behaviour of the original is des
 | `scripts/browserDeviceProfile.js`, `apphost.js` `getDeviceProfile` | `DeviceProfileBuilder.cs`, `MediaCapabilities.cs`, `wwwroot/js/playback/capabilities.js` |
 | `plugins/htmlVideoPlayer`, `plugins/htmlAudioPlayer`, `components/htmlMediaHelper.js` | `HtmlMediaPlayer.cs` (`HtmlVideoPlayer`, `HtmlAudioPlayer`), `wwwroot/js/playback/player.js` |
 | `components/playback/mediasession.js` | `MediaSessionUpdater.cs` + `setMediaSession` in `player.js` |
+| `plugins/chromecastPlayer` (Google Cast sender) | `Cast/CastPlayer.cs`, `Cast/CastInterop.cs`, `wwwroot/js/playback/cast.js` (see `15-playback-extras.md`) |
 | `components/qualityOptions.js`, bitrate detection of the api client | `QualityOptions.cs`, `BitrateDetector.cs` |
 | `components/playback/playersettingsmenu.js` | `PlayerSettingsMenu.cs` |
 | `components/playerstats/playerstats.js` | `PlayerStatsBuilder.cs`, `Components/Playback/PlayerStatsOverlay.razor` |
@@ -62,17 +63,18 @@ VideoOsd / NowPlayingBar / Queue ──────────► │  .Streams
 
 ## 3. The JS/C# boundary
 
-All decisions are C#. JavaScript owns only what C# cannot do, behind three interfaces:
+All decisions are C#. JavaScript owns only what C# cannot do, behind these interfaces:
 
 | Interface | Module | Contents |
 | --- | --- | --- |
 | `IPlayerInterop` (`JsPlayerInterop`) | `js/playback/player.js` | Creates the `<video>` (`.videoPlayerContainer > video.htmlvideoplayer`) and `<audio>` (`.mediaPlayerAudio`) elements outside of the Blazor tree, loads a source (direct, hls.js loaded on demand from `generated/lib/hls.js`, native HLS where the element supports it), start position, pause, seek, volume, mute, rate, aspect ratio, audio track of the element, native text cues, libass ASS/SSA and libbitsub PGS renderers, renderer offsets, fullscreen, picture in picture, fade out, audio normalisation gain, statistics, Media Session. Element events are sent back as `(kind, name, snapshot, errorType)`. |
 | `IMediaCapabilityProbe` (`JsMediaCapabilityProbe`) | `js/playback/capabilities.js` | One call that answers all `canPlayType` / `MediaSource.isTypeSupported` questions the device profile needs. `DeviceProfileBuilder` works on the resulting `MediaCapabilities` record and is pure C#. |
 | `IPlaybackUiInterop` (`JsPlaybackUiInterop`) | `js/playback/ui.js` | Document-level listeners of the OSD (pointer movement, keys, wheel) and the hover position of sliders. |
+| `ICastInterop` (`JsCastInterop`) | `js/playback/cast.js` | The Google Cast sender SDK, loaded on demand, and the `chrome.cast` session: initialise, device picker, messages on `urn:x-cast:com.connectsdk`, receiver volume, stop; receiver availability, session and message callbacks. |
 
 The modules are ES modules loaded with a dynamic `import` on first use; nothing was added to
-`index.html`. Tests replace the three interfaces with fakes
-(`tests/Jellyfin.Web.Tests/Playback/PlaybackTestSupport.cs`).
+`index.html`. Tests replace the interfaces with fakes
+(`tests/Jellyfin.Web.Tests/Playback/PlaybackTestSupport.cs`, `FakeCastInterop.cs`).
 
 `player.js` also exports `debugState()` and `testCommand(name, args)`. The latter calls
 `PlaybackTestHook` (C#) and is the entry of the browser test: no page of this workstream starts
@@ -84,17 +86,13 @@ Remove the hook once item pages have play buttons and the script can click them.
 - **Starting playback** (cards, details page, lists, context menus): inject `IPlaybackManager` and
   call `PlayAsync(new PlayOptions { Ids = [...] })` or one of the other entry points. Show the
   buttons according to `CanPlay(item)` / `CanQueue(item)`.
-- **A non-local player** (remote session, cast, SyncPlay proxy): implement `IMediaPlayer` with
-  `IsLocalPlayer = false` and register it with `[AppService(typeof(IMediaPlayer))]` (or call
-  `PlaybackManager.RegisterPlayer`). `SetCurrentPlayer(player)` makes it the target and raises
-  `playerchange`; `GetPlayer()` already prefers a non-local current player. What is still missing
-  is the delegation itself: the original hands whole commands to such a player
-  (`player.play(options)`, `player.queue(...)`, `getPlayerState()`, `sendCommand`), while the port's
-  manager always does the work itself. The place is marked `PORT-TODO(playback)` at the top of
-  `PlayAsync` in `PlaybackManager.Items.cs`; the transport methods in `PlaybackManager.Controls.cs`
-  need the same `if (!player.IsLocalPlayer) return player.X()` branch, and `IMediaPlayer` needs the
-  self-managing members (`PlayAsync(PlayOptions)`, `GetPlayerState`, `SendCommand`) added then.
-  A target picker would list `Players` plus the sessions of `Sessions?ControllableByUserId=`.
+- **A non-local player** (remote session, Google Cast): implement `IRemotePlayer`
+  (`RemotePlayback.cs`), an `IMediaPlayer` with `IsLocalPlayer = false` that keeps its own queue
+  and state, and register it with `[AppService(typeof(IMediaPlayer))]`. The manager hands whole
+  requests to the current remote player (`PlayAsync(PlayOptions)`, queueing, transport, tracks,
+  `GetPlayerState`, `SendCommandAsync`), lists its `GetTargetsAsync()` in the play-target menu and
+  pairs through `TryPairAsync`; a player that connects by itself calls `SetActivePlayer`.
+  `SessionPlayer` and `CastPlayer` are the two implementations.
 - **Other local players** (photo, book, PDF, YouTube): implement `IMediaPlayer` with
   `IsLocalPlayer = true` and a `CanPlayMediaType` for their media type; `GetPlayer` picks by
   `Priority`. Photos and books are currently refused in `PlaybackManager.Items.cs`
@@ -137,7 +135,7 @@ Remove the hook once item pages have play buttons and the script can click them.
 
 Marked in the code with `// PORT-TODO(playback): …`.
 
-- Session remote control and synced lyrics are now ported; see `15-playback-extras.md`. Cast/AirPlay, SyncPlay (also its OSD icon and statistics category),
+- Session remote control, the Google Cast (Chromecast) player and synced lyrics are now ported; see `15-playback-extras.md`. AirPlay, SyncPlay (also its OSD icon and statistics category),
   live TV specifics of the OSD (programme info, record button), photo/book/PDF/YouTube players and with them remote trailers and items that are plain URLs.
 - VobSub/DVB client renderers and some advanced bitmap appearance controls remain unported.
 - Brightness gestures, TV-layout key handling, iOS forced-fullscreen back navigation, iOS HLS live
@@ -179,7 +177,8 @@ Marked in the code with `// PORT-TODO(playback): …`.
 - Unit and bUnit tests: `tests/Jellyfin.Web.Tests/Playback/` — queue, item translation, device
   profile (faked capability probe), stream decision and URLs, the play flow, progress reports and
   their timing (injected clock), controls and settings, helpers, and the OSD, the now-playing bar
-  and the queue page against a fake player.
+  and the queue page against a fake player. The Chromecast player is tested against a fake Cast
+  SDK in `tests/Jellyfin.Web.Tests/PlaybackExtras/CastPlayerTests.cs`.
 - Browser test: `./dev e2e playback.py [chromium|firefox|webkit]` against the test server. It plays
   the VP9/Opus movie directly, checks time, decoded frames, pause, seeking, keys, the end of the
   video and the session the server reports; then resume position and back navigation; then the

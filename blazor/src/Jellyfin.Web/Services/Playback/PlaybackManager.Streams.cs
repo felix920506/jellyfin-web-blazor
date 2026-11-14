@@ -144,6 +144,13 @@ public sealed partial class PlaybackManager
     /// <summary>Port of setMaxStreamingBitrate(): saves the choice and restarts the stream with it.</summary>
     public async Task SetMaxStreamingBitrateAsync(bool enableAutomaticBitrateDetection, int? maxBitrate = null)
     {
+        // A player with its own setMaxStreamingBitrate() gets the choice (the Cast receiver).
+        if (CurrentPlayer is CastPlayer cast)
+        {
+            await cast.SetMaxStreamingBitrateAsync(enableAutomaticBitrateDetection, maxBitrate);
+            return;
+        }
+
         if (CurrentPlayer is not { } player || Data(player).StreamInfo is not { } streamInfo)
         {
             return;

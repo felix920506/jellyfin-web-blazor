@@ -1,6 +1,8 @@
 // The Google Cast sender of the Chromecast player. Port of the browser parts of
 // plugins/chromecastPlayer (castSenderApi.ts and the chrome.cast calls of CastPlayer); every decision
 // is made by CastPlayer.cs, this module only talks to the SDK.
+// PORT-TODO(cast): written against the chrome.cast v1 sender API the original uses; it has not been
+// run against the real SDK and a receiver (no Cast device in the test setup).
 
 const SDK_URL = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js';
 const NAMESPACE = 'urn:x-cast:com.connectsdk';

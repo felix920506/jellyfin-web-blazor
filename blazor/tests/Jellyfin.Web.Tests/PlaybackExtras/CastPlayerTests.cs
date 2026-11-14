@@ -394,6 +394,19 @@ public class CastPlayerTests
     }
 
     [Fact]
+    public async Task The_quality_choice_goes_to_the_receiver()
+    {
+        await using var harness = await ConnectedAsync();
+
+        await harness.Manager.SetMaxStreamingBitrateAsync(enableAutomaticBitrateDetection: false, 4_000_000);
+
+        Assert.Equal(
+            """{"enableAutomaticBitrateDetection":false,"maxBitrate":4000000}""",
+            harness.Fakes.Cast.LastMessage("SetMaxStreamingBitrate")["options"]!.ToJsonString());
+        Assert.Empty(harness.Server.RequestsTo("/Playback/BitrateTest"));
+    }
+
+    [Fact]
     public async Task Volume_is_the_receivers_own_volume()
     {
         await using var harness = await ConnectedAsync();
