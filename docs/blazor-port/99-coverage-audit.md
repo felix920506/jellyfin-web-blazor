@@ -238,7 +238,7 @@ ready timing uses the local player's existing events rather than a separate wrap
 ## 4. `PORT-TODO` and documented gap inventory
 
 The following is a deduplicated inventory. Repeated references in workstream documents are
-grouped with the source marker and current status. The code currently contains five
+grouped with the source marker and current status. The code contains explicit
 `PORT-TODO` locations; some older documents contain references to those markers or to
 work that has since been completed.
 
@@ -257,6 +257,7 @@ work that has since been completed.
 | `docs/blazor-port/10-details-page.md` | Shared shell layout/typography gap; channel guide is intentionally a link rather than embedded content. | Open visual difference; Live TV behavior intentional. |
 | `docs/blazor-port/11-dashboard-libraries-playback-networking.md` | Small control/widget and verification differences in dashboard library, playback and networking pages. | Open partial/visual differences. |
 | `docs/blazor-port/12-dashboard-plugins-backups.md` | Server-provided plugin HTML/JavaScript compatibility host. | Warning-only gap closed; real bundled form persistence, AMD/ESM lifecycle, error containment and cleanup covered. Full legacy module/webpack parity remains outside the focused shim. |
+| `blazor/src/Jellyfin.Web/wwwroot/js/plugincompat.js` (`PORT-TODO(plugin-config)`) | Extend the focused legacy module/API subset when additional plugins require it. | Open compatibility boundary; unsupported modules report a visible error. |
 | `docs/blazor-port/13-livetv.md` | Legacy widget styling is replaced by Razor/MudBlazor controls; shared shell gaps remain. | Intentional partial/visual difference. |
 | `docs/blazor-port/14-dashboard-livetv-metadata.md` | jstree is replaced by an accessible Razor tree; no dashboard `AppTabs` event is emitted. | Ported behavior with intentional implementation differences. |
 | `docs/blazor-port/17-syncplay.md` | Compact modern menu and local player media-ready timing differ from the legacy UI. | Current limitation; the old “not ported” claim elsewhere is stale. |

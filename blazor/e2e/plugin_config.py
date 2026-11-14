@@ -26,7 +26,12 @@ def main():
         browser = p.chromium.launch()
         page = new_page(browser)
         use_default_config(page)
-        sign_in(page)
+        try:
+            sign_in(page)
+        except Exception:
+            shot(page, 'plugin-config-startup-failure')
+            finish(page, 'plugin configuration startup')
+            raise
         stored = json.loads(page.evaluate("localStorage.getItem('jellyfin_credentials')"))
         token = stored['Servers'][0]['AccessToken']
         headers = {'Authorization': f'MediaBrowser Token="{token}"'}
@@ -75,6 +80,7 @@ def main():
             expect(frame.locator('.jf-plugin-loading')).to_be_hidden()
             shot(page, 'plugin-config-musicbrainz-persisted')
             page.set_viewport_size({'width': 390, 'height': 844})
+            expect(page.locator('aside.jf-dashboard-drawer')).to_have_count(0)
             expect(frame.get_by_label('Server', exact=True)).to_be_visible()
             assert frame.locator('body').evaluate('(body) => body.scrollWidth <= innerWidth + 1')
             shot(page, 'plugin-config-musicbrainz-phone')
@@ -89,7 +95,11 @@ def main():
             page.wait_for_selector('#dashboardPage')
             expect(page.locator('.jf-plugin-configuration-frame')).to_have_count(0)
             assert page.evaluate("['ApiClient', 'Dashboard', 'Loading'].every(key => !(key in window))")
-            compatibility_cases(page, pages, headers)
+            compatibility_cases(page, pages)
+        except Exception:
+            shot(page, 'plugin-config-failure')
+            finish(page, 'plugin configuration failure')
+            raise
         finally:
             response = page.request.post(SERVER + path, headers={**headers, 'Content-Type': 'application/json'}, data=json.dumps(original))
             assert response.ok, f'restore MusicBrainz configuration: {response.status}'
@@ -98,7 +108,7 @@ def main():
         return result
 
 
-def compatibility_cases(page, pages, headers):
+def compatibility_cases(page, pages):
     """Exercise lifecycle/controller contracts not used by the bundled inline-script page."""
     listing = [*pages, {'Name': 'compat-e2e', 'DisplayName': 'Compatibility test', 'EnableInMainMenu': True}]
     page.route('**/web/ConfigurationPages*', lambda route: route.fulfill(json=listing))
@@ -115,6 +125,7 @@ def compatibility_cases(page, pages, headers):
       <h1>Controller test</h1><input is="emby-input" label="Lifecycle" />
       <script>require(['loading'], loading => loading.show());</script>
       <button is="emby-button" id="fail" onclick="throw new Error('contained-plugin-test')">Fail safely</button>
+      <button is="emby-button" id="reject" onclick="Promise.reject(new Error('contained-promise-test'))">Reject safely</button>
     </div>"""
 
     def resource(route):
@@ -129,6 +140,7 @@ def compatibility_cases(page, pages, headers):
     page.wait_for_selector('#dashboardPage')
     # At phone size the drawer must be opened first.
     page.set_viewport_size({'width': 1366, 'height': 900})
+    expect(page.locator('aside.jf-dashboard-drawer')).to_be_visible()
     drawer_link = page.locator('.jf-dashboard-nav a[href="#/configurationpage?name=compat-e2e"]')
     expect(drawer_link).to_be_visible()
     drawer_link.click()
@@ -137,6 +149,8 @@ def compatibility_cases(page, pages, headers):
     expect(frame.locator('.jf-plugin-loading')).to_be_hidden()
     frame.get_by_role('button', name='Fail safely').click()
     expect(frame.get_by_role('alert')).to_contain_text('contained-plugin-test')
+    frame.get_by_role('button', name='Reject safely').click()
+    expect(frame.get_by_role('alert')).to_contain_text('contained-promise-test')
     assert not page.locator('#blazor-error-ui').is_visible()
     shot(page, 'plugin-config-contained-error')
     go(page, '/dashboard')
@@ -144,10 +158,14 @@ def compatibility_cases(page, pages, headers):
     expect(page.locator('iframe.jf-plugin-configuration-frame')).to_have_count(0)
     # ESM data-controller, matching the original dynamic-import controller contract.
     controller = """export default function(view) {
-        view.addEventListener('pageshow', () => { view.querySelector('input').value = 'esm-ready'; });
+        view.addEventListener('pageshow', () => {
+            view.querySelector('input').value = 'esm-ready';
+            Loading.hide();
+        });
     }"""
     go(page, '/configurationpage?name=compat-e2e')
     expect(frame.get_by_label('Lifecycle', exact=True)).to_have_value('esm-ready')
+    expect(frame.locator('.jf-plugin-loading')).to_be_hidden()
     shot(page, 'plugin-config-esm-controller')
     page.unroute('**/web/ConfigurationPages*')
     page.unroute('**/web/ConfigurationPage?name=compat*')

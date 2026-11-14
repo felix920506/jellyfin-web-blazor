@@ -61,6 +61,9 @@ accessible generated labels, and `_plugin-configuration.scss`. Dynamically inser
 are enhanced too. Plugin list cards lead to details, the settings link leads here, and the existing
 `EnableInMainMenu` drawer links lead directly here.
 
+Drawer entries are keyed by configuration-page name, not plugin ID: a single plugin can expose
+several main-menu pages without a Blazor duplicate-key exception.
+
 ### Compatibility boundary
 
 This is a focused compatibility layer, not the entire original client runtime. Unsupported AMD
@@ -108,3 +111,8 @@ It also opens the bundled TMDb form, checks phone layout, query navigation and t
 explicitly intercepted test resources cover AMD/ESM controllers, drawer routing, lifecycle events
 and contained script errors; these are not substitutes for the real persistence test. No browser
 console/HTTP errors are filtered. Screenshots are written under `blazor/artifacts/e2e/`.
+
+Validation in this worktree: `./dev check` passed with **2,154 tests**, zero warnings/errors.
+Both private-instance scripts passed (`plugin configuration: ok`, `dashboard plugins/backups: ok`).
+Desktop and phone screenshots were inspected for MusicBrainz, TMDb and AudioDB; controls, saved
+values and responsive wrapping render correctly. Error/controller screenshots were inspected too.

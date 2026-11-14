@@ -186,6 +186,7 @@ export async function mount(host, html, options) {
     }
     const builtins = new Map([
         ['require', require], ['loading', Loading], ['dashboard', Dashboard], ['globalize', globalize],
+        ['ApiClient', ApiClient], ['apiClient', ApiClient],
         ['appRouter', { show: navigate, navigate, back: () => window.history.back() }],
         ['connectionManager', { currentApiClient: () => ApiClient }],
         ['viewManager', { currentView: () => page }],
@@ -262,7 +263,7 @@ export async function mount(host, html, options) {
         for (const input of root.querySelectorAll('[is]')) {
             const type = input.getAttribute('is');
             if (type === 'emby-checkbox') continue;
-            input.classList.add(type);
+            input.classList.add(type === 'emby-linkbutton' ? 'emby-button' : type);
             if (['emby-input', 'emby-select', 'emby-textarea'].includes(type) && input.hasAttribute('label') && !input.dataset.jfLabel) {
                 input.dataset.jfLabel = 'true';
                 if (!input.id) input.id = 'jf-input-' + Math.random().toString(36).slice(2);
@@ -270,6 +271,8 @@ export async function mount(host, html, options) {
                 label.htmlFor = input.id;
                 label.className = type === 'emby-select' ? 'selectLabel' : 'inputLabel';
                 label.textContent = input.getAttribute('label');
+                input.labelElement = label;
+                input.label = text => { label.textContent = text; };
                 input.before(label);
             }
         }
@@ -332,11 +335,16 @@ export async function mount(host, html, options) {
         const observer = new w.MutationObserver(() => enhance(doc));
         observer.observe(doc.body, { childList: true, subtree: true });
         cleanups.push(() => observer.disconnect());
+        let resizeFrame;
         const resize = new w.ResizeObserver(() => {
-            if (!disposed) frame.style.height = Math.ceil(doc.body.getBoundingClientRect().height + 24) + 'px';
+            w.cancelAnimationFrame(resizeFrame);
+            resizeFrame = w.requestAnimationFrame(() => {
+                const height = Math.ceil(doc.body.getBoundingClientRect().height + 24) + 'px';
+                if (!disposed && frame.style.height !== height) frame.style.height = height;
+            });
         });
         resize.observe(doc.body);
-        cleanups.push(() => resize.disconnect());
+        cleanups.push(() => { resize.disconnect(); w.cancelAnimationFrame(resizeFrame); });
         doc.addEventListener('click', event => {
             const link = event.target.closest('a[href]');
             if (!link || link.target === '_blank') return;
