@@ -69,6 +69,9 @@ public sealed class SessionPlayer(JellyfinApi api, ServerEvents events, IPlaybac
 
     public bool IsPictureInPictureEnabled => false;
 
+    public bool IsAirPlayEnabled => false;
+
+
     public BaseItemDto? NowPlayingItem => _session?.NowPlayingItem;
 
     public IReadOnlyList<BaseItemDto> Playlist => _playlist;
@@ -322,6 +325,11 @@ public sealed class SessionPlayer(JellyfinApi api, ServerEvents events, IPlaybac
     public void SetPictureInPictureEnabled(bool enabled)
     {
     }
+
+    public void SetAirPlayEnabled(bool enabled)
+    {
+    }
+
 
     /// <inheritdoc />
     public Task<PlayerStats?> GetStatsAsync() => Task.FromResult<PlayerStats?>(null);

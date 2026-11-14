@@ -51,7 +51,8 @@ function snapshot(player) {
         buffered: [],
         seekable: false,
         fullscreen: isFullscreen(),
-        pictureInPicture: false
+        pictureInPicture: false,
+        airPlay: false
     };
     if (!elem) {
         return state;
@@ -64,6 +65,7 @@ function snapshot(player) {
     state.muted = elem.muted;
     state.playbackRate = elem.playbackRate;
     state.pictureInPicture = player.kind === 'video' && isPictureInPicture(elem);
+    state.airPlay = !!(elem.webkitCurrentPlaybackTargetIsWireless || (document.AirPlayEnabled && document.AirplayElement === elem));
 
     const buffered = elem.buffered || [];
     for (let i = 0; i < buffered.length; i++) {
@@ -514,6 +516,8 @@ function bindElementEvents(player, elem) {
         on('enterpictureinpicture', () => emit(player, 'pictureinpicturechange'));
         on('leavepictureinpicture', () => emit(player, 'pictureinpicturechange'));
         on('webkitpresentationmodechanged', () => emit(player, 'pictureinpicturechange'));
+        on('webkitplaybacktargetavailabilitychanged', () => emit(player, 'airplayavailabilitychange'));
+        on('webkitcurrentplaybacktargetiswirelesschanged', () => emit(player, 'airplaychange'));
     }
 }
 
@@ -913,6 +917,26 @@ export function setPictureInPicture(enabled) {
         result.catch(err => console.warn('[player] picture-in-picture request was rejected', err));
     }
 }
+
+// The legacy WebKit picker remains the public AirPlay API in Safari/iOS. A current target change is
+// reported by webkitcurrentplaybacktargetiswirelesschanged above.
+export function setAirPlayEnabled(kind, enabled) {
+    const player = players[kind];
+    const elem = player && player.elem;
+    if (!elem) {
+        return;
+    }
+    let result;
+    if (document.AirPlayEnabled) {
+        result = enabled && elem.requestAirPlay ? elem.requestAirPlay() : !enabled && document.exitAirPlay ? document.exitAirPlay() : null;
+    } else if (elem.webkitShowPlaybackTargetPicker) {
+        result = elem.webkitShowPlaybackTargetPicker();
+    }
+    if (result && result.catch) {
+        result.catch(err => console.warn('[player] AirPlay request was rejected', err));
+    }
+}
+
 
 export function navigatedToOsd() {
     const player = players.video;

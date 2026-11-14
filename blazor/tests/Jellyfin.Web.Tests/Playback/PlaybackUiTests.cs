@@ -126,6 +126,25 @@ public class PlaybackUiTests : PlaybackTestContext
     }
 
     [Fact]
+    public async Task AirPlay_buttons_only_appear_for_a_browser_that_reports_the_target_picker()
+    {
+        StartRouter();
+        await PlayMovieAsync();
+        var osd = Render<VideoOsd>();
+        Assert.Contains("hide", osd.Find(".btnAirPlay").ClassList);
+
+        await Manager.StopAsync();
+        Fakes.Probe.Caps = FakeCapabilityProbe.Safari;
+        await PlayMovieAsync();
+        osd.Render();
+        osd.WaitForAssertion(() => Assert.DoesNotContain("hide", osd.Find(".btnAirPlay").ClassList), Timeout);
+
+        osd.Find(".btnAirPlay").Click();
+        Assert.Equal("airplay video True", Player.Calls[^1]);
+        osd.WaitForAssertion(() => Assert.Contains("buttonActive", osd.Find(".btnAirPlay").ClassList), Timeout);
+    }
+
+    [Fact]
     public async Task Subtitle_offset_keys_show_the_slider_and_adjust_the_offset()
     {
         StartRouter();
@@ -462,6 +481,20 @@ public class PlaybackUiTests : PlaybackTestContext
 
         // None of the buttons opened the queue page.
         Assert.Equal("/home", App.Browser.Hash);
+    }
+
+    [Fact]
+    public async Task The_now_playing_bar_opens_the_AirPlay_picker_when_the_audio_player_supports_it()
+    {
+        StartRouter("/home");
+        Fakes.Probe.Caps = FakeCapabilityProbe.Safari;
+        await PlaySongsAsync();
+        var bar = Render<NowPlayingBar>();
+        bar.WaitForAssertion(() => Assert.DoesNotContain("hide", bar.Find(".btnAirPlay").ClassList), Timeout);
+
+        bar.Find(".btnAirPlay").Click();
+        Assert.Equal("airplay audio True", Player.Calls[^1]);
+        bar.WaitForAssertion(() => Assert.Contains("buttonActive", bar.Find(".btnAirPlay").ClassList), Timeout);
     }
 
     [Fact]

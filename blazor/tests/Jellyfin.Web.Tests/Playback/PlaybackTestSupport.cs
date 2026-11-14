@@ -156,6 +156,12 @@ internal sealed class FakePlayerInterop : IPlayerInterop
         Emit("video", "pictureinpicturechange", s => s with { PictureInPicture = enabled });
     }
 
+    public void SetAirPlayEnabled(string kind, bool enabled)
+    {
+        Calls.Add($"airplay {kind} {enabled}");
+        Emit(kind, "airplaychange", s => s with { AirPlay = enabled });
+    }
+
     public void NavigatedToOsd() => Calls.Add("osd");
 
     public Task<PlayerStats?> GetStatsAsync(string kind) => Task.FromResult(Stats);

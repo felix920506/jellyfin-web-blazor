@@ -49,6 +49,7 @@ public static class PlaybackEvents
     public const string PlaybackRateChange = "playbackratechange";
     public const string Click = "click";
     public const string DblClick = "dblclick";
+    public const string AirPlayChange = "airplaychange";
 
     /// <summary>Raised by a remote player when its state changed in a way the other events do not cover.</summary>
     public const string StateChange = "statechange";
@@ -134,6 +135,7 @@ public sealed record PlayerSnapshot
     public bool Seekable { get; init; }
     public bool Fullscreen { get; init; }
     public bool PictureInPicture { get; init; }
+    public bool AirPlay { get; init; }
 }
 
 /// <summary>What the JS player is told to load.</summary>
@@ -284,6 +286,8 @@ public interface IMediaPlayer
     void ToggleFullscreen();
     bool IsPictureInPictureEnabled { get; }
     void SetPictureInPictureEnabled(bool enabled);
+    bool IsAirPlayEnabled { get; }
+    void SetAirPlayEnabled(bool enabled);
     Task<PlayerStats?> GetStatsAsync();
 
     /// <summary>The video OSD has been shown: the player may drop its on-top state and apply tracks.</summary>
@@ -319,6 +323,7 @@ public interface IPlayerInterop
     void SetSubtitleRendererOffset(double seconds, bool secondary);
     void ToggleFullscreen();
     void SetPictureInPicture(bool enabled);
+    void SetAirPlayEnabled(string kind, bool enabled);
     void NavigatedToOsd();
     Task<PlayerStats?> GetStatsAsync(string kind);
     void SetMediaSession(MediaSessionInfo? info);

@@ -139,6 +139,8 @@ public abstract class ManagedMediaPlayer : IMediaPlayer, IPlaylistMediaPlayer
     public void ToggleFullscreen() => Interop.ToggleFullscreen(Kind);
     public bool IsPictureInPictureEnabled => false;
     public void SetPictureInPictureEnabled(bool enabled) { }
+    public bool IsAirPlayEnabled => false;
+    public void SetAirPlayEnabled(bool enabled) { }
     public Task<PlayerStats?> GetStatsAsync() => Task.FromResult<PlayerStats?>(null);
     public void OnNavigatedToOsd() { }
 

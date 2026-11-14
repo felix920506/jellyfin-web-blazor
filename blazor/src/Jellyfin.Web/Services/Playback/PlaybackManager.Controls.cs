@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Jellyfin.Sdk.Generated.Models;
+using Jellyfin.Web.Services.Playback.AirPlay;
 
 namespace Jellyfin.Web.Services.Playback;
 
@@ -67,6 +68,8 @@ public sealed partial class PlaybackManager
 
     public bool IsPictureInPictureEnabled => CurrentPlayer?.IsPictureInPictureEnabled == true;
 
+    public bool IsAirPlayEnabled => CurrentPlayer?.IsAirPlayEnabled == true;
+
     public string? CurrentPlaylistItemId => Remote is { } remote ? remote.CurrentPlaylistItemId : _playQueue.CurrentPlaylistItemId;
 
     public int CurrentPlaylistIndex => Remote is { } remote ? RemotePlaylistIndex(remote) : _playQueue.GetCurrentPlaylistIndex();
@@ -117,7 +120,7 @@ public sealed partial class PlaybackManager
 
         if (current is { } player)
         {
-            foreach (var feature in new[] { "PictureInPicture", "AirPlay", "SetBrightness", "SetAspectRatio", "PlaybackRate", "SecondarySubtitles" })
+            foreach (var feature in new[] { "PictureInPicture", AirPlayFeatures.Command, "SetBrightness", "SetAspectRatio", "PlaybackRate", "SecondarySubtitles" })
             {
                 if (player.Supports(feature))
                 {
@@ -141,6 +144,15 @@ public sealed partial class PlaybackManager
     {
         CurrentPlayer?.Unpause();
         return Task.CompletedTask;
+    }
+
+    /// <summary>Opens the AirPlay picker or exits the selected target when the browser supports it.</summary>
+    public void ToggleAirPlay()
+    {
+        if (CurrentPlayer is { } player && player.Supports("AirPlay"))
+        {
+            player.SetAirPlayEnabled(!player.IsAirPlayEnabled);
+        }
     }
 
     /// <inheritdoc />

@@ -74,6 +74,8 @@ public sealed class JsPlayerInterop(IServiceProvider services) : IPlayerInterop,
 
     public void SetPictureInPicture(bool enabled) => Send("setPictureInPicture", enabled);
 
+    public void SetAirPlayEnabled(string kind, bool enabled) => Send("setAirPlayEnabled", kind, enabled);
+
     public void NavigatedToOsd() => Send("navigatedToOsd");
 
     public async Task<PlayerStats?> GetStatsAsync(string kind)

@@ -6,8 +6,7 @@
    - the header is drawn by the page (the app bar is not shown on this route);
    - the show transitions are simplified: "hide" is added by a timer instead of transitionend;
    - buttons are not focused when the OSD appears.
-   PORT-TODO(playback): recording controls, AirPlay, the TV
-   layout's key handling and the iOS forced-fullscreen back navigation are not ported. *@
+    PORT-TODO(playback): recording controls and the TV layout's key handling are not ported. *@
 @attribute [Route("/video")]
 @attribute [Access(AccessLevel.User)]
 @using System.Globalization
@@ -226,8 +225,8 @@
                         @onclick="ShowSettingsMenuAsync">
                     <span class="largePaperIconButton material-icons settings" aria-hidden="true"></span>
                 </button>
-                @* PORT-TODO(playback): AirPlay is not ported; the button stays hidden. *@
-                <button type="button" class="btnAirPlay hide autoSize paper-icon-button-light" title="@Globalize["AirPlay"]">
+                <button type="button" class="btnAirPlay autoSize paper-icon-button-light @(commands.Contains("AirPlay") ? null : "hide") @(Playback.IsAirPlayEnabled ? "buttonActive" : null)" title="@Globalize["AirPlay"]"
+                        @onclick="Playback.ToggleAirPlay">
                     <span class="xlargePaperIconButton material-icons airplay" aria-hidden="true"></span>
                 </button>
                 <button type="button" class="btnPip autoSize paper-icon-button-light @(commands.Contains("PictureInPicture") ? null : "hide")"

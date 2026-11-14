@@ -47,6 +47,14 @@ arrow-key input temporarily suppresses automatic scrolling, while the small
 `wwwroot/js/playback/lyrics.js` module is limited to DOM scrolling and input listeners. The
 now-playing bar and `/queue` expose the lyrics action for audio items with lyrics.
 
+## Delivered: AirPlay
+
+The local HTML audio and video players probe for the Safari/WebKit playback-target API and expose
+the original `AirPlay` supported command only when it is available. The now-playing bar, `/queue`
+and video OSD then show their AirPlay button; it invokes the native target picker and reflects the
+wireless-target state. The element binds WebKit availability and current-target events, while the
+managed side remains behind `IPlayerInterop` for fake-interoperability unit coverage.
+
 ### Extension points and deviations
 
 - Implement/register `IRemotePlayer` for another self-managing target; session-specific HTTP and

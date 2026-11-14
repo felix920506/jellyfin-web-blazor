@@ -80,6 +80,8 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
 
     public bool IsPictureInPictureEnabled => _snapshot.PictureInPicture;
 
+    public bool IsAirPlayEnabled => _snapshot.AirPlay;
+
     public virtual string AspectRatio => "auto";
 
     public virtual bool CanSetAudioStreamIndex => false;
@@ -210,6 +212,8 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
     {
     }
 
+    public virtual void SetAirPlayEnabled(bool enabled) => Interop.SetAirPlayEnabled(_kind, enabled);
+
     public Task<PlayerStats?> GetStatsAsync() => Interop.GetStatsAsync(_kind);
 
     public virtual void OnNavigatedToOsd()
@@ -321,7 +325,7 @@ public sealed class HtmlVideoPlayer(
     public override bool Supports(string feature) => feature switch
     {
         "PictureInPicture" => Probe.Current?.PictureInPicture == true,
-        "AirPlay" => AppHost.Browser.Safari || AppHost.Browser.Ios,
+        "AirPlay" => Probe.Current?.AirPlay == true,
         "PlaybackRate" or "SetAspectRatio" => true,
 
         // SetBrightness is still a touch-gesture feature; secondary subtitle tracks are supported
@@ -634,7 +638,7 @@ public sealed class HtmlAudioPlayer(
     public override bool Supports(string feature) => feature switch
     {
         "PlaybackRate" => true,
-        "AirPlay" => AppHost.Browser.Safari || AppHost.Browser.Ios,
+        "AirPlay" => Probe.Current?.AirPlay == true,
         _ => false,
     };
 
