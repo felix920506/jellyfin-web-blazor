@@ -47,6 +47,14 @@ arrow-key input temporarily suppresses automatic scrolling, while the small
 `wwwroot/js/playback/lyrics.js` module is limited to DOM scrolling and input listeners. The
 now-playing bar and `/queue` expose the lyrics action for audio items with lyrics.
 
+## Delivered: Live TV video OSD recording
+
+While a channel is playing, `/video` displays its current programme and, for users with
+`EnableLiveTvManagement`, a record button. The OSD refreshes the channel's current programme and
+loads that programme's timer state from Live TV; the control schedules or cancels a single timer
+through the shared `RecordingHelper` and refreshes the state after the request. Series-timer
+editing remains in the existing programme/details recording controls.
+
 ### Extension points and deviations
 
 - Implement/register `IRemotePlayer` for another self-managing target; session-specific HTTP and
@@ -71,11 +79,11 @@ now-playing bar and `/queue` expose the lyrics action for audio items with lyric
 
 ## Remaining priorities
 
-- Live TV-specific controls, additional
-  settings entries and the requested Playing/Ping policy (the original itself sends no such ping).
+- Additional settings entries and the requested Playing/Ping policy (the original itself sends no
+  such ping).
 - Pre-play access validation, weekly experimental media warnings and still-watching episode prompts
   are implemented by `PlaybackInterceptors` at the playback boundary. The remaining playback gaps
-  are Live TV-specific controls, additional settings entries and the requested Playing/Ping policy.
+  are additional settings entries and the requested Playing/Ping policy.
 
 ### SyncPlay design (not implemented)
 

@@ -49,6 +49,8 @@ The controls support:
   padding;
 - confirmation dialogs and the original recording toast messages;
 - editing timers from cards, list rows, the item menu and the details page.
+- the video OSD's current-programme record toggle for users with Live TV management permission;
+  its timer state is loaded from the programme endpoint and refreshed after create/cancel.
 
 `LiveTvCommandHandler` deliberately owns `record` and `programdialog` only for `Program` items.
 Timer and series-timer items retain their own edit and cancellation commands, while
@@ -87,7 +89,9 @@ JELLYFIN_URL=http://localhost:18098 ./dev e2e livetv.py
 
 `e2e/livetv.py` checks all six tabs, guide date switching, guide settings, desktop and phone
 layouts, programme details, single-recording settings, series-recording settings, and cancellation
-of both timer types. Screenshots are written to `blazor/artifacts/e2e/`.
+of both timer types. Its XMLTV fixture schedules programmes relative to the current UTC hour so
+the visible guide does not depend on when the test runs. Screenshots are written to
+`blazor/artifacts/e2e/`.
 
 The bUnit suite is in `tests/Jellyfin.Web.Tests/LiveTv/`:
 

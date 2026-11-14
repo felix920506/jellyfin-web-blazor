@@ -137,8 +137,9 @@ Remove the hook once item pages have play buttons and the script can click them.
 
 Marked in the code with `// PORT-TODO(playback): …`.
 
-- Session remote control and synced lyrics are now ported; see `15-playback-extras.md`. Cast/AirPlay, SyncPlay (also its OSD icon and statistics category),
-  live TV specifics of the OSD (programme info, record button), photo/book/PDF/YouTube players and with them remote trailers and items that are plain URLs.
+- Session remote control and synced lyrics are now ported; see `15-playback-extras.md`. Live TV OSD
+  programme information and the permission-gated record/cancel control are ported. Cast/AirPlay,
+  photo/book/PDF/YouTube players and with them remote trailers and items that are plain URLs remain open.
 - VobSub/DVB client renderers and some advanced bitmap appearance controls remain unported.
 - Brightness gestures, TV-layout key handling, iOS forced-fullscreen back navigation, iOS HLS live
   prefetch, flv.js, playback interceptors.
