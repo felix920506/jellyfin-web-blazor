@@ -135,8 +135,9 @@ Remove the hook once item pages have play buttons and the script can click them.
 
 Marked in the code with `// PORT-TODO(playback): …`.
 
-- Session remote control, the Google Cast (Chromecast) player, synced lyrics and native AirPlay target pickers are now ported; see `15-playback-extras.md`. SyncPlay (also its OSD icon and statistics category),
-  live TV specifics of the OSD (programme info, record button), photo/book/PDF/YouTube players and with them remote trailers and items that are plain URLs.
+- Session remote control, the Google Cast (Chromecast) player, synced lyrics, native AirPlay target pickers, SyncPlay, the
+  photo/book/PDF/YouTube players and the Live TV OSD programme information with its permission-gated record/cancel control
+  are now ported; see `15-playback-extras.md`, `16-players.md` and `17-syncplay.md`.
 - VobSub/DVB client renderers and some advanced bitmap appearance controls remain unported.
 - TV-layout key handling, iOS HLS live prefetch and flv.js.
 - Queue page: drag reordering (replaced by Up/Down buttons), remote backdrop. Remote control sections

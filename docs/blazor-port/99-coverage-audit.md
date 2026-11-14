@@ -16,14 +16,12 @@ playback/plugin behaviors, not an unrepresented route.
 
 ### Prioritized real gaps
 
-1. **Playback transport targets and browser playback features.** Chromecast is explicitly
-   unsupported. The video OSD still lacks recording controls, TV key handling and iOS forced-fullscreen back
-   navigation. These are visible regressions for users with those capabilities.
-2. **Several original playback plugins have no functional counterpart.** The backdrop and
-   logo screensaver plugins are exposed as preference choices but have no screensaver
-   implementation. The playback-boundary portions of `stillWatching`, `experimentalWarnings`
-   and `playAccessValidation` are now implemented; the remaining screensaver behavior is still
-   open.
+1. **Playback transport targets and browser playback features.** The Google Cast player,
+   AirPlay target pickers, the Live TV record control of the video OSD, touch brightness and the
+   iOS native-fullscreen exit are ported. Cast and AirPlay are covered by tests against fakes
+   only: neither has been run with a real receiver or on Safari/iOS. TV key handling is out of scope.
+2. **Playback plugins.** The backdrop and logo screensavers and the playback-boundary portions
+   of `stillWatching`, `experimentalWarnings` and `playAccessValidation` are implemented.
 3. **Plugin configuration pages now have a compatibility host.** `/configurationpage` renders
    authenticated server HTML and executes legacy inline/AMD/ESM controller scripts in a
    disposable document. Bundled MusicBrainz settings are editable and persisted; common legacy
@@ -248,8 +246,8 @@ work that has since been completed.
 | `blazor/src/Jellyfin.Web/Services/Playback/AirPlay/AirPlayFeatures.cs` | HTML audio/video AirPlay target-picker support and capability-gated OSD, bar and queue controls. | Closed; WebKit target events and fake-interop UI tests cover it. |
 | `blazor/src/Jellyfin.Web/Pages/Playback/VideoOsd.razor` | Touch brightness gesture, CSS-filter player bridge and original-style indicator. | Closed; swipe filtering and fake-interop UI tests cover the 0–100 behavior. |
 | `blazor/src/Jellyfin.Web/wwwroot/js/playback/player.js` + `Pages/Playback/VideoOsd.razor` | Native iOS fullscreen exit stops playback and returns from the OSD. | Closed; the dedicated WebKit event and OSD back-navigation are covered by fake-interop UI tests. |
-| `blazor/src/Jellyfin.Web/Pages/Playback/VideoOsd.razor:9-10` (`PORT-TODO(playback)`) | Video OSD lacks recording controls and TV key handling. | Open; TV portion is out of scope, recording controls are a real gap. |
-| `docs/blazor-port/06-playback-port.md` | Missing cast/AirPlay, Live TV OSD details, ASS/SSA and image subtitles, gestures and several queue/OSD details. | Open; TV layout excluded separately; playback interceptors are now implemented. |
+| `blazor/src/Jellyfin.Web/Pages/Playback/VideoOsd.razor` (`PORT-TODO(playback)`) | Live TV record/cancel control and programme info in the video OSD are ported; TV key handling is not. | Recording controls closed; TV portion is out of scope. |
+| `docs/blazor-port/06-playback-port.md` | Cast, AirPlay, Live TV OSD details, ASS/SSA and PGS subtitles, brightness gestures and playback interceptors are delivered; VobSub rendering and a few OSD details remain. | Mostly closed; TV layout excluded separately. |
 | `docs/blazor-port/15-playback-extras.md` | Google Cast player delivered (with its deviations); remote queue clearing is a no-op; SyncPlay and live-TV-specific extras were previously listed as future work. | Chromecast is ported but unverified on a real receiver (`PORT-TODO(cast)` in `cast.js`); SyncPlay is now ported and its old “not started” text is stale. |
 | `docs/blazor-port/07-library-pages.md` | Recursive list filtering differs; TV on-screen alphabet is not ported; shared shell typography/visual details differ. | Recursive filter and visual differences open; TV alphabet out of scope. |
 | `docs/blazor-port/05-item-components.md` | Item scroller and image lazy-unload limitations; minor card/list indicator and styling differences. | Scroller/image items open; other differences are minor. |
@@ -290,13 +288,13 @@ list:
 
 TV-layout limitations are therefore recorded as `out of scope`, not `missing`. Chromecast,
 AirPlay, plugin runtime behavior and ordinary desktop/mobile playback are not covered by
-this exception and remain real gaps where marked above.
+this exception; their remaining limits are listed where marked above.
 
 ## 6. Overall assessment
 
 The Blazor port is route-complete against the audited original inventory and has broad
 coverage of library, dashboard, wizard, metadata, Live TV, dialogs, local playback,
 remote session playback, synced lyrics and SyncPlay. The highest-value follow-up work is
-to decide how unsupported screensaver settings should be represented and add the missing cast/AirPlay and playback
-interactions. The remaining route-level `partial` statuses are intentional UI/control
+to exercise the Cast player with a real receiver and AirPlay on Safari/iOS, and to widen the plugin
+configuration shim as real plugins require. The remaining route-level `partial` statuses are intentional UI/control
 substitutions or feature subsets and should not be mistaken for absent pages.

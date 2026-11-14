@@ -6,7 +6,7 @@
    - the header is drawn by the page (the app bar is not shown on this route);
    - the show transitions are simplified: "hide" is added by a timer instead of transitionend;
    - buttons are not focused when the OSD appears.
-    PORT-TODO(playback): recording controls and the TV layout's key handling are not ported. *@
+   PORT-TODO(playback): the TV layout's key handling is not ported. *@
 @attribute [Route("/video")]
 @attribute [Access(AccessLevel.User)]
 @using System.Globalization
@@ -26,10 +26,18 @@
 @inject PlaybackActivity Activity
 @inject MediaSegmentService MediaSegments
 @inject SyncPlayService SyncPlay
+@inject LiveTvData LiveTv
+@inject RecordingHelper Recordings
+@inject DetailsQueries Details
 
 @{
     var item = Playback.CurrentItem;
-    var displayItem = item is null ? null : PlaybackText.DisplayItem(item);
+    var displayItem = item is null ? null : item.TypeName() is "TvChannel" or "Program" && _liveDisplayItem is not null
+        ? _liveDisplayItem
+        : PlaybackText.DisplayItem(item);
+    var recordable = displayItem?.TypeName() == "Program"
+        && Api.User?.Policy?.EnableLiveTvManagement == true;
+    var recording = _programDetailsId == displayItem?.Id?.ToString("N") ? _programDetails : displayItem;
     var liveProgress = Text.LiveTvProgress(item);
     var commands = Playback.GetSupportedCommands();
     var canSeek = item is not null && liveProgress is null && Playback.CanSeek();
@@ -202,6 +210,16 @@
 
                 <PlaybackFavoriteButton ItemId="@(item?.Id?.ToString("N"))" Class="btnUserRating autoSize" IconClass="xlargePaperIconButton" />
 
+                @if (recordable)
+                {
+                    <button type="button" class="btnRecord autoSize paper-icon-button-light"
+                            title="@Globalize[recording?.TimerId is not null && recording.Status != "Cancelled" ? recording.Status == "InProgress" ? "StopRecording" : "DoNotRecord" : "Record"]"
+                            aria-label="@Globalize[recording?.TimerId is not null && recording.Status != "Cancelled" ? recording.Status == "InProgress" ? "StopRecording" : "DoNotRecord" : "Record"]"
+                            disabled="@_recordingBusy" @onclick="ToggleCurrentProgramRecordingAsync">
+                        <span class="xlargePaperIconButton material-icons fiber_manual_record @(recording?.TimerId is not null && recording.Status != "Cancelled" ? "recordingIcon-active" : null)" aria-hidden="true"></span>
+                    </button>
+                }
+
                  <button type="button" class="btnSubtitles autoSize paper-icon-button-light @(subtitleTracks > 0 ? null : "hide")"
                         title="@Globalize["Subtitles"]" @onclick="ShowSubtitleMenuAsync">
                     <span class="xlargePaperIconButton material-icons closed_caption" aria-hidden="true"></span>
@@ -283,6 +301,12 @@
     private bool _brightnessVisible;
     private int _brightnessGeneration;
     private SubtitleSync? _subtitleSync;
+    private BaseItemDto? _programDetails;
+    private BaseItemDto? _liveDisplayItem;
+    private string? _programDetailsId;
+    private bool _recordingBusy;
+    private long _lastLiveTvRefresh;
+    private int _liveTvRefreshGeneration;
 
     // Leaving because playback ended: nothing to stop.
     private bool _leaving;
@@ -317,6 +341,7 @@
         RestorePlaybackRate();
         ShowOsd();
         _ = LoadMediaSegmentsAsync(Playback.CurrentItem);
+        _ = RefreshLiveProgramAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -796,11 +821,17 @@
                 _lastTimeUpdate = now;
                 ShowComingUpNextIfNeeded();
                 UpdateMediaSegment();
+                if (Playback.CurrentItem?.TypeName() is "TvChannel" or "Program" && now - _lastLiveTvRefresh >= 30_000)
+                {
+                    _lastLiveTvRefresh = now;
+                    _ = RefreshLiveProgramAsync(force: true);
+                }
                 break;
             case PlaybackEvents.PlaybackStart:
                 ResetUpNext();
                 RestorePlaybackRate();
                 _ = LoadMediaSegmentsAsync(Playback.CurrentItem);
+                _ = RefreshLiveProgramAsync(force: true);
                 break;
             case PlaybackEvents.Waiting:
                 _ = ShowLoadingWhenStalledAsync(++_waitingGeneration);
@@ -812,6 +843,143 @@
         }
 
         StateHasChanged();
+    }
+
+    private async Task RefreshLiveProgramAsync(bool force = false)
+    {
+        var generation = ++_liveTvRefreshGeneration;
+        if (_disposed)
+        {
+            return;
+        }
+
+        var current = Playback.CurrentItem;
+        var currentId = current?.Id?.ToString("N");
+        var currentType = current?.TypeName();
+        if (currentType is not ("TvChannel" or "Program"))
+        {
+            _programDetails = null;
+            _liveDisplayItem = null;
+            _programDetailsId = null;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        if (currentType == "TvChannel" && current?.Id is { } channelId)
+        {
+            try
+            {
+                current = await Details.GetChannelAsync(channelId.ToString("N")) ?? current;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or Microsoft.Kiota.Abstractions.ApiException)
+            {
+                AppLog.Warn($"Live TV: refreshing the current channel failed: {exception.Message}");
+            }
+        }
+        else if (currentType == "Program" && current?.ChannelId is { } programChannelId)
+        {
+            try
+            {
+                current = await Details.GetChannelAsync(programChannelId.ToString("N")) ?? current;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or Microsoft.Kiota.Abstractions.ApiException)
+            {
+                AppLog.Warn($"Live TV: refreshing the current channel failed: {exception.Message}");
+            }
+        }
+
+        // Playback may have changed while a channel/programme request was in flight.
+        if (_disposed || generation != _liveTvRefreshGeneration || Playback.CurrentItem?.Id?.ToString("N") != currentId
+            || Playback.CurrentItem?.TypeName() != currentType)
+        {
+            return;
+        }
+
+        var display = current is null ? null : PlaybackText.DisplayItem(current);
+        _liveDisplayItem = display?.TypeName() == "Program" ? display : null;
+        var id = display?.TypeName() == "Program" ? display.Id?.ToString("N") : null;
+        if (id is null)
+        {
+            _programDetails = null;
+            _liveDisplayItem = null;
+            _programDetailsId = null;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        if (_programDetailsId == id && !force)
+        {
+            if (_programDetails is null && display is not null)
+            {
+                _programDetails = display;
+                await InvokeAsync(StateHasChanged);
+            }
+
+            return;
+        }
+
+        _programDetailsId = id;
+        _programDetails = null;
+        BaseItemDto? program;
+        try
+        {
+            program = await LiveTv.GetProgramAsync(id);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or Microsoft.Kiota.Abstractions.ApiException)
+        {
+            AppLog.Warn($"Live TV: refreshing programme {id} failed: {exception.Message}");
+            return;
+        }
+        if (_programDetailsId != id || generation != _liveTvRefreshGeneration || _disposed)
+        {
+            return;
+        }
+
+        _programDetails = program;
+        _liveDisplayItem = program;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ToggleCurrentProgramRecordingAsync()
+    {
+        if (Api.User?.Policy?.EnableLiveTvManagement != true
+            || _programDetails is not { } program
+            || _recordingBusy)
+        {
+            return;
+        }
+
+        _recordingBusy = true;
+        try
+        {
+            var active = !string.IsNullOrEmpty(program.TimerId) && program.Status != "Cancelled";
+            var changed = false;
+            if (active)
+            {
+                changed = await Recordings.CancelTimerAsync(program.TimerId!);
+            }
+            else if (program.Id is { } id)
+            {
+                changed = await Recordings.CreateRecordingAsync(id.ToString("N"));
+            }
+
+            if (changed && _programDetailsId is { } refreshedId)
+            {
+                try
+                {
+                    _programDetails = await LiveTv.GetProgramAsync(refreshedId);
+                }
+                catch (Exception exception) when (exception is HttpRequestException or Microsoft.Kiota.Abstractions.ApiException)
+                {
+                    AppLog.Warn($"Live TV: refreshing programme {refreshedId} failed: {exception.Message}");
+                }
+            }
+        }
+        finally
+        {
+            _recordingBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private async Task ShowLoadingWhenStalledAsync(int generation)

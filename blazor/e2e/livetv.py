@@ -52,8 +52,7 @@ def main() -> int:
         # Return to the guide and open a programme's details/recording flow. The port follows the
         # modern client and routes a guide cell to details; the details page owns the same fields.
         choose_tab(page, 1, "Guide")
-        # The seeded programmes begin at midnight, so the current day's first row has already
-        # aired; use the next available guide day for the recording flow.
+        # The seeded series programme is placed within the guide's current visible time window.
         page.locator(".guide-date-tab-button").nth(1).click()
         series_cell = page.locator(".programCell").filter(has_text="Jellyfin Test Series")
         series_cell.first.wait_for(state="visible", timeout=30_000)
