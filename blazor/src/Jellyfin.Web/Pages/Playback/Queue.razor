@@ -7,7 +7,7 @@
     native HTML drag/drop reordering;
     With a remote play target (see RemotePlayButton) the same page is the remote control: the state
    and the queue are those of the target, and the navigation, message and text sections appear.
-   AirPlay, recording controls and the TV layout remain outside this port. *@
+    Recording controls and the TV layout remain outside this port. *@
 @attribute [Route("/queue")]
 @attribute [Access(AccessLevel.User)]
 @using System.Globalization
@@ -193,6 +193,10 @@
                         <button type="button" class="btnSubtitles videoButton btnPlayStateCommand autoSize paper-icon-button-light @(Playback.SubtitleTracks().Count > 0 && commands.Contains("SetSubtitleStreamIndex") ? null : "hide")"
                                 title="@Globalize["Subtitles"]" @onclick="ShowSubtitleMenuAsync">
                             <span class="material-icons closed_caption" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="btnAirPlay btnPlayStateCommand autoSize paper-icon-button-light @(commands.Contains("AirPlay") ? null : "hide") @(Playback.IsAirPlayEnabled ? "buttonActive" : null)"
+                                title="@Globalize["AirPlay"]" @onclick="Playback.ToggleAirPlay">
+                            <span class="material-icons airplay" aria-hidden="true"></span>
                         </button>
                         <div class="nowPlayingPageUserDataButtons">
                             <PlaybackFavoriteButton ItemId="@itemId" />

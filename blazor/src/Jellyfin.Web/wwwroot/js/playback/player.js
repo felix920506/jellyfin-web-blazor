@@ -51,7 +51,9 @@ function snapshot(player) {
         buffered: [],
         seekable: false,
         fullscreen: isFullscreen(),
-        pictureInPicture: false
+        pictureInPicture: false,
+        airPlay: false,
+        brightness: 100
     };
     if (!elem) {
         return state;
@@ -64,6 +66,8 @@ function snapshot(player) {
     state.muted = elem.muted;
     state.playbackRate = elem.playbackRate;
     state.pictureInPicture = player.kind === 'video' && isPictureInPicture(elem);
+    state.airPlay = !!(elem.webkitCurrentPlaybackTargetIsWireless || (document.AirPlayEnabled && document.AirplayElement === elem));
+    state.brightness = elem.brightnessValue == null ? 100 : elem.brightnessValue;
 
     const buffered = elem.buffered || [];
     for (let i = 0; i < buffered.length; i++) {
@@ -514,6 +518,11 @@ function bindElementEvents(player, elem) {
         on('enterpictureinpicture', () => emit(player, 'pictureinpicturechange'));
         on('leavepictureinpicture', () => emit(player, 'pictureinpicturechange'));
         on('webkitpresentationmodechanged', () => emit(player, 'pictureinpicturechange'));
+        on('webkitplaybacktargetavailabilitychanged', () => emit(player, 'airplayavailabilitychange'));
+        on('webkitcurrentplaybacktargetiswirelesschanged', () => emit(player, 'airplaychange'));
+        // iPhone's native player does not raise document fullscreenchange when the user leaves it.
+        // Keep this separate from regular fullscreen state changes: the OSD must close playback.
+        on('webkitendfullscreen', () => emit(player, 'nativefullscreenended'));
     }
 }
 
@@ -913,6 +922,42 @@ export function setPictureInPicture(enabled) {
         result.catch(err => console.warn('[player] picture-in-picture request was rejected', err));
     }
 }
+
+// The legacy WebKit picker remains the public AirPlay API in Safari/iOS. A current target change is
+// reported by webkitcurrentplaybacktargetiswirelesschanged above.
+export function setAirPlayEnabled(kind, enabled) {
+    const player = players[kind];
+    const elem = player && player.elem;
+    if (!elem) {
+        return;
+    }
+    let result;
+    if (document.AirPlayEnabled) {
+        result = enabled && elem.requestAirPlay ? elem.requestAirPlay() : !enabled && document.exitAirPlay ? document.exitAirPlay() : null;
+    } else if (elem.webkitShowPlaybackTargetPicker) {
+        result = elem.webkitShowPlaybackTargetPicker();
+    }
+    if (result && result.catch) {
+        result.catch(err => console.warn('[player] AirPlay request was rejected', err));
+    }
+}
+
+// Keep the logical value at 0..100 while rendering no darker than 20%, as htmlVideoPlayer does.
+export function setBrightness(value) {
+    const player = players.video;
+    const elem = player && player.elem;
+    if (!elem) {
+        return;
+    }
+    const brightness = Math.min(Math.max(Number(value) || 0, 0), 100);
+    const rendered = Math.max(20, brightness);
+    const filter = rendered >= 100 ? 'none' : `brightness(${rendered / 100})`;
+    elem.style.webkitFilter = filter;
+    elem.style.filter = filter;
+    elem.brightnessValue = brightness;
+    emit(player, 'brightnesschange');
+}
+
 
 export function navigatedToOsd() {
     const player = players.video;

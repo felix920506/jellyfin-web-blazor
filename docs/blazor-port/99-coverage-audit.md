@@ -17,8 +17,7 @@ playback/plugin behaviors, not an unrepresented route.
 ### Prioritized real gaps
 
 1. **Playback transport targets and browser playback features.** Chromecast is explicitly
-   unsupported; AirPlay is hidden in both the now-playing bar and video OSD. The video OSD
-   still lacks recording controls, TV key handling and iOS forced-fullscreen back
+   unsupported. The video OSD still lacks recording controls, TV key handling and iOS forced-fullscreen back
    navigation. These are visible regressions for users with those capabilities.
 2. **Several original playback plugins have no functional counterpart.** The backdrop and
    logo screensaver plugins are exposed as preference choices but have no screensaver
@@ -37,9 +36,9 @@ playback/plugin behaviors, not an unrepresented route.
 5. **Multi-select now preserves the full selection.** `ItemDialogCommandHandler` derives its
    operation IDs from `ItemActionContext.SelectedItems`, with a single-item fallback for direct
    item actions.
-6. **Playback format and interaction gaps remain.** There is no client ASS/SSA, PGS or
-    VobSub renderer; brightness gestures and TV key handling remain open, while playback
-    interceptors are implemented. Queue drag-reordering is now supported alongside the
+6. **Playback format and interaction gaps remain.** There is no client VobSub renderer; TV key
+     handling remains open, while graphical subtitles, touch brightness gestures and playback
+     interceptors are implemented. Queue drag-reordering is now supported alongside the
     accessible up/down buttons.
 7. **Small but observable library/image differences.** The port uses native scrolling
    instead of the original transform-based desktop scroller, and loaded lazy images are
@@ -246,8 +245,10 @@ work that has since been completed.
 |---|---|---|
 | `blazor/src/Jellyfin.Web/wwwroot/js/items.js:150` (`PORT-TODO(items)`) | Original lazy loader unloads images outside the viewport; port only loads/fades them in. | Open, low priority. |
 | `blazor/src/Jellyfin.Web/Components/Items/Scroller.razor:7` (`PORT-TODO(items)`) | Original desktop scroller moves the slider with transforms; port uses native scrolling. | Open, low priority. |
-| `blazor/src/Jellyfin.Web/Components/Playback/NowPlayingBar.razor:85` (`PORT-TODO(playback)`) | AirPlay button is hidden because AirPlay is not implemented. | Open, high priority for Safari/iOS. |
-| `blazor/src/Jellyfin.Web/Pages/Playback/VideoOsd.razor:9-10,228` (`PORT-TODO(playback)`) | Video OSD lacks recording controls, AirPlay, TV key handling and iOS forced-fullscreen back navigation. | Open; TV portion is out of scope, AirPlay/iOS are real gaps. |
+| `blazor/src/Jellyfin.Web/Services/Playback/AirPlay/AirPlayFeatures.cs` | HTML audio/video AirPlay target-picker support and capability-gated OSD, bar and queue controls. | Closed; WebKit target events and fake-interop UI tests cover it. |
+| `blazor/src/Jellyfin.Web/Pages/Playback/VideoOsd.razor` | Touch brightness gesture, CSS-filter player bridge and original-style indicator. | Closed; swipe filtering and fake-interop UI tests cover the 0–100 behavior. |
+| `blazor/src/Jellyfin.Web/wwwroot/js/playback/player.js` + `Pages/Playback/VideoOsd.razor` | Native iOS fullscreen exit stops playback and returns from the OSD. | Closed; the dedicated WebKit event and OSD back-navigation are covered by fake-interop UI tests. |
+| `blazor/src/Jellyfin.Web/Pages/Playback/VideoOsd.razor:9-10` (`PORT-TODO(playback)`) | Video OSD lacks recording controls and TV key handling. | Open; TV portion is out of scope, recording controls are a real gap. |
 | `docs/blazor-port/06-playback-port.md` | Missing cast/AirPlay, Live TV OSD details, ASS/SSA and image subtitles, gestures and several queue/OSD details. | Open; TV layout excluded separately; playback interceptors are now implemented. |
 | `docs/blazor-port/15-playback-extras.md` | Chromecast unsupported; remote queue clearing is a no-op; SyncPlay and live-TV-specific extras were previously listed as future work. | Chromecast remains open; SyncPlay is now ported and its old “not started” text is stale. |
 | `docs/blazor-port/07-library-pages.md` | Recursive list filtering differs; TV on-screen alphabet is not ported; shared shell typography/visual details differ. | Recursive filter and visual differences open; TV alphabet out of scope. |

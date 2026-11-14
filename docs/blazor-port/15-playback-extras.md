@@ -47,6 +47,28 @@ arrow-key input temporarily suppresses automatic scrolling, while the small
 `wwwroot/js/playback/lyrics.js` module is limited to DOM scrolling and input listeners. The
 now-playing bar and `/queue` expose the lyrics action for audio items with lyrics.
 
+## Delivered: AirPlay
+
+The local HTML audio and video players probe for the Safari/WebKit playback-target API and expose
+the original `AirPlay` supported command only when it is available. The now-playing bar, `/queue`
+and video OSD then show their AirPlay button; it invokes the native target picker and reflects the
+wireless-target state. The element binds WebKit availability and current-target events, while the
+managed side remains behind `IPlayerInterop` for fake-interoperability unit coverage.
+
+## Delivered: touch brightness
+
+The video OSD translates vertical, off-control touch swipes into two-percent brightness changes.
+It preserves the original player's 0–100 logical value and 20% rendered minimum through the HTML
+video CSS filter, and presents the original-style orange brightness indicator while a change is
+active. The input bridge deliberately ignores short movements and controls, so normal taps and
+slider/button gestures retain their existing behavior.
+
+## Delivered: iOS native-fullscreen exit
+
+The HTML video element forwards WebKit's `webkitendfullscreen` event as a distinct playback event.
+When native iOS fullscreen is dismissed, the OSD stops local playback and returns to the previous
+route. This intentionally does not treat ordinary document fullscreen transitions as a stop.
+
 ### Extension points and deviations
 
 - Implement/register `IRemotePlayer` for another self-managing target; session-specific HTTP and

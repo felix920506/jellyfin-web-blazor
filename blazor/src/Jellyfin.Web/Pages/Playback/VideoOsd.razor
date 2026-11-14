@@ -6,8 +6,7 @@
    - the header is drawn by the page (the app bar is not shown on this route);
    - the show transitions are simplified: "hide" is added by a timer instead of transitionend;
    - buttons are not focused when the OSD appears.
-   PORT-TODO(playback): recording controls, AirPlay, the TV
-   layout's key handling and the iOS forced-fullscreen back navigation are not ported. *@
+    PORT-TODO(playback): recording controls and the TV layout's key handling are not ported. *@
 @attribute [Route("/video")]
 @attribute [Access(AccessLevel.User)]
 @using System.Globalization
@@ -64,6 +63,11 @@
     </div>
 
     <PlayerStatsOverlay Visible="_statsVisible" OnClose="() => _statsVisible = false" />
+
+    <div class="iconOsd brightnessOsd @(_brightnessVisible ? null : "iconOsd-hidden")" aria-live="polite">
+        <span class="material-icons iconOsdIcon brightness_6" aria-hidden="true"></span>
+        <div class="iconOsdProgressOuter"><div class="iconOsdProgressInner brightnessOsdProgressInner" style="width: @Playback.Brightness%"></div></div>
+    </div>
 
     <SubtitleSync @ref="_subtitleSync" Visible="_subtitleSyncVisible" OnClose="() => _subtitleSyncVisible = false" />
 
@@ -226,8 +230,8 @@
                         @onclick="ShowSettingsMenuAsync">
                     <span class="largePaperIconButton material-icons settings" aria-hidden="true"></span>
                 </button>
-                @* PORT-TODO(playback): AirPlay is not ported; the button stays hidden. *@
-                <button type="button" class="btnAirPlay hide autoSize paper-icon-button-light" title="@Globalize["AirPlay"]">
+                <button type="button" class="btnAirPlay autoSize paper-icon-button-light @(commands.Contains("AirPlay") ? null : "hide") @(Playback.IsAirPlayEnabled ? "buttonActive" : null)" title="@Globalize["AirPlay"]"
+                        @onclick="Playback.ToggleAirPlay">
                     <span class="xlargePaperIconButton material-icons airplay" aria-hidden="true"></span>
                 </button>
                 <button type="button" class="btnPip autoSize paper-icon-button-light @(commands.Contains("PictureInPicture") ? null : "hide")"
@@ -276,6 +280,8 @@
     private BaseItemDto? _nextItem;
     private bool _statsVisible;
     private bool _subtitleSyncVisible;
+    private bool _brightnessVisible;
+    private int _brightnessGeneration;
     private SubtitleSync? _subtitleSync;
 
     // Leaving because playback ended: nothing to stop.
@@ -380,6 +386,21 @@
         _mouseIsDown = down;
         Activity.NotifyActivity();
         ResetIdle();
+    });
+
+    /// <summary>Changes picture brightness from a vertical touch swipe over the video.</summary>
+    [JSInvokable]
+    public Task OnBrightnessSwipe(int delta) => InvokeAsync(() =>
+    {
+        if (_disposed || !Playback.GetSupportedCommands().Contains("SetBrightness"))
+        {
+            return;
+        }
+
+        Playback.SetBrightness(Playback.Brightness + delta);
+        _brightnessVisible = true;
+        _ = HideBrightnessAsync(++_brightnessGeneration);
+        ShowOsd();
     });
 
     /// <summary>Port of onKeyDown().</summary>
@@ -670,6 +691,16 @@
         }
     }
 
+    private async Task HideBrightnessAsync(int generation)
+    {
+        await Timers.Delay(OsdHideDelayMs);
+        if (generation == _brightnessGeneration && !_disposed)
+        {
+            _brightnessVisible = false;
+            StateHasChanged();
+        }
+    }
+
     /// <summary>
     /// Port of resetIdle(): the hide timer restarts while something is shown, no button is held and
     /// no dialog is open.
@@ -748,6 +779,12 @@
 
         switch (name)
         {
+            case PlaybackEvents.NativeFullscreenEnded:
+                // Native iOS fullscreen was dismissed. Match the legacy back-navigation behavior.
+                _leaving = true;
+                _ = Playback.StopAsync();
+                Router.Back();
+                return;
             case PlaybackEvents.TimeUpdate:
                 // Try to avoid hammering the document with changes.
                 var now = Timers.NowMs;
@@ -799,8 +836,12 @@
         Loading.Hide();
         if (info.NextMediaType != "Video")
         {
+            var shouldNavigateBack = !_leaving;
             _leaving = true;
-            Router.Back();
+            if (shouldNavigateBack)
+            {
+                Router.Back();
+            }
         }
 
         StateHasChanged();

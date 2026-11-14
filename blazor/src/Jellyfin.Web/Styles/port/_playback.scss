@@ -43,6 +43,15 @@
     right: 0;
 }
 
+// Port of components/playback/iconosd.scss for the touch brightness gesture.
+.brightnessOsd {
+    pointer-events: none;
+}
+
+.brightnessOsdProgressInner {
+    background: #ff9800;
+}
+
 
 // Values of the playback info overlay may span several lines.
 .jf-playerStats-value {
