@@ -42,7 +42,7 @@ function send(name, ...args) {
 export function attachOsd(dotnetRef) {
     detachOsd();
 
-    const state = { ref: dotnetRef, lastX: null, lastY: null, lastMove: 0 };
+    const state = { ref: dotnetRef, lastX: null, lastY: null, lastMove: 0, touchY: null, touchBrightness: false };
 
     state.onKeyDown = e => {
         if (isDialogOpen() || isTextInput(e.target)) {
@@ -113,12 +113,49 @@ export function attachOsd(dotnetRef) {
     state.onPointerDown = () => send('OnMouseDownChanged', true);
     state.onPointerUp = () => send('OnMouseDownChanged', false);
 
+    state.onTouchStart = e => {
+        // Controls retain their native touch behavior; only swipes on the picture adjust brightness.
+        if (e.target && e.target.closest('button, input, a, .videoOsdBottom, .osdHeader, .dialogContainer')) {
+            state.touchY = null;
+            return;
+        }
+        state.touchY = e.touches.length === 1 ? e.touches[0].clientY : null;
+        state.touchBrightness = false;
+    };
+
+    state.onTouchMove = e => {
+        if (state.touchY === null || e.touches.length !== 1) {
+            return;
+        }
+        const y = e.touches[0].clientY;
+        const delta = state.touchY - y;
+        // Ignore short movements so an ordinary tap still only toggles the OSD.
+        if (!state.touchBrightness && Math.abs(delta) < 24) {
+            return;
+        }
+        state.touchBrightness = true;
+        if (Math.abs(delta) < 8) {
+            return;
+        }
+        state.touchY = y;
+        send('OnBrightnessSwipe', delta > 0 ? 2 : -2);
+    };
+
+    state.onTouchEnd = () => {
+        state.touchY = null;
+        state.touchBrightness = false;
+    };
+
     document.addEventListener('keydown', state.onKeyDown, true);
     document.addEventListener('pointermove', state.onPointerMove, { passive: true });
     window.addEventListener('pointerdown', state.onPointerDown, { passive: true });
     window.addEventListener('pointerup', state.onPointerUp, { passive: true });
     window.addEventListener('pointercancel', state.onPointerUp, { passive: true });
     window.addEventListener('dragend', state.onPointerUp, { passive: true });
+    document.addEventListener('touchstart', state.onTouchStart, { passive: true });
+    document.addEventListener('touchmove', state.onTouchMove, { passive: true });
+    document.addEventListener('touchend', state.onTouchEnd, { passive: true });
+    document.addEventListener('touchcancel', state.onTouchEnd, { passive: true });
     osd = state;
 }
 
@@ -135,6 +172,10 @@ export function detachOsd() {
     window.removeEventListener('pointerup', state.onPointerUp);
     window.removeEventListener('pointercancel', state.onPointerUp);
     window.removeEventListener('dragend', state.onPointerUp);
+    document.removeEventListener('touchstart', state.onTouchStart);
+    document.removeEventListener('touchmove', state.onTouchMove);
+    document.removeEventListener('touchend', state.onTouchEnd);
+    document.removeEventListener('touchcancel', state.onTouchEnd);
 }
 
 // --- sliders ---------------------------------------------------------------------------------------

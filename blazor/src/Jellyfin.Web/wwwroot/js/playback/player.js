@@ -52,7 +52,8 @@ function snapshot(player) {
         seekable: false,
         fullscreen: isFullscreen(),
         pictureInPicture: false,
-        airPlay: false
+        airPlay: false,
+        brightness: 100
     };
     if (!elem) {
         return state;
@@ -66,6 +67,7 @@ function snapshot(player) {
     state.playbackRate = elem.playbackRate;
     state.pictureInPicture = player.kind === 'video' && isPictureInPicture(elem);
     state.airPlay = !!(elem.webkitCurrentPlaybackTargetIsWireless || (document.AirPlayEnabled && document.AirplayElement === elem));
+    state.brightness = elem.brightnessValue == null ? 100 : elem.brightnessValue;
 
     const buffered = elem.buffered || [];
     for (let i = 0; i < buffered.length; i++) {
@@ -935,6 +937,22 @@ export function setAirPlayEnabled(kind, enabled) {
     if (result && result.catch) {
         result.catch(err => console.warn('[player] AirPlay request was rejected', err));
     }
+}
+
+// Keep the logical value at 0..100 while rendering no darker than 20%, as htmlVideoPlayer does.
+export function setBrightness(value) {
+    const player = players.video;
+    const elem = player && player.elem;
+    if (!elem) {
+        return;
+    }
+    const brightness = Math.min(Math.max(Number(value) || 0, 0), 100);
+    const rendered = Math.max(20, brightness);
+    const filter = rendered >= 100 ? 'none' : `brightness(${rendered / 100})`;
+    elem.style.webkitFilter = filter;
+    elem.style.filter = filter;
+    elem.brightnessValue = brightness;
+    emit(player, 'brightnesschange');
 }
 
 

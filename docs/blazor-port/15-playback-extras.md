@@ -55,6 +55,14 @@ and video OSD then show their AirPlay button; it invokes the native target picke
 wireless-target state. The element binds WebKit availability and current-target events, while the
 managed side remains behind `IPlayerInterop` for fake-interoperability unit coverage.
 
+## Delivered: touch brightness
+
+The video OSD translates vertical, off-control touch swipes into two-percent brightness changes.
+It preserves the original player's 0–100 logical value and 20% rendered minimum through the HTML
+video CSS filter, and presents the original-style orange brightness indicator while a change is
+active. The input bridge deliberately ignores short movements and controls, so normal taps and
+slider/button gestures retain their existing behavior.
+
 ### Extension points and deviations
 
 - Implement/register `IRemotePlayer` for another self-managing target; session-specific HTTP and

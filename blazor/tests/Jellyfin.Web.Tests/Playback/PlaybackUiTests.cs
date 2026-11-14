@@ -145,6 +145,23 @@ public class PlaybackUiTests : PlaybackTestContext
     }
 
     [Fact]
+    public async Task A_vertical_touch_swipe_changes_brightness_and_shows_its_indicator()
+    {
+        StartRouter();
+        await PlayMovieAsync();
+        var cut = Render<VideoOsd>();
+
+        await Osd.OnBrightnessSwipe(-2);
+
+        Assert.Equal("brightness 98", Player.Calls[^1]);
+        cut.WaitForAssertion(() => Assert.Equal("width: 98%", cut.Find(".brightnessOsdProgressInner").GetAttribute("style")), Timeout);
+        Assert.DoesNotContain("iconOsd-hidden", cut.Find(".brightnessOsd").ClassList);
+
+        await Fakes.Timers.AdvanceAsync(3000);
+        cut.WaitForAssertion(() => Assert.Contains("iconOsd-hidden", cut.Find(".brightnessOsd").ClassList), Timeout);
+    }
+
+    [Fact]
     public async Task Subtitle_offset_keys_show_the_slider_and_adjust_the_offset()
     {
         StartRouter();

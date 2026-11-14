@@ -35,9 +35,9 @@ playback/plugin behaviors, not an unrepresented route.
 5. **Multi-select now preserves the full selection.** `ItemDialogCommandHandler` derives its
    operation IDs from `ItemActionContext.SelectedItems`, with a single-item fallback for direct
    item actions.
-6. **Playback format and interaction gaps remain.** There is no client ASS/SSA, PGS or
-    VobSub renderer; brightness gestures and TV key handling remain open, while playback
-    interceptors are implemented. Queue drag-reordering is now supported alongside the
+6. **Playback format and interaction gaps remain.** There is no client VobSub renderer; TV key
+     handling remains open, while graphical subtitles, touch brightness gestures and playback
+     interceptors are implemented. Queue drag-reordering is now supported alongside the
     accessible up/down buttons.
 7. **Small but observable library/image differences.** The port uses native scrolling
    instead of the original transform-based desktop scroller, and loaded lazy images are

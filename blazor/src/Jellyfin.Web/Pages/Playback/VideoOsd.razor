@@ -64,6 +64,11 @@
 
     <PlayerStatsOverlay Visible="_statsVisible" OnClose="() => _statsVisible = false" />
 
+    <div class="iconOsd brightnessOsd @(_brightnessVisible ? null : "iconOsd-hidden")" aria-live="polite">
+        <span class="material-icons iconOsdIcon brightness_6" aria-hidden="true"></span>
+        <div class="iconOsdProgressOuter"><div class="iconOsdProgressInner brightnessOsdProgressInner" style="width: @Playback.Brightness%"></div></div>
+    </div>
+
     <SubtitleSync @ref="_subtitleSync" Visible="_subtitleSyncVisible" OnClose="() => _subtitleSyncVisible = false" />
 
     @if (_skipSegment is not null)
@@ -275,6 +280,8 @@
     private BaseItemDto? _nextItem;
     private bool _statsVisible;
     private bool _subtitleSyncVisible;
+    private bool _brightnessVisible;
+    private int _brightnessGeneration;
     private SubtitleSync? _subtitleSync;
 
     // Leaving because playback ended: nothing to stop.
@@ -379,6 +386,21 @@
         _mouseIsDown = down;
         Activity.NotifyActivity();
         ResetIdle();
+    });
+
+    /// <summary>Changes picture brightness from a vertical touch swipe over the video.</summary>
+    [JSInvokable]
+    public Task OnBrightnessSwipe(int delta) => InvokeAsync(() =>
+    {
+        if (_disposed || !Playback.GetSupportedCommands().Contains("SetBrightness"))
+        {
+            return;
+        }
+
+        Playback.SetBrightness(Playback.Brightness + delta);
+        _brightnessVisible = true;
+        _ = HideBrightnessAsync(++_brightnessGeneration);
+        ShowOsd();
     });
 
     /// <summary>Port of onKeyDown().</summary>
@@ -665,6 +687,16 @@
         if (generation == _bottomGeneration && !_disposed)
         {
             _bottomCollapsed = true;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HideBrightnessAsync(int generation)
+    {
+        await Timers.Delay(OsdHideDelayMs);
+        if (generation == _brightnessGeneration && !_disposed)
+        {
+            _brightnessVisible = false;
             StateHasChanged();
         }
     }

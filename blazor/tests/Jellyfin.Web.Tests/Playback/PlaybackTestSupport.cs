@@ -162,6 +162,12 @@ internal sealed class FakePlayerInterop : IPlayerInterop
         Emit(kind, "airplaychange", s => s with { AirPlay = enabled });
     }
 
+    public void SetBrightness(int value)
+    {
+        Calls.Add("brightness " + value);
+        Emit("video", PlaybackEvents.BrightnessChange, snapshot => snapshot with { Brightness = value });
+    }
+
     public void NavigatedToOsd() => Calls.Add("osd");
 
     public Task<PlayerStats?> GetStatsAsync(string kind) => Task.FromResult(Stats);

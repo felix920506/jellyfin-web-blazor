@@ -76,6 +76,8 @@ public sealed class JsPlayerInterop(IServiceProvider services) : IPlayerInterop,
 
     public void SetAirPlayEnabled(string kind, bool enabled) => Send("setAirPlayEnabled", kind, enabled);
 
+    public void SetBrightness(int value) => Send("setBrightness", value);
+
     public void NavigatedToOsd() => Send("navigatedToOsd");
 
     public async Task<PlayerStats?> GetStatsAsync(string kind)

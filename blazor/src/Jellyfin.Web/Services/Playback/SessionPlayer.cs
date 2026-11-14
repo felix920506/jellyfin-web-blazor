@@ -71,6 +71,8 @@ public sealed class SessionPlayer(JellyfinApi api, ServerEvents events, IPlaybac
 
     public bool IsAirPlayEnabled => false;
 
+    public int Brightness => 100;
+
 
     public BaseItemDto? NowPlayingItem => _session?.NowPlayingItem;
 
@@ -327,6 +329,10 @@ public sealed class SessionPlayer(JellyfinApi api, ServerEvents events, IPlaybac
     }
 
     public void SetAirPlayEnabled(bool enabled)
+    {
+    }
+
+    public void SetBrightness(int value)
     {
     }
 

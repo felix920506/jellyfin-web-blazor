@@ -70,6 +70,8 @@ public sealed partial class PlaybackManager
 
     public bool IsAirPlayEnabled => CurrentPlayer?.IsAirPlayEnabled == true;
 
+    public int Brightness => CurrentPlayer?.Brightness ?? 100;
+
     public string? CurrentPlaylistItemId => Remote is { } remote ? remote.CurrentPlaylistItemId : _playQueue.CurrentPlaylistItemId;
 
     public int CurrentPlaylistIndex => Remote is { } remote ? RemotePlaylistIndex(remote) : _playQueue.GetCurrentPlaylistIndex();
@@ -152,6 +154,15 @@ public sealed partial class PlaybackManager
         if (CurrentPlayer is { } player && player.Supports("AirPlay"))
         {
             player.SetAirPlayEnabled(!player.IsAirPlayEnabled);
+        }
+    }
+
+    /// <summary>Port of setBrightness(): delegate the 0..100 value to the active local video player.</summary>
+    public void SetBrightness(int value)
+    {
+        if (CurrentPlayer is { } player && player.Supports("SetBrightness"))
+        {
+            player.SetBrightness(Math.Clamp(value, 0, 100));
         }
     }
 

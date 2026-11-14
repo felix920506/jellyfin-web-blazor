@@ -82,6 +82,8 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
 
     public bool IsAirPlayEnabled => _snapshot.AirPlay;
 
+    public int Brightness => _snapshot.Brightness;
+
     public virtual string AspectRatio => "auto";
 
     public virtual bool CanSetAudioStreamIndex => false;
@@ -214,6 +216,10 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
 
     public virtual void SetAirPlayEnabled(bool enabled) => Interop.SetAirPlayEnabled(_kind, enabled);
 
+    public virtual void SetBrightness(int value)
+    {
+    }
+
     public Task<PlayerStats?> GetStatsAsync() => Interop.GetStatsAsync(_kind);
 
     public virtual void OnNavigatedToOsd()
@@ -268,6 +274,10 @@ public abstract partial class HtmlMediaPlayer : IMediaPlayer
                     AppSettings.Set("volume", state.Volume.ToString("R", CultureInfo.InvariantCulture));
                 }
 
+                Raise(name);
+                break;
+            case PlaybackEvents.BrightnessChange:
+                _snapshot = state;
                 Raise(name);
                 break;
             case "firstplaying":
@@ -328,8 +338,9 @@ public sealed class HtmlVideoPlayer(
         "AirPlay" => Probe.Current?.AirPlay == true,
         "PlaybackRate" or "SetAspectRatio" => true,
 
-        // SetBrightness is still a touch-gesture feature; secondary subtitle tracks are supported
-        // through the same external cue path as the primary track.
+        "SetBrightness" => true,
+
+        // Secondary subtitle tracks are supported through the same external cue path as the primary track.
         "SecondarySubtitles" => SupportsSecondarySubtitles,
         _ => false,
     };
@@ -356,6 +367,8 @@ public sealed class HtmlVideoPlayer(
     }
 
     public override void SetPictureInPictureEnabled(bool enabled) => Interop.SetPictureInPicture(enabled);
+
+    public override void SetBrightness(int value) => Interop.SetBrightness(value);
 
     public override void SetAudioStreamIndex(int index)
     {
