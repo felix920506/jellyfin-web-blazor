@@ -1,16 +1,103 @@
-"""Exercise the six Live TV tabs, guide controls, and recording dialogs."""
+"""Exercise Live TV tabs/dialogs and the video OSD's real channel recording toggle.
+
+Seed a private server with scripts/seed-livetv.sh first. Playback uses its HTTP M3U fixture;
+the OSD is driven only through visible controls and timer changes are checked on the server.
+Repeatable against the same seed: every timer created here is cancelled before playback stops.
+"""
+import re
 import sys
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
-from lib import finish, go, new_page, shot, sign_in
+from lib import PASSWORD, SERVER, USER, finish, go, new_page, shot, sign_in
+
+
+def server_api(playwright):
+    api = playwright.request.new_context(base_url=SERVER, extra_http_headers={
+        "Authorization": 'MediaBrowser Client="e2e", Device="livetv.py", DeviceId="livetv-osd", Version="1"',
+    })
+    response = api.post("/Users/AuthenticateByName", data={"Username": USER, "Pw": PASSWORD})
+    assert response.ok, response.text()
+    token = response.json()["AccessToken"]
+    api.dispose()
+    return playwright.request.new_context(base_url=SERVER, extra_http_headers={
+        "Authorization": f'MediaBrowser Client="e2e", Device="livetv.py", DeviceId="livetv-osd", Version="1", Token="{token}"',
+    })
+
+
+def get(api, path):
+    response = api.get(path)
+    assert response.ok, f"{path}: {response.status} {response.text()}"
+    return response.json()
+
+
+def show_osd(page):
+    page.mouse.move(400, 300)
+    page.mouse.move(420, 320)
+    expect(page.locator(".videoOsdBottom:not(.videoOsdBottom-hidden)")).to_be_visible()
+
+
+def record_playing_channel(page, api):
+    channels = get(api, "/LiveTv/Channels?AddCurrentProgram=true")["Items"]
+    assert len(channels) == 6, f"Expected six seeded channels, got {channels}"
+    channel = next(c for c in channels if c.get("CurrentProgram"))
+    program = channel["CurrentProgram"]
+    assert not [t for t in get(api, "/LiveTv/Timers")["Items"] if t.get("ProgramId") == program["Id"]]
+    go(page, f"/details?id={channel['Id']}&serverId={channel['ServerId']}")
+    expect(page.locator("#itemDetailPage .nameContainer")).to_contain_text(channel["Name"])
+    page.locator("#itemDetailPage .mainDetailButtons .btnPlay").click()
+    page.wait_for_selector("#videoOsdPage", timeout=30_000)
+    page.wait_for_function("() => { const v = document.querySelector('video'); return v && v.videoWidth > 0 && v.currentTime > 0; }", timeout=30_000)
+    show_osd(page)
+    record = page.locator(".btnRecord")
+    expect(record).to_be_visible()
+    expect(record).to_be_enabled()
+    expect(record).to_have_attribute("title", "Record")
+    expect(page.locator(".osdHeader .pageTitle")).to_contain_text(program["Name"])
+    # Match legacy index.html: first in the left transport group, before rewind and pause.
+    expect(page.locator(".buttons > div[dir=ltr] > button:first-child")).to_have_class(re.compile(r"\bbtnRecord\b"))
+    box = record.bounding_box()
+    rewind = page.locator(".btnRewind").bounding_box()
+    assert box["x"] < rewind["x"] and abs(box["y"] - rewind["y"]) < 5
+    shot(page, "livetv-osd-record")
+    with page.expect_response(lambda r: "/LiveTv/Timers" in r.url and r.request.method == "POST") as created:
+        record.click()
+    assert created.value.ok, created.value.text()
+    expect(record).to_have_class(re.compile(r"\brecordingIcon-active\b"))
+    expect(record).to_have_attribute("title", re.compile(r"^(Do not record|Stop recording)$"))
+    expect(record.locator(".material-icons")).to_have_css("color", "rgb(204, 51, 51)")
+    timers = [t for t in get(api, "/LiveTv/Timers")["Items"] if t.get("ProgramId") == program["Id"]]
+    assert len(timers) == 1, timers
+    # RecordingHelper displays a toast over the bottom-left controls. Wait for its real lifetime
+    # before moving the pointer to reopen the OSD; never force a click through an overlay.
+    expect(page.locator(".toastVisible")).to_contain_text("Recording scheduled.")
+    expect(page.locator(".toastVisible")).to_have_count(0)
+    show_osd(page)
+    shot(page, "livetv-osd-recording")
+    with page.expect_response(lambda r: f"/LiveTv/Timers/{timers[0]['Id']}" in r.url and r.request.method == "DELETE") as cancelled:
+        record.click()
+    assert cancelled.value.ok, cancelled.value.text()
+    expect(record).not_to_have_class(re.compile(r"\brecordingIcon-active\b"))
+    expect(record).to_have_attribute("title", "Record")
+    expect(record).to_be_enabled()
+    assert not [t for t in get(api, "/LiveTv/Timers")["Items"] if t.get("Id") == timers[0]["Id"]]
+    expect(page.locator(".toastVisible")).to_contain_text("Recording cancelled.")
+    expect(page.locator(".toastVisible")).to_have_count(0)
+    show_osd(page)
+    shot(page, "livetv-osd-cancelled")
+    with page.expect_response(lambda r: "/Sessions/Playing/Stopped" in r.url and r.request.method == "POST") as stopped:
+        page.locator("#videoOsdPage .headerBackButton").click()
+    assert stopped.value.ok, stopped.value.text()
+    page.wait_for_selector("#videoOsdPage", state="detached")
+    page.wait_for_selector("video", state="detached")
+    assert not [s for s in get(api, "/Sessions") if s.get("NowPlayingItem", {}).get("Id") == channel["Id"]]
+    print("livetv OSD: decoded channel, created timer, cancelled timer, stopped playback")
 
 
 def wait_page(page, label):
     page.wait_for_selector("#liveTvPage", timeout=30_000)
     page.wait_for_function("label => document.querySelector('.jf-library-view-label')?.textContent.includes(label)", arg=label)
-    page.wait_for_timeout(500)
 
 
 def choose_tab(page, index, label):
@@ -24,7 +111,15 @@ def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = new_page(browser)
-        sign_in(page)
+        try:
+            sign_in(page)
+            api = server_api(p)
+            record_playing_channel(page, api)
+        except Exception as error:
+            page.errors.append(str(error))
+            shot(page, "livetv-osd-failure")
+            finish(page, "livetv")
+            raise
         go(page, "/livetv")
         wait_page(page, "Programs")
         shot(page, "livetv-programs-desktop")
@@ -33,16 +128,13 @@ def main() -> int:
         page.wait_for_selector(".tvguide", timeout=30_000)
         page.wait_for_selector(".guide-date-tab-button")
         page.locator(".guide-date-tab-button").nth(1).click()
-        page.wait_for_timeout(700)
         page.click(".btnGuideViewSettings")
         page.wait_for_selector(".formDialog")
         shot(page, "livetv-guide-settings-desktop")
         page.locator(".formDialog .chkColorCodedBackgrounds").check(force=True)
         page.locator(".formDialog .btnCancel").click()
-        page.wait_for_timeout(400)
         page.locator(".programContainer").hover()
         page.mouse.wheel(0, 500)
-        page.wait_for_timeout(400)
 
         choose_tab(page, 2, "Channels")
         choose_tab(page, 3, "Recordings")
@@ -74,13 +166,11 @@ def main() -> int:
                 )
             stage = "creating single timer"
             single.click()
-            page.wait_for_timeout(1500)
             shot(page, "livetv-after-record")
             stage = "waiting for single timer"
             page.wait_for_selector("#itemDetailPage .btnManageRecording:not(.hide)", timeout=15_000)
             stage = "opening single editor"
             page.locator("#itemDetailPage .btnManageRecording:not(.hide)").click()
-            page.wait_for_timeout(500)
             dialog = page.locator(".dialogContainer").last
             dialog.locator(".formDialogHeader .btnCancel").wait_for(state="visible", timeout=10_000)
             dialog.locator(".formDialogHeader .btnCancel").click()
@@ -117,7 +207,6 @@ def main() -> int:
                 "() => document.querySelector('#itemDetailPage .btnManageSeriesRecording')?.classList.contains('hide')",
                 timeout=15_000,
             )
-            page.wait_for_timeout(500)
         except PlaywrightTimeout:
             page.errors.append(
                 f"recording flow failed at {stage}: "
@@ -138,6 +227,7 @@ def main() -> int:
         page.wait_for_selector(".tvguide", timeout=30_000)
         shot(page, "livetv-guide-phone")
         code = finish(page, "livetv")
+        api.dispose()
         browser.close()
     return code
 

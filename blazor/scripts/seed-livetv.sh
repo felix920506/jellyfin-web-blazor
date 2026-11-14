@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
+# Seed six playable M3U channels and a relative-time XMLTV guide on a private server.
+# Reuses the tuner/provider on repeated calls, explicitly runs the guide refresh scheduled task,
+# and waits for six channels plus a current programme (GuideInfo alone is not a readiness check).
+# All fixture generation and JSON tooling runs in the dev container; no host Python is required.
 set -euo pipefail
+
+if [[ "${JF_LIVETV_IN_DOCKER:-}" != 1 ]]; then
+    exec "$(dirname "$0")/../dev" sh -c 'exec env JF_LIVETV_IN_DOCKER=1 JELLYFIN_INSTANCE="$1" JELLYFIN_PORT="$2" JFWEB_CACHE=/cache bash scripts/seed-livetv.sh "${@:3}"' \
+        seed-livetv "${JELLYFIN_INSTANCE:-livetv}" "${JELLYFIN_PORT:-18098}" "$@"
+fi
 
 INSTANCE="${JELLYFIN_INSTANCE:-livetv}"
 PORT="${JELLYFIN_PORT:-18098}"
-URL="http://localhost:${PORT}"
+URL="http://172.17.0.1:${PORT}"
 DATA="${JFWEB_CACHE:-$HOME/.cache/jellyfin-web-blazor}/testserver-${INSTANCE}"
 MEDIA="${DATA}/media"
 if [[ "${1:-}" == "--files-only" ]]; then
@@ -27,8 +36,8 @@ authed() {
     curl -fsS -X "$1" "$URL$2" -H "Authorization: $AUTH, Token=\"$token\"" -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
 
-user_id="$(authed GET /Users | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["Id"])')"
-policy="$(authed GET "/Users/${user_id}" | python3 -c 'import json,sys; x=json.load(sys.stdin)["Policy"]; x["EnableLiveTvManagement"]=True; print(json.dumps(x))')"
+user_id="$(authed GET /Users | perl -MJSON::PP -0777 -ne 'print decode_json($_)->[0]{Id}')"
+policy="$(authed GET "/Users/${user_id}" | perl -MJSON::PP -0777 -ne '$x=decode_json($_)->{Policy}; $x->{EnableLiveTvManagement}=JSON::PP::true; print encode_json($x)')"
 authed POST "/Users/${user_id}/Policy" "$policy" >/dev/null
 fi
 
@@ -36,18 +45,33 @@ mkdir -p "$MEDIA"
 cat > "$M3U" <<'EOF'
 #EXTM3U
 #EXTINF:-1 tvg-id="jf-movie" group-title="Movies",Jellyfin Movies
-https://example.invalid/jellyfin-movie
+/media/livetv.webm
 #EXTINF:-1 tvg-id="jf-sports" group-title="Sports",Jellyfin Sports
-https://example.invalid/jellyfin-sports
+/media/livetv.webm
 #EXTINF:-1 tvg-id="jf-kids" group-title="Kids",Jellyfin Kids
-https://example.invalid/jellyfin-kids
+/media/livetv.webm
 #EXTINF:-1 tvg-id="jf-news" group-title="News",Jellyfin News
-https://example.invalid/jellyfin-news
+/media/livetv.webm
 #EXTINF:-1 tvg-id="jf-series" group-title="Series",Jellyfin Series
-https://example.invalid/jellyfin-series
+/media/livetv.webm
 #EXTINF:-1 tvg-id="jf-extra" group-title="Entertainment",Jellyfin Extra
-https://example.invalid/jellyfin-extra
+/media/livetv.webm
 EOF
+
+# M3U tuners reject non-HTTP paths (and remove all channels at the next refresh). Stream the
+# seeded VP9/Opus movie from this same private server, using its internal address and API token.
+if (( FILES_ONLY == 0 )); then
+    movie_id="$(authed GET '/Items?Recursive=true&IncludeItemTypes=Movie&SearchTerm=Open%20Codec' | perl -MJSON::PP -0777 -ne 'print decode_json($_)->{Items}[0]{Id}')"
+    [[ -n "$movie_id" ]] || { echo 'Open Codec Movie is missing from the media seed' >&2; exit 1; }
+    # The tuner derives channel identity from the URL, so each channel needs its own query value.
+    awk -v url="http://127.0.0.1:8096/Videos/$movie_id/stream.webm?Static=true&ApiKey=$token" \
+        '/^\/media\/livetv.webm$/ { print url "&channel=" ++channel; next } { print }' "$M3U" > "$M3U.new"
+    mv "$M3U.new" "$M3U"
+else
+    # Dashboard fixture only: registration checks the playlist, not playback.
+    awk '/^\/media\/livetv.webm$/ { print "https://example.invalid/livetv-" ++channel ".webm"; next } { print }' "$M3U" > "$M3U.new"
+    mv "$M3U.new" "$M3U"
+fi
 
 cat > "$XML" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -88,21 +112,38 @@ if (( FILES_ONLY == 1 )); then
     exit 0
 fi
 
-tuner='{"Type":"m3u","Url":"/media/livetv.m3u","Source":"m3u","DeviceId":"jellyfin-livetv-m3u","FriendlyName":"Jellyfin Live TV M3U","TunerCount":6}'
+tuner='{"Type":"m3u","Url":"/media/livetv.m3u","Source":"m3u","DeviceId":"jellyfin-livetv-m3u","FriendlyName":"Jellyfin Live TV M3U","TunerCount":6,"ReadAtNativeFramerate":true}'
 listing='{"Type":"xmltv","Path":"/media/livetv.xml","Enabled":true}'
 
-authed POST /LiveTv/TunerHosts "$tuner" >/dev/null || true
-if ! authed GET /LiveTv/ListingProviders | grep -q 'livetv.xml'; then
+if ! authed GET /System/Configuration/livetv | grep -q '"Url":"/media/livetv.m3u"'; then
+    authed POST /LiveTv/TunerHosts "$tuner" >/dev/null
+fi
+if ! authed GET /System/Configuration/livetv | grep -q '"Path":"/media/livetv.xml"'; then
     authed POST /LiveTv/ListingProviders "$listing" >/dev/null
 fi
-curl -fsS -X POST "$URL/LiveTv/GuideInfo/Refresh" -H "Authorization: $AUTH, Token=\"$token\"" >/dev/null 2>&1 || true
-
-for _ in $(seq 1 45); do
-    if authed GET /LiveTv/GuideInfo | grep -q 'StartDate'; then
-        echo "Live TV guide seeded at $URL"
-        exit 0
-    fi
-    sleep 2
-done
-echo "warning: Live TV guide did not become available" >&2
+# GuideInfo reports a date range even with zero channels. Registering a tuner can also queue a
+# refresh before the XMLTV provider exists. Wait for that work, then run and await a fresh pass.
+task_id="$(authed GET /ScheduledTasks | perl -MJSON::PP -0777 -ne 'for (@{decode_json($_)}) { print $_->{Id} if $_->{Key} eq "RefreshGuide" }')"
+if [[ -z "$task_id" ]]; then
+    echo 'The server has no RefreshGuide scheduled task' >&2
+    exit 1
+fi
+wait_idle() {
+    for _ in $(seq 1 90); do
+        if authed GET "/ScheduledTasks/$task_id" | grep -q '"State":"Idle"'; then return 0; fi
+        sleep 2
+    done
+    echo 'Guide refresh did not finish' >&2
+    return 1
+}
+wait_idle
+authed POST "/ScheduledTasks/Running/$task_id" >/dev/null
+wait_idle
+authed GET "/ScheduledTasks/$task_id" | perl -MJSON::PP -0777 -ne 'exit(decode_json($_)->{LastExecutionResult}{Status} eq "Completed" ? 0 : 1)'
+channels="$(authed GET '/LiveTv/Channels?AddCurrentProgram=true')"
+if echo "$channels" | perl -MJSON::PP -0777 -ne '$x=decode_json($_); exit(@{$x->{Items}} == 6 && grep({$_->{CurrentProgram}{Id}} @{$x->{Items}}) ? 0 : 1)'; then
+    echo "Live TV guide seeded at http://localhost:$PORT (6 channels, current programme ready)"
+    exit 0
+fi
+echo "Live TV seed is incomplete: $channels" >&2
 exit 1

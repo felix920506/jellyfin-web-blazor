@@ -69,6 +69,7 @@ public class VideoOsdRecordingTests : PlaybackTestContext
         Assert.Equal(Services.GetRequiredService<Globalize>()[title], button.GetAttribute("title"));
         Assert.Equal(button.GetAttribute("title"), button.GetAttribute("aria-label"));
         Assert.Equal(active, button.ClassList.Contains("recordingIcon-active"));
+        Assert.Equal(active, button.QuerySelector(".material-icons")!.ClassList.Contains("recordingIcon-active"));
         Assert.False(button.HasAttribute("disabled"));
     }
 
@@ -174,6 +175,17 @@ public class VideoOsdRecordingTests : PlaybackTestContext
     }
 
     [Fact]
+    public async Task An_active_series_timer_uses_the_original_smart_record_indicator()
+    {
+        _program.TimerId = TimerId;
+        _program.SeriesTimerId = "series-osd";
+        _program.Status = "New";
+        var cut = await PlayAsync();
+        cut.WaitForAssertion(() => AssertButton(cut, "DoNotRecord", true), Timeout);
+        Assert.Contains("fiber_smart_record", cut.Find(".btnRecord .material-icons").ClassList);
+    }
+
+    [Fact]
     public async Task Playing_a_programme_resolves_its_channel_and_shows_the_current_programme()
     {
         _channel.CurrentProgram = new BaseItemDto { Id = Guid.NewGuid(), Type = BaseItemDto_Type.Program, Name = "Different programme" };
@@ -217,5 +229,21 @@ public class VideoOsdRecordingTests : PlaybackTestContext
         cut.Find(".btnRecord").Click();
         cut.WaitForAssertion(() => Assert.Single(Server.RequestsTo("/LiveTv/Timers")), Timeout);
         Assert.False(cut.Find(".btnRecord").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public async Task Live_stream_track_refresh_uses_the_supported_item_playback_info_endpoint()
+    {
+        var source = PlaybackServer.MediaSource(ChannelId);
+        source["LiveStreamId"] = "live-osd";
+        PlaybackServer.ScriptPlaybackInfo(Server, ChannelId, source);
+        var refreshed = source.DeepClone().AsObject();
+        refreshed["MediaStreams"] = new JsonArray(new JsonObject { ["Index"] = 2, ["Type"] = "Audio", ["Codec"] = "opus" });
+        Server.OnGet($"/Items/{ChannelId}/PlaybackInfo", PlaybackServer.PlaybackInfo(refreshed));
+        var cut = await PlayAsync();
+        Player.Tick("video", 1);
+        cut.WaitForAssertion(() => Assert.Single(Server.RequestsTo($"/Items/{ChannelId}/PlaybackInfo"), r => r.Method == HttpMethod.Get), Timeout);
+        Assert.Equal("opus", Assert.Single(Manager.CurrentMediaSource!.MediaStreams!).Codec);
+        Assert.DoesNotContain(Server.Requests, r => r.Path.Contains("/MediaInfo", StringComparison.Ordinal));
     }
 }
