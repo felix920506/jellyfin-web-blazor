@@ -85,7 +85,8 @@ def main():
                 fits("plugin details")
                 if page.locator(".jf-dashboard-plugin-settings").count():
                     config_route = page.locator(".jf-dashboard-plugin-settings").get_attribute("href")[1:]
-                    open_page(config_route, ".jf-dashboard-plugin-configuration-notice")
+                    open_page(config_route, ".jf-plugin-configuration-frame[data-ready=true]")
+                    assert page.frame_locator('.jf-plugin-configuration-frame').locator('form').count() > 0
                     shot(page, "dashboard-plugins-settings")
             if not config_route:
                 config_route = "/configurationpage?name=missing-plugin"
@@ -149,7 +150,7 @@ def main():
                 ("installed", "/dashboard/plugins", ".jf-dashboard-plugin-card, #pluginsPage .mud-alert"),
                 ("repositories", "/dashboard/plugins/repositories", ".jf-dashboard-repository-add"),
                 ("backups", "/dashboard/backups", "[data-backup]"),
-                ("settings", config_route, "#pluginConfigurationPage .mud-alert"),
+                ("settings", config_route, ".jf-plugin-configuration-frame[data-ready=true], #pluginConfigurationPage .mud-alert"),
             ]
             if detail_route:
                 routes.append(("details", detail_route, ".jf-dashboard-plugin-info"))
@@ -167,8 +168,6 @@ def main():
         finally:
             # Private instance is reset by the caller, but restore repositories even on a failure.
             page.request.post(SERVER + "/Repositories", headers={**headers, "Content-Type": "application/json"}, data=json.dumps(original_repositories))
-        if not catalog_available:
-            page.errors = [e for e in page.errors if "/Packages" not in e]
         result = finish(page, "dashboard plugins/backups")
         browser.close()
         return result
