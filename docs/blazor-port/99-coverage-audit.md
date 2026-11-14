@@ -222,7 +222,7 @@ service/component, not merely a copied preference string.
 | `photoPlayer` | Open photo slideshow | `Services/Players/PhotoPlayer.cs` | `ported` |
 | `youtubePlayer` | YouTube trailer playback | `Services/Players/UrlPlayers.cs` (`YoutubePlayer`) and playback item flow | `ported` |
 | `syncPlay` | Synchronized local playback and group UI | `Services/Playback/SyncPlay/*`, `Components/SyncPlay/*` | `partial` |
-| `chromecastPlayer` | Chromecast target | No functional counterpart; remote menu explicitly reports unsupported | `missing` |
+| `chromecastPlayer` | Chromecast target | `Services/Playback/Cast/CastPlayer.cs` (`IRemotePlayer`), `Cast/CastInterop.cs`, `wwwroot/js/playback/cast.js`; target in the remote menu when the Cast SDK is available, "unsupported" entry otherwise. Tested against a fake SDK only; not run with a real Cast device (`PORT-TODO(cast)`) | `ported` |
 | `backdropScreensaver` | Backdrop slideshow screensaver | `Pages/User/DisplayOptions.cs` only lists the option; no player/screensaver runtime | `missing` |
 | `logoScreensaver` | Bouncing-logo screensaver | `Pages/User/DisplayOptions.cs` only lists the option; no player/screensaver runtime | `missing` |
 | `stillWatching` | `Services/Playback/PlaybackInterceptors.cs`, `PlaybackActivity` | `ported` | Episode-count/time/idle thresholds and Continue/Stop dialog are enforced before negotiation. |
@@ -250,7 +250,7 @@ work that has since been completed.
 | `blazor/src/Jellyfin.Web/wwwroot/js/playback/player.js` + `Pages/Playback/VideoOsd.razor` | Native iOS fullscreen exit stops playback and returns from the OSD. | Closed; the dedicated WebKit event and OSD back-navigation are covered by fake-interop UI tests. |
 | `blazor/src/Jellyfin.Web/Pages/Playback/VideoOsd.razor:9-10` (`PORT-TODO(playback)`) | Video OSD lacks recording controls and TV key handling. | Open; TV portion is out of scope, recording controls are a real gap. |
 | `docs/blazor-port/06-playback-port.md` | Missing cast/AirPlay, Live TV OSD details, ASS/SSA and image subtitles, gestures and several queue/OSD details. | Open; TV layout excluded separately; playback interceptors are now implemented. |
-| `docs/blazor-port/15-playback-extras.md` | Chromecast unsupported; remote queue clearing is a no-op; SyncPlay and live-TV-specific extras were previously listed as future work. | Chromecast remains open; SyncPlay is now ported and its old “not started” text is stale. |
+| `docs/blazor-port/15-playback-extras.md` | Google Cast player delivered (with its deviations); remote queue clearing is a no-op; SyncPlay and live-TV-specific extras were previously listed as future work. | Chromecast is ported but unverified on a real receiver (`PORT-TODO(cast)` in `cast.js`); SyncPlay is now ported and its old “not started” text is stale. |
 | `docs/blazor-port/07-library-pages.md` | Recursive list filtering differs; TV on-screen alphabet is not ported; shared shell typography/visual details differ. | Recursive filter and visual differences open; TV alphabet out of scope. |
 | `docs/blazor-port/05-item-components.md` | Item scroller and image lazy-unload limitations; minor card/list indicator and styling differences. | Scroller/image items open; other differences are minor. |
 | `docs/blazor-port/08-dashboard.md` | MudTable lacks several material-react-table controls; device rename is dialog-based; relative-time and app-bar differences exist. | Open intentional partials, not missing routes. |

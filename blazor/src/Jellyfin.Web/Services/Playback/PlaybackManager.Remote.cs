@@ -118,6 +118,16 @@ public sealed partial class PlaybackManager
         SetCurrentPlayerInternal(null, null);
     }
 
+    /// <summary>
+    /// Port of setActivePlayer(): makes a player that connected by itself (a Cast session joined
+    /// after a page reload) the current one, without pairing.
+    /// </summary>
+    public void SetActivePlayer(IMediaPlayer player, PlayTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(player);
+        SetCurrentPlayerInternal(player, target);
+    }
+
     /// <summary>Port of removeActivePlayer(): leaves the target when it belongs to the named player.</summary>
     public void RemoveActivePlayer(string name)
     {

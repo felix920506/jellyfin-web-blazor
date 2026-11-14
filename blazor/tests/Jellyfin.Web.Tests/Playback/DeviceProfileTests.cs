@@ -213,7 +213,7 @@ public class DeviceProfileTests
     {
         await using var harness = await PlaybackHarness.CreateAsync();
         harness.Fakes.Probe.Caps = FakeCapabilityProbe.OpenCodecsOnly;
-        var player = harness.Services.GetServices<IMediaPlayer>().First(p => p.CanPlayMediaType("Video"));
+        var player = harness.Services.GetServices<IMediaPlayer>().First(p => p.IsLocalPlayer && p.CanPlayMediaType("Video"));
 
         var profile = await player.GetDeviceProfileAsync(PlaybackServer.Movie());
         await player.GetDeviceProfileAsync(PlaybackServer.Movie());

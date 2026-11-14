@@ -432,12 +432,15 @@ internal sealed class PlaybackFakes
 
     public FakePlaybackUiInterop Ui { get; } = new();
 
+    public FakeCastInterop Cast { get; } = new();
+
     public void AddTo(IServiceCollection services)
     {
         services.AddSingleton<IPlayerInterop>(Player);
         services.AddSingleton<IMediaCapabilityProbe>(Probe);
         services.AddSingleton<IPlaybackTimers>(Timers);
         services.AddSingleton<IPlaybackUiInterop>(Ui);
+        services.AddSingleton<ICastInterop>(Cast);
     }
 }
 

@@ -101,8 +101,22 @@ def main():
         try:
             sign_in(target)
             sign_in(controller)
+            # Google Cast: without a usable sender SDK the menu keeps the original's "unsupported"
+            # entry next to the session targets, and nothing fails while it is loaded or skipped.
+            cast = controller.evaluate("""() => ({
+                chrome: !!window.chrome,
+                script: !!document.querySelector('script[src*="cast_sender"]'),
+                available: !!window.chrome?.cast?.isAvailable
+            })""")
+            print("info google cast in this browser:", cast)
             controller.click(".jf-remote-play-button")
             controller.wait_for_selector(".jf-remote-play-target", timeout=15000)
+            if not cast["available"]:
+                assert controller.locator(".jf-remote-play-nocast").is_visible(), "the unsupported Google Cast entry is missing"
+                assert "Google Cast Unsupported" in controller.locator(".jf-remote-play-nocast").inner_text()
+                assert controller.locator(".jf-remote-play-target[data-id='Google Cast']").count() == 0
+            shot(controller, "playback-extras-cast-menu")
+            print("ok   the cast menu opens; Google Cast entry matches the SDK's availability")
             controller.locator(".jf-remote-play-target").first.click()
             controller.wait_for_selector(".jf-remote-play-button-active")
             print("ok   another browser context is selected as target")
